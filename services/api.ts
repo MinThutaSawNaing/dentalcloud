@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -18,6 +18,7 @@ import { summarizeTreatmentCostRows } from '../utils/treatmentCostSummaries';
 import { buildPatientProfileUpdatePayload } from '../utils/patientProfileUpdate';
 import { chunkMonthlyReportPatientIds, type MonthlyReportSourceRecord } from '../utils/monthlyReport';
 import { chunkUniqueIds, mapWithConcurrency, REPORT_REQUEST_CONCURRENCY } from '../utils/reportBatching';
+import { normalizeMaterialCostPresetInputs, sortMaterialCostPresets } from '../utils/materialCostPresets';
 
 let usersAllowedTabsSupport: boolean | null = null;
 let usersDoctorIdSupport: boolean | null = null;
@@ -344,6 +345,21 @@ const isMissingRelationError = (error: any, relationName: string): boolean => {
   );
 };
 
+const isMissingRpcError = (error: any, functionName: string): boolean => {
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  const normalizedFunction = functionName.toLowerCase();
+  return (
+    code === '42883' ||
+    code === 'PGRST202' ||
+    (message.includes(normalizedFunction) && (
+      message.includes('does not exist') ||
+      message.includes('schema cache') ||
+      message.includes('could not find the function')
+    ))
+  );
+};
+
 const isOptionalRelationAccessError = (error: any, relationNames: string[]): boolean => {
   const message = String(error?.message || '').toLowerCase();
   const details = String(error?.details || '').toLowerCase();
@@ -513,6 +529,16 @@ const mapPatientMaterialCostRow = (row: any): PatientMaterialCost => {
     updatedAt: row.updated_at
   };
 };
+
+const mapMaterialLabCostPresetRow = (row: any): MaterialLabCostPreset => ({
+  id: row.id,
+  costType: row.cost_type === 'lab' ? 'lab' : 'material',
+  label: String(row.label || ''),
+  amount: Number(row.amount || 0),
+  sortOrder: Number(row.sort_order || 0),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
 
 const fetchSyntheticMaterialCostExpenses = async (
   locationId: string | undefined,
@@ -2856,6 +2882,72 @@ export const api = {
   },
 
   materialCosts: {
+    getPresets: async (
+      actor: { userId: string; authToken: string }
+    ): Promise<{ presets: MaterialLabCostPreset[]; revision: number }> => {
+      const userId = trimRequired(actor.userId, 'Staff user');
+      const authToken = trimRequired(actor.authToken, 'Staff session');
+      const { data, error } = await supabase.rpc('get_material_lab_cost_presets', {
+        p_user_id: userId,
+        p_session_token: authToken
+      });
+
+      if (error) {
+        if (isMissingRpcError(error, 'get_material_lab_cost_presets')) {
+          throw new Error('Cost presets are not installed yet. Run database/material_lab_cost_presets_migration.sql in Supabase.');
+        }
+        throw new Error(error.message);
+      }
+
+      const payload = data && !Array.isArray(data) ? data : {};
+      const rows = Array.isArray(payload.presets) ? payload.presets : [];
+      return {
+        presets: sortMaterialCostPresets(rows.map(mapMaterialLabCostPresetRow)),
+        revision: Math.max(0, Number(payload.revision || 0))
+      };
+    },
+
+    replacePresets: async (
+      presets: MaterialLabCostPresetInput[],
+      expectedRevision: number,
+      actor: { userId: string; authToken: string }
+    ): Promise<{ presets: MaterialLabCostPreset[]; revision: number }> => {
+      const userId = trimRequired(actor.userId, 'Staff user');
+      const authToken = trimRequired(actor.authToken, 'Staff session');
+      const normalized = normalizeMaterialCostPresetInputs(presets);
+      const revision = finiteNumber(expectedRevision, 'Preset revision', { min: 0 });
+      const { data, error } = await supabase.rpc('replace_material_lab_cost_presets', {
+        p_items: normalized.map((preset) => ({
+          id: preset.id,
+          cost_type: preset.costType,
+          label: preset.label,
+          amount: preset.amount,
+          sort_order: preset.sortOrder
+        })),
+        p_expected_revision: revision,
+        p_user_id: userId,
+        p_session_token: authToken
+      });
+
+      if (error) {
+        const message = String(error.message || '');
+        if (isMissingRpcError(error, 'replace_material_lab_cost_presets')) {
+          throw new Error('Cost presets are not installed yet. Run database/material_lab_cost_presets_migration.sql in Supabase.');
+        }
+        if (message.includes('Preset list changed')) {
+          throw new Error('Preset list changed on another device. Reload presets before saving again.');
+        }
+        throw new Error(message);
+      }
+
+      const payload = data && !Array.isArray(data) ? data : {};
+      const rows = Array.isArray(payload.presets) ? payload.presets : [];
+      return {
+        presets: sortMaterialCostPresets(rows.map(mapMaterialLabCostPresetRow)),
+        revision: Math.max(0, Number(payload.revision || revision + 1))
+      };
+    },
+
     getTotalsByTreatmentIds: async (
       treatmentIds: string[],
       options?: { onProgress?: (completed: number, total: number) => void; requireCostTables?: boolean }

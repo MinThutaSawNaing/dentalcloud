@@ -69,6 +69,8 @@ describe('assistant product knowledge', () => {
   it('documents material, lab, and branch permission workflows', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('keeps material and lab items/totals separate');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('does not ask them to re-enter an admin password');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('shared frequently used cost presets');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('does not save automatically');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Material Cost or Lab Cost expense records');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('dedicated Branch Switching permission without receiving full Settings access');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('previous branch remains active');

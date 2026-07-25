@@ -136,6 +136,24 @@ export interface PatientMaterialCostInput {
   quantity: number;
 }
 
+export interface MaterialLabCostPreset {
+  id: string;
+  costType: TreatmentCostType;
+  label: string;
+  amount: number;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface MaterialLabCostPresetInput {
+  id: string;
+  costType: TreatmentCostType;
+  label: string;
+  amount: number;
+  sortOrder: number;
+}
+
 export interface TreatmentCostSummary {
   auditLogId: string;
   materialTotal: number;

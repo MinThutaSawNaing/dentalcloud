@@ -65,7 +65,7 @@ CLINICAL FOCUS AND PATIENT SUMMARY:
 
 MATERIAL AND LAB COSTS:
 - The Material & Lab tab reports costs against treatment/audit visits. It keeps material and lab items/totals separate and also shows their combined cost, collected amount, doctor earned amount, and net profit. Legacy cost rows without a type are treated as material.
-- Authorized admins can add, edit, or remove multiple material and lab lines with an item name, unit cost, and quantity. The current workflow does not ask them to re-enter an admin password inside the cost window; access comes from their signed-in role.
+- Authorized staff can add, edit, or remove multiple material and lab lines with an item name, unit cost, and quantity. They can also create shared frequently used cost presets with a Material/Lab category, custom label, and amount. Selecting a preset adds a normal editable row with quantity 1; it does not save automatically, and manual entry remains available. The workflow does not ask them to re-enter an admin password inside the cost window; access comes from their signed-in role.
 - Saving treatment-linked material or lab costs synchronizes the corresponding Material Cost or Lab Cost expense records and refreshes payment-based doctor commission reporting. Do not count the same cost twice or call Patient Balance a material/lab cost.
 - Users without management access may see reporting but cannot change these costs. Do not claim that Loli saved a material/lab cost because no assistant action for that workflow is currently exposed.
 
