@@ -1461,22 +1461,35 @@ DECLARE
   v_material_names TEXT;
   v_lab_names TEXT;
 BEGIN
-  SELECT u.username INTO v_admin_username FROM users u
-  WHERE u.id = p_admin_user_id AND u.role = 'admin'
-    AND (
-      u.password = p_admin_password OR btrim(u.password) = btrim(p_admin_password)
-      OR EXISTS (
-        SELECT 1 FROM staff_auth_sessions s
-        WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
-          AND s.revoked_at IS NULL AND s.expires_at > NOW()
-      )
-    );
-  IF NOT FOUND THEN RAISE EXCEPTION 'A valid administrator session is required.'; END IF;
   SELECT t.location_id, t.date, t.patient_id, COALESCE(p.name, 'Unknown patient'), COALESCE(t.description, 'Treatment')
   INTO v_location_id, v_treatment_date, v_patient_id, v_patient_name, v_treatment_label
   FROM audit_logs a JOIN treatments t ON t.id = a.source_id LEFT JOIN patients p ON p.id = t.patient_id
-  WHERE a.id = p_audit_log_id AND a.source_type = 'treatment' FOR UPDATE OF a;
+  WHERE a.id = p_audit_log_id AND a.source_type = 'treatment' FOR UPDATE OF a, t;
   IF NOT FOUND THEN RAISE EXCEPTION 'Treatment audit row was not found.'; END IF;
+  SELECT u.username INTO v_admin_username FROM users u
+  WHERE u.id = p_admin_user_id
+    AND (
+      (u.role = 'admin' AND (
+        u.password = p_admin_password OR btrim(u.password) = btrim(p_admin_password)
+        OR EXISTS (
+          SELECT 1 FROM staff_auth_sessions s
+          WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
+            AND s.revoked_at IS NULL AND s.expires_at > NOW()
+        )
+      ))
+      OR (u.role = 'normal'
+        AND u.doctor_id IS NULL
+        AND jsonb_typeof(u.allowed_tabs) = 'array'
+        AND u.allowed_tabs ? 'material-cost'
+        AND (u.location_id IS NULL OR u.location_id = v_location_id)
+        AND EXISTS (
+          SELECT 1 FROM staff_auth_sessions s
+          WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
+            AND s.revoked_at IS NULL AND s.expires_at > NOW()
+        )
+      )
+    );
+  IF NOT FOUND THEN RAISE EXCEPTION 'A valid staff session with Material & Lab permission is required.'; END IF;
   IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' THEN RAISE EXCEPTION 'Cost items must be a JSON array.'; END IF;
   IF EXISTS (
     SELECT 1 FROM jsonb_to_recordset(p_items) AS item(material_name TEXT, cost_type TEXT, cost_amount NUMERIC, quantity NUMERIC)
@@ -1510,18 +1523,35 @@ CREATE OR REPLACE FUNCTION acknowledge_commission_recalculation(
   p_patient_id UUID, p_request_token UUID, p_admin_user_id UUID, p_admin_password TEXT
 )
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_patient_location_id UUID;
 BEGIN
+  SELECT p.location_id INTO v_patient_location_id FROM patients p WHERE p.id = p_patient_id FOR SHARE OF p;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Patient was not found.'; END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM users u WHERE u.id = p_admin_user_id AND u.role = 'admin'
+    SELECT 1 FROM users u WHERE u.id = p_admin_user_id
       AND (
-        u.password = p_admin_password OR btrim(u.password) = btrim(p_admin_password)
-        OR EXISTS (
-          SELECT 1 FROM staff_auth_sessions s
-          WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
-            AND s.revoked_at IS NULL AND s.expires_at > NOW()
+        (u.role = 'admin' AND (
+          u.password = p_admin_password OR btrim(u.password) = btrim(p_admin_password)
+          OR EXISTS (
+            SELECT 1 FROM staff_auth_sessions s
+            WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
+              AND s.revoked_at IS NULL AND s.expires_at > NOW()
+          )
+        ))
+        OR (u.role = 'normal'
+          AND u.doctor_id IS NULL
+          AND jsonb_typeof(u.allowed_tabs) = 'array'
+          AND u.allowed_tabs ? 'material-cost'
+          AND (u.location_id IS NULL OR u.location_id = v_patient_location_id)
+          AND EXISTS (
+            SELECT 1 FROM staff_auth_sessions s
+            WHERE s.user_id = u.id AND s.session_token::TEXT = btrim(p_admin_password)
+              AND s.revoked_at IS NULL AND s.expires_at > NOW()
+          )
         )
       )
-  ) THEN RAISE EXCEPTION 'A valid administrator session is required.'; END IF;
+  ) THEN RAISE EXCEPTION 'A valid staff session with Material & Lab permission is required.'; END IF;
   DELETE FROM pending_commission_recalculations
   WHERE patient_id = p_patient_id AND request_token = p_request_token;
   RETURN FOUND;

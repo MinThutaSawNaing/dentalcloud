@@ -47,3 +47,10 @@ export const hasTabAccess = (
 ): boolean => {
   return resolveAllowedTabs(role, tabs).includes(tab);
 };
+
+export const canManageMaterialCosts = (
+  role: 'admin' | 'normal' | 'patient' | 'doctor' | undefined,
+  tabs: unknown
+): boolean => {
+  return role === 'admin' || (role === 'normal' && hasTabAccess(role, tabs, 'material-cost'));
+};

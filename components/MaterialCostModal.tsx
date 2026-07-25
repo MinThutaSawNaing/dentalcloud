@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import { auth } from '../services/auth';
 import { formatCurrency, type Currency } from '../utils/currency';
 import { formatDoctorName } from '../utils/doctorName';
+import { canManageMaterialCosts } from '../utils/permissions';
 import { Modal } from './Shared';
 
 interface MaterialCostModalProps {
@@ -62,8 +63,8 @@ const MaterialCostModal: React.FC<MaterialCostModalProps> = ({ isOpen, record, c
     event.preventDefault(); setSaving(true); setError(null);
     try {
       const session = auth.getSession();
-      if (!session?.userId || session.role !== 'admin') throw new Error('You do not have permission to update material and lab costs.');
-      if (!session.staffAuthToken) throw new Error('Your administrator session needs a one-time refresh. Sign out and sign back in, then save again.');
+      if (!session?.userId || !canManageMaterialCosts(session.role, session.allowed_tabs)) throw new Error('You do not have permission to update material and lab costs.');
+      if (!session.staffAuthToken) throw new Error('Your staff session needs a one-time refresh. Sign out and sign back in, then save again.');
       const incomplete = visibleItems.find((item) => !item.materialName.trim() || Number(item.costAmount) <= 0 || Number(item.quantity) <= 0);
       if (incomplete) throw new Error(`Each ${incomplete.costType === 'lab' ? 'lab cost' : 'material'} needs a name, a cost greater than zero, and a quantity greater than zero.`);
       const result = await api.materialCosts.upsertForTreatment(record, visibleItems.map((item) => ({ materialName: item.materialName.trim(), costType: item.costType, costAmount: Number(item.costAmount), quantity: Number(item.quantity) })), { userId: session.userId, username: session.username, authToken: session.staffAuthToken });

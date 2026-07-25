@@ -45,7 +45,7 @@ describe('api.materialCosts transactional RPC', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('sends categorized items and the logged-in administrator ID without a password', async () => {
+  it('sends categorized items and the logged-in staff identity with its server session token', async () => {
     const result = await api.materialCosts.upsertForTreatment({
       id: 'treatment-1', location_id: 'location-1', patient_id: 'patient-1', teeth: [], description: 'Crown', cost: 1000, date: '2026-07-18'
     }, [
