@@ -38,6 +38,11 @@ export interface MonthlyReportRow {
   netMargin: number;
 }
 
+export interface MonthlyReportDetailRow extends MonthlyReportRow {
+  treatmentIds: string[];
+  treatmentCount: number;
+}
+
 export interface MonthlyReportSummary {
   treatmentCount: number;
   patientCount: number;
@@ -100,6 +105,74 @@ const money = (value: unknown): number => {
 };
 
 const positiveMoney = (value: unknown): number => Math.max(0, money(value));
+
+const combineLabels = (labels: string[]): string => {
+  const counts = new Map<string, number>();
+  labels.forEach(label => counts.set(label, (counts.get(label) || 0) + 1));
+  return Array.from(counts, ([label, count]) => count > 1 ? `${label} ×${count}` : label).join('; ');
+};
+
+const combineDistinctLabels = (labels: string[]): string => Array.from(new Set(labels)).join('; ');
+
+const isValidLocalDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+};
+
+export const groupMonthlyReportDetailRows = (rows: MonthlyReportRow[]): MonthlyReportDetailRow[] => {
+  const groups = new Map<string, MonthlyReportRow[]>();
+
+  rows.forEach((row, index) => {
+    const hasPatientId = Boolean(row.patientId?.trim());
+    const hasLocalDate = isValidLocalDate(row.date || '');
+    const key = hasPatientId && hasLocalDate
+      ? `${row.patientId.trim()}|${row.date}`
+      : `treatment:${row.treatmentId || index}`;
+    groups.set(key, [...(groups.get(key) || []), row]);
+  });
+
+  return Array.from(groups.values()).map(group => {
+    const sortedGroup = [...group].sort((a, b) => a.treatmentId.localeCompare(b.treatmentId));
+    const first = sortedGroup[0];
+    const sum = (selector: (row: MonthlyReportRow) => number) => money(sortedGroup.reduce((total, row) => total + selector(row), 0));
+    const cost = sum(row => row.cost);
+    const payment = sum(row => row.payment);
+    const balance = sum(row => row.balance);
+    const labCost = sum(row => row.labCost);
+    const materialCost = sum(row => row.materialCost);
+    const doctorCost = sum(row => row.doctorCost);
+    const totalCost = sum(row => row.totalCost);
+    const netProfit = sum(row => row.netProfit);
+
+    return {
+      ...first,
+      treatmentId: sortedGroup.map(row => row.treatmentId).join('|'),
+      treatmentIds: sortedGroup.map(row => row.treatmentId),
+      treatmentCount: sortedGroup.length,
+      treatment: combineLabels(sortedGroup.map(row => row.treatment)),
+      doctor: combineDistinctLabels(sortedGroup.map(row => row.doctor)),
+      cost,
+      payment,
+      balance,
+      labCost,
+      materialCost,
+      doctorCost,
+      totalCost,
+      netProfit,
+      netMargin: cost > 0 ? netProfit / cost : 0
+    };
+  }).sort((a, b) => (
+    a.date.localeCompare(b.date)
+    || a.patientName.localeCompare(b.patientName)
+    || a.patientId.localeCompare(b.patientId)
+    || a.treatmentIds[0].localeCompare(b.treatmentIds[0])
+  ));
+};
 
 const paymentTreatmentIds = (payment: PaymentRecord): string[] => Array.from(new Set([
   ...(payment.treatmentIds || []),

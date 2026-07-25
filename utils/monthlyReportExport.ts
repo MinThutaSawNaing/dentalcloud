@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatCurrency } from './currency';
-import { monthlyReportFilename, type MonthlyReport, type MonthlyReportGroup, type MonthlyReportMetadata } from './monthlyReport';
+import { groupMonthlyReportDetailRows, monthlyReportFilename, type MonthlyReport, type MonthlyReportGroup, type MonthlyReportMetadata } from './monthlyReport';
 
 const percentage = (value: number): string => `${(value * 100).toFixed(1)}%`;
 const generatedLabel = (date: Date): string => date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
@@ -42,6 +42,7 @@ const addPdfGroupTable = (doc: jsPDF, title: string, groups: MonthlyReportGroup[
 
 export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: MonthlyReportMetadata) => {
   const generatedAt = metadata.generatedAt || new Date();
+  const detailRows = groupMonthlyReportDetailRows(report.rows);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true } as any);
   const drawingDoc = doc as any;
   const width = doc.internal.pageSize.width;
@@ -83,7 +84,7 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
   autoTable(doc, {
     startY: 71,
     head: [['Date', 'Pt Name', 'Age', 'Phone', 'City', 'Pt Type', 'Treatment', 'Dentist / Doctor', 'Cost', 'Payment', 'Balance', 'Lab Cost', 'Material Cost', 'Doctor Cost', 'Total Cost', 'Net Profit']],
-    body: report.rows.length ? report.rows.map(row => [
+    body: detailRows.length ? detailRows.map(row => [
       row.date, row.patientName, row.age === null ? '-' : String(row.age), row.phone, row.city, row.patientType,
       row.treatment, row.doctor, formatCurrency(row.cost, metadata.currency), formatCurrency(row.payment, metadata.currency),
       formatCurrency(row.balance, metadata.currency), formatCurrency(row.labCost, metadata.currency), formatCurrency(row.materialCost, metadata.currency),
@@ -100,7 +101,7 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
       12: { halign: 'right' }, 13: { halign: 'right' }, 14: { halign: 'right' }, 15: { halign: 'right' }
     },
     didParseCell: hook => {
-      if (hook.section === 'body' && hook.column.index === 15 && report.rows[hook.row.index]?.netProfit < 0) {
+      if (hook.section === 'body' && hook.column.index === 15 && detailRows[hook.row.index]?.netProfit < 0) {
         hook.cell.styles.textColor = [190, 24, 93];
         hook.cell.styles.fontStyle = 'bold';
       }
@@ -355,7 +356,8 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
     'Treatment Production', 'Collected Payment', 'Outstanding Balance', 'Material Cost', 'Lab Cost', 'Doctor Cost',
     'Total Cost', 'Net Profit', 'Net Margin'
   ];
-  const detailData = report.rows.map(row => [
+  const groupedDetailRows = groupMonthlyReportDetailRows(report.rows);
+  const detailData = groupedDetailRows.map(row => [
     row.date, row.patientName, row.age ?? '', row.phone, row.city, row.patientType, row.treatment, row.doctor,
     row.cost, row.payment, row.balance, row.materialCost, row.labCost, row.doctorCost, row.totalCost, row.netProfit, row.netMargin
   ]);
@@ -375,7 +377,7 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
   setNumberFormat(XLSX, detailSheet, 5, 5 + detailData.length, [16], '0.0%');
   styleReportBanner(XLSX, detailSheet, 'Q');
   styleTable(XLSX, detailSheet, 4, detailData.length, 5 + detailData.length, 'Q', [2, 8, 9, 10, 11, 12, 13, 14, 15, 16], [2]);
-  report.rows.forEach((row, index) => styleProfitCell(detailSheet, `P${5 + index}`, row.netProfit));
+  groupedDetailRows.forEach((row, index) => styleProfitCell(detailSheet, `P${5 + index}`, row.netProfit));
   styleProfitCell(detailSheet, `P${5 + detailData.length}`, report.summary.netProfit, true);
   XLSX.utils.book_append_sheet(workbook, detailSheet, 'Treatment Detail');
 

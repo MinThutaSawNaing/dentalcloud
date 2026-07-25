@@ -154,4 +154,41 @@ describe('monthly report Excel workbook', () => {
     });
     expect(workbook.Sheets['Executive Summary'].H10.s?.fill?.fgColor?.rgb).toBe('FEE2E2');
   });
+
+  it('exports same-patient same-day treatments as one detail row without changing treatment analysis', async () => {
+    const groupedReport: MonthlyReport = {
+      ...report,
+      rows: [
+        report.rows[0],
+        { ...report.rows[0], treatmentId: 'treatment-2', treatment: 'Filling', doctor: 'Doctor Two', cost: 50000, payment: 30000, balance: 20000, materialCost: 5000, labCost: 0, doctorCost: 10000, totalCost: 15000, netProfit: 35000, netMargin: 0.7 },
+        { ...report.rows[0], treatmentId: 'treatment-3', treatment: 'Crown', cost: 25000, payment: 10000, balance: 15000, materialCost: 0, labCost: 5000, doctorCost: 5000, totalCost: 10000, netProfit: 15000, netMargin: 0.6 },
+        { ...report.rows[0], treatmentId: 'treatment-4', treatment: 'Scaling', doctor: 'Doctor Two', cost: 25000, payment: 0, balance: 25000, materialCost: 0, labCost: 0, doctorCost: 5000, totalCost: 5000, netProfit: 20000, netMargin: 0.8 }
+      ],
+      summary: {
+        treatmentCount: 4, patientCount: 1, production: 200000, payment: 100000, balance: 100000,
+        materialCost: 15000, labCost: 10000, doctorCost: 40000, totalCost: 65000, netProfit: 135000,
+        netMargin: 0.675, collectionRate: 0.5
+      },
+      byTreatment: [
+        { name: 'Crown', treatments: 2, patients: 1, production: 125000, payment: 70000, totalCost: 45000, netProfit: 80000, netMargin: 0.64 },
+        { name: 'Filling', treatments: 1, patients: 1, production: 50000, payment: 30000, totalCost: 15000, netProfit: 35000, netMargin: 0.7 },
+        { name: 'Scaling', treatments: 1, patients: 1, production: 25000, payment: 0, totalCost: 5000, netProfit: 20000, netMargin: 0.8 }
+      ]
+    };
+
+    const workbook = await buildMonthlyReportExcelWorkbook(groupedReport, metadata);
+    const detail = workbook.Sheets['Treatment Detail'];
+    const byTreatment = workbook.Sheets['By Treatment'];
+
+    expect(detail.G5.v).toBe('Crown ×2; Filling; Scaling');
+    expect(detail.H5.v).toBe('Doctor One; Doctor Two');
+    expect(detail.I5.v).toBe(200000);
+    expect(detail.P5.v).toBe(135000);
+    expect(detail.Q5.v).toBe(0.675);
+    expect(detail.A6.v).toBe('REPORT TOTAL');
+    expect(detail['!autofilter']).toEqual({ ref: 'A4:Q5' });
+    expect(byTreatment.A5.v).toBe('Crown');
+    expect(byTreatment.B5.v).toBe(2);
+    expect(byTreatment.A8.v).toBe('REPORT TOTAL');
+  });
 });

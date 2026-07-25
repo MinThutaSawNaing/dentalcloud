@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PaymentRecord, TreatmentCostSummary } from '../types';
-import { buildMonthlyReport, chunkMonthlyReportPatientIds, MONTHLY_REPORT_PATIENT_BATCH_SIZE, monthlyReportFilename, type MonthlyReportSourceRecord } from './monthlyReport';
+import { buildMonthlyReport, chunkMonthlyReportPatientIds, groupMonthlyReportDetailRows, MONTHLY_REPORT_PATIENT_BATCH_SIZE, monthlyReportFilename, type MonthlyReportSourceRecord } from './monthlyReport';
 
 const record = (overrides: Partial<MonthlyReportSourceRecord> = {}): MonthlyReportSourceRecord => ({
   id: 'treatment-1', location_id: 'location-1', patient_id: 'patient-1', patient_name: 'Aye Aye',
@@ -68,5 +68,95 @@ describe('monthly report', () => {
     expect(report.byTreatment[0]).toMatchObject({ name: 'Crown', treatments: 2, patients: 2, production: 300 });
     expect(monthlyReportFilename({ dateFrom: '2026-07-01', dateTo: '2026-07-31', locationName: 'Yangon / Main', currency: 'MMK' }, 'xlsx'))
       .toBe('monthly-report-2026-07-01-to-2026-07-31-yangon-main.xlsx');
+  });
+
+  it('groups same-patient same-day treatment details without changing financial totals', () => {
+    const report = buildMonthlyReport({
+      records: [
+        record(),
+        record({ id: 'treatment-2', description: 'Filling', doctor_name: 'Doctor Two', cost: 200, doctorEarnings: 30 }),
+        record({ id: 'treatment-3', description: 'Crown', cost: 50, doctorEarnings: 5 }),
+        record({ id: 'treatment-4', description: 'Scaling', doctor_name: 'Doctor Two', cost: 150, doctorEarnings: 10 })
+      ],
+      payments: [payment({ amount: 250, clearedAmount: 250, treatmentIds: ['treatment-1', 'treatment-2', 'treatment-3', 'treatment-4'] })],
+      costSummaries: {
+        'treatment-1': costs(),
+        'treatment-2': costs({ materialTotal: 20, labTotal: 0, totalAmount: 20 }),
+        'treatment-3': costs({ materialTotal: 0, labTotal: 25, totalAmount: 25 }),
+        'treatment-4': costs({ materialTotal: 5, labTotal: 0, totalAmount: 5 })
+      }
+    });
+
+    const grouped = groupMonthlyReportDetailRows(report.rows);
+
+    expect(report.rows).toHaveLength(4);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]).toMatchObject({
+      treatmentIds: ['treatment-1', 'treatment-2', 'treatment-3', 'treatment-4'],
+      treatmentCount: 4,
+      treatment: 'Crown ×2; Filling; Scaling',
+      doctor: 'Doctor One; Doctor Two',
+      cost: 500,
+      payment: 250,
+      balance: 250,
+      materialCost: 35,
+      labCost: 30,
+      doctorCost: 65,
+      totalCost: 130,
+      netProfit: 370,
+      netMargin: 0.74
+    });
+    expect(grouped[0].cost).toBe(report.summary.production);
+    expect(grouped[0].payment).toBe(report.summary.payment);
+    expect(grouped[0].balance).toBe(report.summary.balance);
+    expect(grouped[0].totalCost).toBe(report.summary.totalCost);
+    expect(grouped[0].netProfit).toBe(report.summary.netProfit);
+  });
+
+  it('separates different patients with the same name and the same patient on different days', () => {
+    const rows = buildMonthlyReport({
+      records: [
+        record(),
+        record({ id: 'treatment-2', patient_id: 'patient-2', patient_name: 'Aye Aye' }),
+        record({ id: 'treatment-3', date: '2026-07-11' })
+      ],
+      payments: [],
+      costSummaries: {}
+    }).rows;
+
+    expect(groupMonthlyReportDetailRows(rows)).toHaveLength(3);
+  });
+
+  it('never merges rows with missing identity or malformed dates', () => {
+    const rows = buildMonthlyReport({
+      records: [
+        record({ id: 'treatment-1', patient_id: '', date: '' }),
+        record({ id: 'treatment-2', patient_id: 'patient-1', date: '2026-02-30' })
+      ],
+      payments: [],
+      costSummaries: {}
+    }).rows;
+
+    expect(groupMonthlyReportDetailRows(rows).map(row => row.treatmentIds)).toEqual([
+      ['treatment-1'],
+      ['treatment-2']
+    ]);
+  });
+
+  it('produces stable grouped labels and identifiers regardless of input order', () => {
+    const rows = buildMonthlyReport({
+      records: [
+        record({ id: 'treatment-b', description: 'Filling', doctor_name: 'Doctor Two' }),
+        record({ id: 'treatment-a', description: 'Crown', doctor_name: 'Doctor One' })
+      ],
+      payments: [],
+      costSummaries: {}
+    }).rows;
+
+    expect(groupMonthlyReportDetailRows([...rows].reverse())[0]).toMatchObject({
+      treatmentIds: ['treatment-a', 'treatment-b'],
+      treatment: 'Crown; Filling',
+      doctor: 'Doctor One; Doctor Two'
+    });
   });
 });
