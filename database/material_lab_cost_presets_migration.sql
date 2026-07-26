@@ -204,7 +204,8 @@ BEGIN
   INTO v_created_at_by_id
   FROM public.material_lab_cost_presets AS presets;
 
-  DELETE FROM public.material_lab_cost_presets;
+  DELETE FROM public.material_lab_cost_presets
+  WHERE id IS NOT NULL;
   INSERT INTO public.material_lab_cost_presets (
     id, cost_type, label, amount, sort_order, created_at, updated_at
   )

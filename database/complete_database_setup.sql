@@ -1661,7 +1661,8 @@ BEGIN
 
   SELECT COALESCE(jsonb_object_agg(presets.id::TEXT, to_jsonb(presets.created_at)), '{}'::JSONB)
   INTO v_created_at_by_id FROM public.material_lab_cost_presets presets;
-  DELETE FROM public.material_lab_cost_presets;
+  DELETE FROM public.material_lab_cost_presets
+  WHERE id IS NOT NULL;
   INSERT INTO public.material_lab_cost_presets(id, cost_type, label, amount, sort_order, created_at, updated_at)
   SELECT item.id, item.cost_type, btrim(item.label), item.amount, item.sort_order,
     COALESCE((v_created_at_by_id ->> item.id::TEXT)::TIMESTAMPTZ, NOW()), NOW()

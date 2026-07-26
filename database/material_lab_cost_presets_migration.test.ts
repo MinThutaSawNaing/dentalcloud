@@ -10,7 +10,7 @@ const completeSetup = readFileSync(completeSetupPath, 'utf8');
 describe('Material & Lab preset migration', () => {
   it('is additive, transactional, and does not replace existing cost RPCs', () => {
     expect(migration).toMatch(/^--[\s\S]*\nBEGIN;/);
-    expect(migration).toContain("NOTIFY pgrst, 'reload schema';\n\nCOMMIT;");
+    expect(migration).toMatch(/NOTIFY pgrst, 'reload schema';\r?\n\r?\nCOMMIT;/);
     expect(migration).not.toContain('CREATE OR REPLACE FUNCTION public.replace_treatment_costs');
     expect(migration).not.toContain('DELETE FROM public.patient_material_costs');
   });
@@ -37,6 +37,7 @@ describe('Material & Lab preset migration', () => {
     expect(migration).toContain('FOR UPDATE;');
     expect(migration).toContain('p_expected_revision <> v_current_revision');
     expect(migration).toContain('v_created_at_by_id');
+    expect(migration).toMatch(/DELETE FROM public\.material_lab_cost_presets\r?\n  WHERE id IS NOT NULL;/);
   });
 
   it('keeps fresh installations aligned with the additive migration', () => {
@@ -44,6 +45,7 @@ describe('Material & Lab preset migration', () => {
     expect(completeSetup).toContain('CREATE OR REPLACE FUNCTION get_material_lab_cost_presets');
     expect(completeSetup).toContain('CREATE OR REPLACE FUNCTION replace_material_lab_cost_presets');
     expect(completeSetup).toContain('REVOKE ALL ON material_lab_cost_presets FROM PUBLIC, anon, authenticated;');
+    expect(completeSetup).toMatch(/DELETE FROM public\.material_lab_cost_presets\r?\n  WHERE id IS NOT NULL;/);
     expect(completeSetup).not.toMatch(/tables TEXT\[\][\s\S]{0,1500}'material_lab_cost_presets'/);
   });
 });

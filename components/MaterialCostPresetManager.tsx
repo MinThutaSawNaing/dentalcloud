@@ -89,7 +89,7 @@ const MaterialCostPresetManager: React.FC<MaterialCostPresetManagerProps> = ({
           <p className="mt-1 text-xs text-slate-500">Add your first frequently used cost.</p>
         </div> : drafts.map((preset, index) => {
           const lab = preset.costType === 'lab';
-          return <div key={preset.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-[140px_minmax(180px,1fr)_150px_auto] sm:items-end">
+          return <div key={preset.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-[140px_minmax(0,1fr)_150px_148px] sm:items-end">
             <label className="block">
               <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-500">Category</span>
               <select value={preset.costType} onChange={(event) => updateDraft(preset.id, { costType: event.target.value as TreatmentCostType })} disabled={saving} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--hover-500)] focus:ring-4 focus:ring-[var(--hover-100)] disabled:bg-slate-100">
@@ -105,7 +105,7 @@ const MaterialCostPresetManager: React.FC<MaterialCostPresetManagerProps> = ({
               <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-500">Amount ({currencyLabel})</span>
               <input type="number" min="0.01" max="9999999999.99" step="0.01" value={preset.amount || ''} onChange={(event) => updateDraft(preset.id, { amount: Number(event.target.value || 0) })} disabled={saving} placeholder="0.00" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-[var(--hover-500)] focus:ring-4 focus:ring-[var(--hover-100)] disabled:bg-slate-100" />
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => moveDraft(index, -1)} disabled={saving || index === 0} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-35" aria-label={`Move ${preset.label || 'preset'} up`}><ArrowUp size={16} /></button>
               <button type="button" onClick={() => moveDraft(index, 1)} disabled={saving || index === drafts.length - 1} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-35" aria-label={`Move ${preset.label || 'preset'} down`}><ArrowDown size={16} /></button>
               <button type="button" onClick={() => removeDraft(preset.id, preset.label)} disabled={saving} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50" aria-label={`Delete ${preset.label || 'preset'}`}><Trash2 size={16} /></button>
