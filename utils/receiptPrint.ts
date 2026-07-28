@@ -10,11 +10,26 @@ export const THERMAL_PAGE_SAFETY_MM = 2;
 export const getThermalPaperWidthMm = (receiptSize: ReceiptSize): 58 | 80 =>
   receiptSize === 'THERMAL_80MM' ? 80 : 58;
 
-// Fixed-position elements are treated as repeating page furniture by paged
-// media engines. Use the first page's origin for roll receipts while keeping
-// the multi-page A4 document in normal flow.
-export const getReceiptPrintPosition = (receiptSize: ReceiptSize): 'absolute' | 'static' =>
-  receiptSize === 'A4' ? 'static' : 'absolute';
+export interface ThermalReceiptTypography {
+  base: number;
+  line: number;
+  small: number;
+  header: number;
+  amount: number;
+  weight: 600;
+}
+
+// Thermal printers need larger, heavier glyphs than screen layouts. Keep the
+// two paper profiles together so invoice and payment receipts cannot drift.
+export const getThermalReceiptTypography = (receiptSize: ReceiptSize): ThermalReceiptTypography =>
+  receiptSize === 'THERMAL_80MM'
+    ? { base: 12, line: 11, small: 10, header: 16, amount: 18, weight: 600 }
+    : { base: 11, line: 10, small: 9, header: 14, amount: 16, weight: 600 };
+
+// Once non-receipt body children are removed from print layout, normal flow is
+// the most reliable way to put page one at the physical print origin. Absolute
+// and fixed elements can be offset, centred, or repeated by paged-media engines.
+export const getReceiptPrintPosition = (_receiptSize: ReceiptSize): 'static' => 'static';
 
 export const getThermalPageHeightMm = (contentHeightPx: number): number => {
   const safeHeightPx = Number.isFinite(contentHeightPx) ? Math.max(0, contentHeightPx) : 0;

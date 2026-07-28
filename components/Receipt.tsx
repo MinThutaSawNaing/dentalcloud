@@ -7,7 +7,7 @@ import { formatPaymentMethod } from '../utils/paymentMethods';
 import { normalizePaymentAllocations } from '../utils/paymentMethods';
 import { resolveReceiptHeaderTitle } from '../utils/receiptPreferences';
 import { formatTeethWithPosition } from '../utils/toothNumbering';
-import { getReceiptPageSize, getReceiptPrintPosition, getThermalPageHeightMm } from '../utils/receiptPrint';
+import { getReceiptPageSize, getReceiptPrintPosition, getThermalPageHeightMm, getThermalReceiptTypography } from '../utils/receiptPrint';
 import { resolveReceiptTreatmentPricing } from '../utils/receiptPricing';
 
 interface ReceiptProps {
@@ -161,11 +161,12 @@ const Receipt: React.FC<ReceiptProps> = ({
   const thermalPaperWidth = isThermal80 ? '80mm' : '58mm';
   const thermalPreviewWidth = isThermal80 ? '90mm' : '68mm';
   const thermalContentPadding = isThermal80 ? '3mm 4mm' : '2mm 3mm';
-  const thermalBaseFontSize = isThermal80 ? '11px' : '10px';
-  const thermalLineFontSize = isThermal80 ? '10px' : '9px';
-  const thermalSmallFontSize = isThermal80 ? '8px' : '7px';
-  const thermalHeaderFontSize = isThermal80 ? '14px' : '12px';
-  const thermalAmountFontSize = isThermal80 ? '16px' : '14px';
+  const thermalTypography = getThermalReceiptTypography(receiptSize);
+  const thermalBaseFontSize = `${thermalTypography.base}px`;
+  const thermalLineFontSize = `${thermalTypography.line}px`;
+  const thermalSmallFontSize = `${thermalTypography.small}px`;
+  const thermalHeaderFontSize = `${thermalTypography.header}px`;
+  const thermalAmountFontSize = `${thermalTypography.amount}px`;
   const thermalPrintContentRef = React.useRef<HTMLDivElement>(null);
   const [thermalPageHeightMm, setThermalPageHeightMm] = React.useState(20);
 
@@ -307,9 +308,9 @@ const Receipt: React.FC<ReceiptProps> = ({
   // ─── Thermal helpers ───────────────────────────────────────────────────
 
   const thermalLine = (left: string, right: string, leftStyle?: React.CSSProperties, rightStyle?: React.CSSProperties) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: thermalLineFontSize, lineHeight: '1.5' }}>
-      <span style={{ flex: 1, textAlign: 'left', ...leftStyle }}>{left}</span>
-      <span style={{ textAlign: 'right', whiteSpace: 'nowrap', ...rightStyle }}>{right}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px', width: '100%', minWidth: 0, fontSize: thermalLineFontSize, lineHeight: '1.5' }}>
+      <span style={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', textAlign: 'left', ...leftStyle }}>{left}</span>
+      <span style={{ flex: '0 1 auto', minWidth: 0, overflowWrap: 'anywhere', textAlign: 'right', ...rightStyle }}>{right}</span>
     </div>
   );
 
@@ -323,24 +324,24 @@ const Receipt: React.FC<ReceiptProps> = ({
 
   const renderThermalServices = () => (
     <div style={{ marginBottom: '6px' }}>
-      <div style={{ fontSize: '9px', fontWeight: 700, marginBottom: '2px' }}>-- TREATMENT SERVICES --</div>
+      <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700, marginBottom: '2px' }}>-- TREATMENT SERVICES --</div>
       {receiptTreatments.length === 0 ? (
-        <div style={{ fontSize: '8px', fontStyle: 'italic', color: '#666' }}>No treatment services recorded</div>
+        <div style={{ fontSize: thermalSmallFontSize, fontStyle: 'italic', color: '#666' }}>No treatment services recorded</div>
       ) : (
         receiptTreatments.map((treatment, idx) => {
           const pricing = getTreatmentPricing(treatment);
           return (
             <div key={idx} style={{ marginBottom: '3px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                <span style={{ flex: 1 }}>{treatment.description}</span>
-                <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(pricing.finalCost, effectiveCurrency)}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px', minWidth: 0, fontSize: thermalLineFontSize }}>
+                <span style={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere' }}>{treatment.description}</span>
+                <span style={{ flex: '0 1 auto', minWidth: 0, overflowWrap: 'anywhere', textAlign: 'right', fontWeight: 700 }}>{formatCurrency(pricing.finalCost, effectiveCurrency)}</span>
               </div>
-              <div style={{ fontSize: '7px', color: '#555' }}>
+              <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>
                 {new Date(treatment.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 {treatment.teeth && treatment.teeth.length > 0 ? ` | ${formatTeethWithPosition(treatment.teeth)}` : ''}
               </div>
               {pricing.discountAmount > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '7px', color: pricing.note === 'FOC' ? '#b45309' : '#15803d' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalSmallFontSize, color: pricing.note === 'FOC' ? '#b45309' : '#15803d' }}>
                   <span>Std {formatCurrency(pricing.standardCost, effectiveCurrency)}</span>
                   <span>{pricing.note}: -{formatCurrency(pricing.discountAmount, effectiveCurrency)}</span>
                 </div>
@@ -354,17 +355,17 @@ const Receipt: React.FC<ReceiptProps> = ({
 
   const renderThermalMedicines = () => (
     <div style={{ marginBottom: '6px' }}>
-      <div style={{ fontSize: '9px', fontWeight: 700, marginBottom: '2px' }}>-- MEDICINES & ITEMS --</div>
+      <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700, marginBottom: '2px' }}>-- MEDICINES & ITEMS --</div>
       {receiptMedicines.length === 0 ? (
-        <div style={{ fontSize: '8px', fontStyle: 'italic', color: '#666' }}>No medicines or items recorded</div>
+        <div style={{ fontSize: thermalSmallFontSize, fontStyle: 'italic', color: '#666' }}>No medicines or items recorded</div>
       ) : (
         receiptMedicines.map((med, idx) => (
           <div key={idx} style={{ marginBottom: '2px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-              <span style={{ flex: 1 }}>{med.medicine_name || 'Medicine'} x{med.quantity}</span>
-              <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(med.total_price || 0, effectiveCurrency)}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '4px', minWidth: 0, fontSize: thermalLineFontSize }}>
+              <span style={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere' }}>{med.medicine_name || 'Medicine'} x{med.quantity}</span>
+              <span style={{ flex: '0 1 auto', minWidth: 0, overflowWrap: 'anywhere', textAlign: 'right', fontWeight: 700 }}>{formatCurrency(med.total_price || 0, effectiveCurrency)}</span>
             </div>
-            <div style={{ fontSize: '7px', color: '#555' }}>
+            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>
               @ {formatCurrency(med.unit_price || 0, effectiveCurrency)}/ea
             </div>
           </div>
@@ -546,13 +547,14 @@ const Receipt: React.FC<ReceiptProps> = ({
           padding: thermalContentPadding,
           fontFamily: "'Courier New', Courier, monospace",
           fontSize: thermalBaseFontSize,
+          fontWeight: thermalTypography.weight,
           lineHeight: '1.3',
           color: '#222'
         }}>
           {/* Clinic Header */}
           <div style={{ textAlign: 'center', marginBottom: '6px' }}>
             <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-            <div style={{ fontSize: '8px', color: '#555' }}>Professional Dental Care Services</div>
+            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>Professional Dental Care Services</div>
             <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
           </div>
 
@@ -560,7 +562,7 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Receipt Info */}
           <div style={{ marginBottom: '6px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalSmallFontSize }}>
               <span>Receipt #: {receiptNumber}</span>
               <span>{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
             </div>
@@ -570,9 +572,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Patient Info */}
           <div style={{ marginBottom: '6px' }}>
-            <div style={{ fontSize: '9px', fontWeight: 700 }}>{patient.name}</div>
-            <div style={{ fontSize: '7px', color: '#555' }}>{patient.email}</div>
-            <div style={{ fontSize: '7px', color: '#555' }}>{patient.phone}</div>
+            <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
+            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
+            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
           </div>
 
           {thermalDivider()}
@@ -594,7 +596,7 @@ const Receipt: React.FC<ReceiptProps> = ({
             {thermalLine('Subtotal:', formatCurrency(grandTotal, currency), undefined, { fontWeight: 700 })}
             {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, currency)}`, undefined, { color: '#16a34a' })}
             {thermalThickDivider()}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 700, marginTop: '2px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalBaseFontSize, fontWeight: 700, marginTop: '2px' }}>
               <span>BALANCE DUE</span>
               <span style={{ color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
                 {formatCurrency(remainingBalance, currency)}
@@ -606,24 +608,24 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Payment Details */}
           {totalPaid > 0 && (
-            <div style={{ marginBottom: '6px', fontSize: '8px', lineHeight: '1.35' }}>
-              <div style={{ fontSize: '8.5px', fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
-              {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: '8px' }, { fontSize: '8px', fontWeight: 700 })}
-              {thermalLine('Date:', today, { fontSize: '8px' }, { fontSize: '8px' })}
+            <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
+              <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
+              {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
+              {thermalLine('Date:', today, { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
               {renderThermalPaymentAllocations()}
               {thermalLine('Status:', 'Paid', undefined, { color: '#16a34a' })}
             </div>
           )}
 
           {/* Footer */}
-          <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '8px', color: '#555' }}>
+          <div style={{ textAlign: 'center', marginTop: '8px', fontSize: thermalSmallFontSize, color: '#555' }}>
             <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {appName}!</div>
             <div>This is a computer-generated receipt.</div>
             <div>No signature required.</div>
           </div>
 
           {/* Receipt cut line */}
-          <div style={{ textAlign: 'center', marginTop: '6px', fontSize: '8px', color: '#999', letterSpacing: '2px' }}>
+          <div style={{ textAlign: 'center', marginTop: '6px', fontSize: thermalSmallFontSize, color: '#999', letterSpacing: '2px' }}>
             - - - - - - - - - - - - - - - - -
           </div>
         </div>
@@ -764,13 +766,14 @@ const Receipt: React.FC<ReceiptProps> = ({
         background: 'white',
         fontFamily: "'Courier New', Courier, monospace",
         fontSize: thermalBaseFontSize,
+        fontWeight: thermalTypography.weight,
         lineHeight: '1.3',
         color: '#222'
       }}>
         {/* Clinic Header */}
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
           <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-          <div style={{ fontSize: '8px', color: '#555' }}>Professional Dental Care Services</div>
+          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>Professional Dental Care Services</div>
           <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
         </div>
 
@@ -778,7 +781,7 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Receipt Info */}
         <div style={{ marginBottom: '6px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalSmallFontSize }}>
             <span>Receipt #: {receiptNumber}</span>
             <span>{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
           </div>
@@ -788,9 +791,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Patient Info */}
         <div style={{ marginBottom: '6px' }}>
-          <div style={{ fontSize: '9px', fontWeight: 700 }}>{patient.name}</div>
-          <div style={{ fontSize: '7px', color: '#555' }}>{patient.email}</div>
-          <div style={{ fontSize: '7px', color: '#555' }}>{patient.phone}</div>
+          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
+          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
+          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
         </div>
 
         <div style={{ borderTop: '1px dashed #333', margin: '4px 0' }} />
@@ -812,7 +815,7 @@ const Receipt: React.FC<ReceiptProps> = ({
           {thermalLine('Subtotal:', formatCurrency(grandTotal, currency), undefined, { fontWeight: 700 })}
           {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, currency)}`, undefined, { color: '#16a34a' })}
           <div style={{ borderTop: '2px solid #333', margin: '4px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 700, marginTop: '2px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalBaseFontSize, fontWeight: 700, marginTop: '2px' }}>
             <span>BALANCE DUE</span>
             <span style={{ color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
               {formatCurrency(remainingBalance, currency)}
@@ -824,24 +827,24 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Payment Details */}
         {totalPaid > 0 && (
-          <div style={{ marginBottom: '6px', fontSize: '8px', lineHeight: '1.35' }}>
-            <div style={{ fontSize: '8.5px', fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
-            {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: '8px' }, { fontSize: '8px', fontWeight: 700 })}
-            {thermalLine('Date:', today, { fontSize: '8px' }, { fontSize: '8px' })}
+          <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
+            <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
+            {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
+            {thermalLine('Date:', today, { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
             {renderThermalPaymentAllocations()}
             {thermalLine('Status:', 'Paid', undefined, { color: '#16a34a' })}
           </div>
         )}
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '8px', color: '#555' }}>
+        <div style={{ textAlign: 'center', marginTop: '8px', fontSize: thermalSmallFontSize, color: '#555' }}>
           <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {appName}!</div>
           <div>This is a computer-generated receipt.</div>
           <div>No signature required.</div>
         </div>
 
         {/* Receipt cut line */}
-        <div style={{ textAlign: 'center', marginTop: '6px', fontSize: '8px', color: '#999', letterSpacing: '2px' }}>
+        <div style={{ textAlign: 'center', marginTop: '6px', fontSize: thermalSmallFontSize, color: '#999', letterSpacing: '2px' }}>
           - - - - - - - - - - - - - - - - -
         </div>
       </div>
@@ -1021,31 +1024,32 @@ const Receipt: React.FC<ReceiptProps> = ({
           background: 'white',
           fontFamily: "'Courier New', Courier, monospace",
           fontSize: thermalBaseFontSize,
+          fontWeight: thermalTypography.weight,
           lineHeight: '1.3',
           color: '#222'
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
           <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-          <div style={{ fontSize: '8px', color: '#555' }}>PAYMENT RECEIPT</div>
+          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>PAYMENT RECEIPT</div>
           <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
         </div>
 
         {thermalThickDivider()}
-        {thermalLine('Receipt #:', receiptNumber, { fontSize: '8px' }, { fontSize: '8px' })}
-        {thermalLine('Date:', formatShortDate(`${paymentSnapshot.receiptDate}T00:00:00`), { fontSize: '8px' }, { fontSize: '8px' })}
+        {thermalLine('Receipt #:', receiptNumber, { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
+        {thermalLine('Date:', formatShortDate(`${paymentSnapshot.receiptDate}T00:00:00`), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
         {thermalDivider()}
 
         <div style={{ marginBottom: '6px' }}>
-          <div style={{ fontSize: '9px', fontWeight: 700 }}>{patientDisplay.name}</div>
-          {patientDisplay.patientUniqueId ? <div style={{ fontSize: '7px', color: '#555' }}>ID: {patientDisplay.patientUniqueId}</div> : null}
-          {patientDisplay.phone ? <div style={{ fontSize: '7px', color: '#555' }}>{patientDisplay.phone}</div> : null}
-          {patientDisplay.email ? <div style={{ fontSize: '7px', color: '#555' }}>{patientDisplay.email}</div> : null}
+          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patientDisplay.name}</div>
+          {patientDisplay.patientUniqueId ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>ID: {patientDisplay.patientUniqueId}</div> : null}
+          {patientDisplay.phone ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.phone}</div> : null}
+          {patientDisplay.email ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.email}</div> : null}
         </div>
 
         {thermalDivider()}
         <div style={{ textAlign: 'center', margin: '6px 0' }}>
-          <div style={{ fontSize: '8px', color: '#555' }}>AMOUNT RECEIVED</div>
+          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>AMOUNT RECEIVED</div>
           <div style={{ fontSize: thermalAmountFontSize, fontWeight: 700 }}>{formatCurrency(paymentSnapshot.payment.amountPaid, effectiveCurrency)}</div>
         </div>
 
@@ -1065,8 +1069,8 @@ const Receipt: React.FC<ReceiptProps> = ({
         </div>
 
         {thermalThickDivider()}
-        <div style={{ marginBottom: '6px', fontSize: '8px', lineHeight: '1.35' }}>
-          <div style={{ fontSize: '8.5px', fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
+        <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
+          <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
           {thermalLine('Method:', formatPaymentMethod(paymentSnapshot.payment.method))}
           {thermalLine('Status:', paymentSnapshot.payment.status === 'FULL' ? 'Paid in Full' : 'Partial Payment')}
           {paymentServiceFeeAmount > 0 ? thermalLine('Fee:', `${paymentServiceFeeLabel} ${formatCurrency(paymentServiceFeeAmount, effectiveCurrency)}`) : null}
@@ -1074,12 +1078,12 @@ const Receipt: React.FC<ReceiptProps> = ({
         </div>
 
         {thermalDivider()}
-        <div style={{ marginBottom: '6px', fontSize: '8px', lineHeight: '1.35' }}>
-          <div style={{ fontSize: '8.5px', fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- BALANCE SUMMARY --</div>
+        <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
+          <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- BALANCE SUMMARY --</div>
           {thermalLine('Before Payment:', formatCurrency(paymentSnapshot.payment.balanceBefore, effectiveCurrency))}
           {thermalLine('Payment Received:', `-${formatCurrency(paymentSnapshot.payment.amountPaid, effectiveCurrency)}`, undefined, { color: '#16a34a' })}
           {thermalThickDivider()}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 700, marginTop: '2px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalBaseFontSize, fontWeight: 700, marginTop: '2px' }}>
             <span>REMAINING</span>
             <span style={{ color: paymentSnapshot.payment.balanceAfter > 0 ? '#b45309' : '#16a34a' }}>
               {paymentSnapshot.payment.balanceAfter > 0 ? formatCurrency(paymentSnapshot.payment.balanceAfter, effectiveCurrency) : 'Clear'}
@@ -1088,13 +1092,13 @@ const Receipt: React.FC<ReceiptProps> = ({
         </div>
 
         {thermalThickDivider()}
-        <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '8px', color: '#555' }}>
+        <div style={{ textAlign: 'center', marginTop: '8px', fontSize: thermalSmallFontSize, color: '#555' }}>
           <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {effectiveAppName}.</div>
           <div>This is a computer-generated payment receipt.</div>
           <div>No signature required.</div>
         </div>
 
-        <div style={{ textAlign: 'center', marginTop: '6px', fontSize: '8px', color: '#999', letterSpacing: '2px' }}>
+        <div style={{ textAlign: 'center', marginTop: '6px', fontSize: thermalSmallFontSize, color: '#999', letterSpacing: '2px' }}>
           - - - - - - - - - - - - - - - - -
         </div>
       </div>
@@ -1209,10 +1213,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           body > .receipt-print {
             display: block !important;
-            /* Fixed elements have special paged-media behavior in Chromium and
-               can be centered or repeated when a thermal driver substitutes a
-               longer roll page. Anchor the one thermal copy to page one instead;
-               keep A4 in normal flow. */
+            /* Normal flow starts the only printable body child at page origin.
+               Absolute/fixed paged-media elements can be offset, centred, or
+               repeated by Chromium and thermal printer drivers. */
             position: ${printPosition} !important;
             top: 0 !important;
             left: 0 !important;
@@ -1235,10 +1238,12 @@ const Receipt: React.FC<ReceiptProps> = ({
             position: relative;
             display: block !important;
             width: ${thermalPaperWidth} !important;
+            max-width: ${thermalPaperWidth} !important;
             min-height: 0 !important;
             height: auto !important;
             margin: 0 !important;
             overflow: visible !important;
+            overflow-wrap: anywhere;
             color: #000 !important;
             font-weight: 600 !important;
             -webkit-print-color-adjust: exact;

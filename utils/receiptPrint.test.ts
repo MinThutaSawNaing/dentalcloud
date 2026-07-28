@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getReceiptPageSize,
   getReceiptPrintPosition,
+  getThermalReceiptTypography,
   getThermalPageHeightMm,
   getThermalPaperWidthMm,
   THERMAL_PAGE_SAFETY_MM
@@ -18,10 +19,29 @@ describe('receipt print sizing', () => {
     expect(getThermalPaperWidthMm('THERMAL_80MM')).toBe(80);
   });
 
-  it('anchors thermal receipts to page one without fixed paged-media positioning', () => {
-    expect(getReceiptPrintPosition('THERMAL_55MM')).toBe('absolute');
-    expect(getReceiptPrintPosition('THERMAL_80MM')).toBe('absolute');
+  it('keeps every receipt in normal flow at the first page origin', () => {
+    expect(getReceiptPrintPosition('THERMAL_55MM')).toBe('static');
+    expect(getReceiptPrintPosition('THERMAL_80MM')).toBe('static');
     expect(getReceiptPrintPosition('A4')).toBe('static');
+  });
+
+  it('uses larger, semibold thermal typography for both roll widths', () => {
+    expect(getThermalReceiptTypography('THERMAL_55MM')).toEqual({
+      base: 11,
+      line: 10,
+      small: 9,
+      header: 14,
+      amount: 16,
+      weight: 600
+    });
+    expect(getThermalReceiptTypography('THERMAL_80MM')).toEqual({
+      base: 12,
+      line: 11,
+      small: 10,
+      header: 16,
+      amount: 18,
+      weight: 600
+    });
   });
 
   it('sizes a thermal page to its rendered content instead of a fixed A4 height', () => {
