@@ -2991,6 +2991,15 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpdateCancellationOutcome = async (
+    id: string,
+    outcome: import('./types').CancellationOutcome | null,
+    completedLaterAppointmentId?: string | null
+  ) => {
+    await api.appointments.updateCancellationOutcome(id, outcome, completedLaterAppointmentId);
+    await fetchDashboardData(dashboardLocationId, locations);
+  };
+
   const handleCreateLocation = async (locData: Partial<Location>) => {
     try {
       await api.locations.create(locData);
@@ -3903,6 +3912,7 @@ const App: React.FC = () => {
                   allBranchesValue={ALL_BRANCHES_VALUE}
                   canViewAllBranches={canAdminViewAllBranches}
                   onLocationChange={handleDashboardLocationChange}
+                  onUpdateCancellationOutcome={handleUpdateCancellationOutcome}
                   onLoadTreatmentAnalysis={async (dateFrom, dateTo) => {
                     const session = auth.getSession();
                     const restrictedLocationId = getSessionRestrictedLocationId(session);

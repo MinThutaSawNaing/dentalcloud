@@ -99,7 +99,7 @@ The main component responsible for AI interactions, featuring:
 - Appointments do not collect target teeth. Teeth are recorded later on treatment/clinical records.
 - Lead appointments stay as appointment-only records until converted. Do not create a patient profile for a New Patient / lead appointment unless the user explicitly asks to register or convert that lead.
 - Completing a registered-patient appointment considers the per-visit clinical fee. The first completed visit uses the new-patient price and later completed visits use the returning-patient price. Only waive it on an explicit user request.
-- Admin Dashboard > **Recalls & Cancels** reuses appointment data: Upcoming Recalls are future Scheduled registered-patient appointments from Clinical Focus next appointment; Late / No-show are past Scheduled appointments including unregistered leads; Cancelled Appointments are all Cancelled appointments with patient or guest names.
+- Admin Dashboard > **Recalls & Cancels** reuses appointment data: Upcoming Recalls are future Scheduled registered-patient appointments from Clinical Focus next appointment; Late / No-show are past Scheduled appointments including unregistered leads. Cancelled appointments start in **Needs Follow-up** and staff can move them to **No Show**, **Rescheduled**, or **Completed Later**. Completed Later must link to a later Completed appointment for the same registered patient; the original appointment remains Cancelled.
 
 **Key Processes:**
 ```

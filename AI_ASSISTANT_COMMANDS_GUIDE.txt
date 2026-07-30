@@ -139,7 +139,7 @@ Completing a registered-patient appointment applies the configured per-visit cli
 
 Appointments use Clinical Focus and Extra Notes. Do not put target teeth on appointments; record teeth on the treatment/clinical record.
 
-Admin Dashboard > Recalls & Cancels is read-only appointment reporting. Upcoming Recalls = future Scheduled registered-patient appointments from Clinical Focus next appointment. Late / No-show = past Scheduled appointments, including New Patient leads without accounts. Cancelled Appointments = all Cancelled appointments with patient or guest names.
+- Admin Dashboard > Recalls & Cancels shows Upcoming Recalls (future Scheduled registered-patient appointments) and Late / No-show (past Scheduled appointments). Cancelled appointments begin in Needs Follow-up. Staff can record No Show or Rescheduled, or trace Completed on Later Date to a later Completed appointment for the same registered patient; each resolved outcome moves to its dedicated tab while the original appointment remains Cancelled.
 
 FIND PATIENT APPOINTMENTS:
 { "action": "apt_find_patient", "params": { "name": "John Smith" } }

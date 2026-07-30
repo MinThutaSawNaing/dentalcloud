@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -2594,6 +2594,81 @@ export const api = {
         .eq('id', id);
 
       if (error) throw new Error(error.message);
+    },
+    updateCancellationOutcome: async (
+      id: string,
+      outcome: CancellationOutcome | null,
+      completedLaterAppointmentId?: string | null
+    ): Promise<Appointment> => {
+      const { data: cancelledAppointment, error: cancelledAppointmentError } = await supabase
+        .from('appointments')
+        .select('id, patient_id, date, time, status')
+        .eq('id', id)
+        .single();
+
+      if (cancelledAppointmentError || !cancelledAppointment) {
+        if (cancelledAppointmentError && isMissingColumnError(cancelledAppointmentError, 'cancellation_outcome')) {
+          throw new Error('Cancellation follow-up outcomes are not installed. Run database/cancellation_follow_up_outcomes_migration.sql in Supabase.');
+        }
+        throw new Error(cancelledAppointmentError?.message || 'Cancelled appointment not found.');
+      }
+
+      if (cancelledAppointment.status !== 'Cancelled') {
+        throw new Error('Only cancelled appointments can have a follow-up outcome.');
+      }
+
+      const allowedOutcomes: Array<CancellationOutcome | null> = [null, 'NO_SHOW', 'RESCHEDULED', 'COMPLETED_LATER'];
+      if (!allowedOutcomes.includes(outcome)) {
+        throw new Error('Invalid cancellation follow-up outcome.');
+      }
+
+      let linkedCompletedAppointmentId: string | null = null;
+      if (outcome === 'COMPLETED_LATER') {
+        if (!completedLaterAppointmentId || !cancelledAppointment.patient_id) {
+          throw new Error('Choose a later completed appointment for this registered patient.');
+        }
+
+        const { data: completedAppointment, error: completedAppointmentError } = await supabase
+          .from('appointments')
+          .select('id, patient_id, date, time, status')
+          .eq('id', completedLaterAppointmentId)
+          .single();
+
+        if (completedAppointmentError || !completedAppointment) {
+          throw new Error(completedAppointmentError?.message || 'Later completed appointment not found.');
+        }
+
+        const toAppointmentDateTimeKey = (appointment: { date: string; time?: string | null }) =>
+          `${appointment.date}T${String(appointment.time || '00:00').slice(0, 5).padEnd(5, '0')}`;
+        const cancelledDateTime = toAppointmentDateTimeKey(cancelledAppointment);
+        const completedDateTime = toAppointmentDateTimeKey(completedAppointment);
+        if (
+          completedAppointment.status !== 'Completed' ||
+          completedAppointment.patient_id !== cancelledAppointment.patient_id ||
+          completedDateTime <= cancelledDateTime
+        ) {
+          throw new Error('The linked appointment must be a later completed appointment for the same patient.');
+        }
+        linkedCompletedAppointmentId = completedAppointment.id;
+      }
+
+      const { data: result, error } = await supabase
+        .from('appointments')
+        .update({
+          cancellation_outcome: outcome,
+          completed_later_appointment_id: linkedCompletedAppointmentId
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        if (isMissingColumnError(error, 'cancellation_outcome')) {
+          throw new Error('Cancellation follow-up outcomes are not installed. Run database/cancellation_follow_up_outcomes_migration.sql in Supabase.');
+        }
+        throw new Error(error.message);
+      }
+      return result as Appointment;
     },
     update: async (
       id: string,

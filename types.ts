@@ -353,6 +353,8 @@ export interface Appointment {
   time: string; // HH:MM
   type: string;
   status: 'Scheduled' | 'Completed' | 'Cancelled';
+  cancellation_outcome?: CancellationOutcome | null;
+  completed_later_appointment_id?: string | null;
   notes?: string;
   guest_name?: string | null;
   guest_phone?: string | null;
@@ -367,6 +369,8 @@ export interface Appointment {
   clinical_fee_patient_category?: 'NEW' | 'RETURNING' | null;
   clinical_fee_applied_at?: string | null;
 }
+
+export type CancellationOutcome = 'NO_SHOW' | 'RESCHEDULED' | 'COMPLETED_LATER';
 
 export interface AppointmentRescheduleLog {
   id: string;

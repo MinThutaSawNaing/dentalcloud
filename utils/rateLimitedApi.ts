@@ -41,6 +41,7 @@ export const rateLimitedApi = {
     create: createRateLimitedFunction('appointments:create', api.appointments.create, RATE_LIMIT_PRESETS.WRITE),
     update: createRateLimitedFunction('appointments:update', api.appointments.update, RATE_LIMIT_PRESETS.WRITE),
     updateStatus: createRateLimitedFunction('appointments:updateStatus', api.appointments.updateStatus, RATE_LIMIT_PRESETS.WRITE),
+    updateCancellationOutcome: createRateLimitedFunction('appointments:updateCancellationOutcome', api.appointments.updateCancellationOutcome, RATE_LIMIT_PRESETS.WRITE),
     delete: createRateLimitedFunction('appointments:delete', api.appointments.delete, RATE_LIMIT_PRESETS.WRITE),
     cleanupOld: createRateLimitedFunction('appointments:cleanupOld', api.appointments.cleanupOld, RATE_LIMIT_PRESETS.WRITE),
   },

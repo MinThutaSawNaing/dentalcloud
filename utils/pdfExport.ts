@@ -351,7 +351,7 @@ export const exportRecallsCancelsToPDF = (
   locationName: string
 ) => {
   const sections = buildRecallsCancelsExportRows(appointments, todayKey);
-  const total = sections.recalls.length + sections.late.length + sections.cancelled.length;
+  const total = sections.recalls.length + sections.late.length + sections.cancelled.length + sections.noShow.length + sections.rescheduled.length + sections.completedLater.length;
   const doc = new jsPDF('l', 'mm', 'a4');
 
   doc.setFontSize(20);
@@ -362,12 +362,12 @@ export const exportRecallsCancelsToPDF = (
   doc.text(`Scope: ${locationName}`, 14, 26);
   doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 32);
   doc.text(
-    `Upcoming Recalls: ${sections.recalls.length}   |   Late / No-show: ${sections.late.length}   |   Cancelled: ${sections.cancelled.length}   |   Total: ${total}`,
+    `Recalls: ${sections.recalls.length} | Late: ${sections.late.length} | Follow-up: ${sections.cancelled.length} | No Show: ${sections.noShow.length} | Rescheduled: ${sections.rescheduled.length} | Completed Later: ${sections.completedLater.length} | Total: ${total}`,
     14,
     38
   );
 
-  const tableHeaders = [['Date', 'Time', 'Patient', 'Patient Type', 'Phone', 'Source', 'Appointment', 'Doctor', 'Clinical Focus', 'Notes']];
+  const tableHeaders = [['Date', 'Time', 'Patient', 'Patient Type', 'Phone', 'Source', 'Appointment', 'Doctor', 'Clinical Focus', 'Notes', 'Outcome', 'Completed Later']];
   const tableBody = (rows: RecallsCancelsExportRow[]) => rows.map(row => [
     row.date,
     row.time || '-',
@@ -378,7 +378,9 @@ export const exportRecallsCancelsToPDF = (
     row.appointmentType,
     row.doctor,
     row.clinicalFocus || '-',
-    row.notes || '-'
+    row.notes || '-',
+    row.cancellationOutcome ? row.cancellationOutcome.replaceAll('_', ' ') : '-',
+    row.completedLaterDate || '-'
   ]);
   const sectionDefinitions: Array<{
     title: string;
@@ -387,7 +389,10 @@ export const exportRecallsCancelsToPDF = (
   }> = [
     { title: 'Upcoming Recalls', rows: sections.recalls, color: [5, 150, 105] },
     { title: 'Late / No-show', rows: sections.late, color: [217, 119, 6] },
-    { title: 'Cancelled Appointments', rows: sections.cancelled, color: [225, 29, 72] }
+    { title: 'Cancelled - Needs Follow-up', rows: sections.cancelled, color: [225, 29, 72] },
+    { title: 'Cancelled - No Show', rows: sections.noShow, color: [217, 119, 6] },
+    { title: 'Cancelled - Rescheduled', rows: sections.rescheduled, color: [5, 150, 105] },
+    { title: 'Cancelled - Completed Later', rows: sections.completedLater, color: [5, 150, 105] }
   ];
 
   let startY = 47;
@@ -403,7 +408,7 @@ export const exportRecallsCancelsToPDF = (
     autoTable(doc, {
       startY: startY + 4,
       head: tableHeaders,
-      body: section.rows.length > 0 ? tableBody(section.rows) : [['No records', '', '', '', '', '', '', '', '', '']],
+      body: section.rows.length > 0 ? tableBody(section.rows) : [['No records', '', '', '', '', '', '', '', '', '', '', '']],
       theme: 'grid',
       headStyles: { fillColor: section.color, fontSize: 8, fontStyle: 'bold' },
       bodyStyles: { fontSize: 7, textColor: [51, 65, 85], cellPadding: 2, overflow: 'linebreak' },

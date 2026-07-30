@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, Activity, Users, Calendar as CalendarIcon, PieChart as PieIcon, MapPin, TrendingDown, LineChart as LineChartIcon, Trophy, AlertTriangle, Clock, XCircle, ArrowUpRight, ChevronRight } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
-import { Patient, Appointment, ClinicalRecord, Location, Expense, PaymentRecord } from '../types';
+import { Patient, Appointment, ClinicalRecord, Location, Expense, PaymentRecord, CancellationOutcome } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
 import { formatPaymentMethod } from '../utils/paymentMethods';
 import { appointmentPatientName, buildRecallsCancelsLists } from '../utils/recallsCancels';
@@ -32,6 +32,7 @@ interface DashboardViewProps {
   onLoadTreatmentAnalysis: (dateFrom: string, dateTo: string) => Promise<ClinicalRecord[]>;
   onLoadMonthlyReport: (dateFrom: string, dateTo: string, onProgress: MonthlyReportProgressCallback) => Promise<MonthlyReport>;
   onSelectPatient: (patient: Patient) => void;
+  onUpdateCancellationOutcome: (id: string, outcome: CancellationOutcome | null, completedLaterAppointmentId?: string | null) => Promise<void>;
   loading?: boolean;
 }
 
@@ -57,6 +58,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   onLoadTreatmentAnalysis,
   onLoadMonthlyReport,
   onSelectPatient,
+  onUpdateCancellationOutcome,
   loading = false
 }) => {
   const selectedLocationName = useMemo(() => {
@@ -67,6 +69,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const todayKey = useMemo(() => toLocalISODate(new Date()), []);
   const [activeTab, setActiveTab] = useState<'overview' | 'recalls-cancels' | 'treatment-analysis'>('overview');
   const [exportingRecallsCancels, setExportingRecallsCancels] = useState(false);
+  const [cancellationTab, setCancellationTab] = useState<'pending' | 'no-show' | 'rescheduled' | 'completed-later'>('pending');
+  const [savingCancellationId, setSavingCancellationId] = useState<string | null>(null);
+  const [completedLaterPickerId, setCompletedLaterPickerId] = useState<string | null>(null);
   const [exportingMonthlyReport, setExportingMonthlyReport] = useState(false);
   const [monthlyReportProgress, setMonthlyReportProgress] = useState({ percent: 0, label: '' });
   const [dateFrom, setDateFrom] = useState(todayKey);
@@ -236,7 +241,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   const recallsCancelsLists = useMemo(() => buildRecallsCancelsLists(appointments, todayKey), [appointments, todayKey]);
-  const recallsCancelsTotal = recallsCancelsLists.recalls.length + recallsCancelsLists.late.length + recallsCancelsLists.cancelled.length;
+  const recallsCancelsTotal = recallsCancelsLists.recalls.length + recallsCancelsLists.late.length + recallsCancelsLists.cancelled.length + recallsCancelsLists.noShow.length + recallsCancelsLists.rescheduled.length + recallsCancelsLists.completedLater.length;
 
   const handleRecallsCancelsExport = async (format: 'pdf' | 'excel') => {
     if (exportingRecallsCancels || recallsCancelsTotal === 0) return;
@@ -389,6 +394,170 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                   className={`grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-5 py-3 transition-colors ${classes.row}`}
                 >
                   {rowContent}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const appointmentDateTimeKey = (appointment: Appointment) => {
+    const time = String(appointment.time || '00:00').slice(0, 5).padEnd(5, '0');
+    return `${appointment.date}T${time}`;
+  };
+
+  const completedLaterCandidates = (appointment: Appointment) => appointments
+    .filter((candidate) => {
+      if (!appointment.patient_id || candidate.patient_id !== appointment.patient_id || candidate.status !== 'Completed') return false;
+      return appointmentDateTimeKey(candidate) > appointmentDateTimeKey(appointment);
+    })
+    .sort((a, b) => appointmentDateTimeKey(a).localeCompare(appointmentDateTimeKey(b)));
+
+  const saveCancellationOutcome = async (
+    appointment: Appointment,
+    outcome: CancellationOutcome | null,
+    completedLaterAppointmentId?: string | null
+  ) => {
+    setSavingCancellationId(appointment.id);
+    try {
+      await onUpdateCancellationOutcome(appointment.id, outcome, completedLaterAppointmentId);
+      setCompletedLaterPickerId(null);
+    } catch (error: any) {
+      console.error('Unable to save cancellation follow-up outcome:', error);
+      window.alert(error?.message || 'The cancellation follow-up outcome could not be saved.');
+    } finally {
+      setSavingCancellationId(null);
+    }
+  };
+
+  const cancellationPanels = {
+    pending: {
+      title: 'Needs Follow-up',
+      description: 'Cancelled visits that still need an outcome.',
+      rows: recallsCancelsLists.cancelled,
+      emptyMessage: 'No cancelled appointments need follow-up.',
+      tone: 'cancelled' as const
+    },
+    'no-show': {
+      title: 'No Show',
+      description: 'Cancelled visits confirmed as no-shows.',
+      rows: recallsCancelsLists.noShow,
+      emptyMessage: 'No no-show outcomes recorded.',
+      tone: 'late' as const
+    },
+    rescheduled: {
+      title: 'Rescheduled',
+      description: 'Cancelled visits that have been rescheduled.',
+      rows: recallsCancelsLists.rescheduled,
+      emptyMessage: 'No rescheduled outcomes recorded.',
+      tone: 'recall' as const
+    },
+    'completed-later': {
+      title: 'Completed Later',
+      description: 'Cancelled visits linked to a later completed appointment.',
+      rows: recallsCancelsLists.completedLater,
+      emptyMessage: 'No completed-later outcomes recorded.',
+      tone: 'recall' as const
+    }
+  };
+
+  const renderCancellationPanel = () => {
+    const panel = cancellationPanels[cancellationTab];
+    const classes = triageToneClasses[panel.tone];
+
+    return (
+      <section className={`overflow-hidden rounded-2xl border shadow-sm ${classes.shell}`}>
+        <div className={`h-1.5 ${classes.accent}`} />
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className={`inline-flex h-10 w-10 flex-none items-center justify-center rounded-xl ${classes.icon}`}>
+              <XCircle className="h-4 w-4" />
+            </span>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">{panel.title}</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{panel.description}</p>
+            </div>
+          </div>
+          <p className={`font-mono text-3xl font-black leading-none tabular-nums ${classes.count}`}>{panel.rows.length}</p>
+        </div>
+
+        {panel.rows.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm font-medium text-slate-400">{panel.emptyMessage}</div>
+        ) : (
+          <div className="max-h-[480px] divide-y divide-slate-100 overflow-y-auto [scrollbar-width:thin]">
+            {panel.rows.map((appointment) => {
+              const patient = appointment.patient_id ? patients.find((candidate) => candidate.id === appointment.patient_id) : undefined;
+              const candidates = completedLaterCandidates(appointment);
+              const isSaving = savingCancellationId === appointment.id;
+              const isPickerOpen = completedLaterPickerId === appointment.id;
+              return (
+                <article key={appointment.id} className={`px-5 py-4 ${classes.row}`}>
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="truncate text-sm font-semibold text-slate-900">{appointmentPatientName(appointment)}</h4>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${classes.badge}`}>{appointment.patient_id ? 'Patient' : 'Lead'}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{appointment.type || 'No type'} · {formatAppointmentDate(appointment.date)} · {appointment.time || '--:--'}</p>
+                      {cancellationTab === 'completed-later' && appointment.completed_later_appointment_id ? (
+                        <p className="mt-1 text-xs font-medium text-emerald-700">
+                          Completed visit: {appointments.find((candidate) => candidate.id === appointment.completed_later_appointment_id)?.date || 'Linked appointment'}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {patient ? (
+                        <button type="button" onClick={() => onSelectPatient(patient)} className="rounded-lg border border-indigo-200 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Open chart</button>
+                      ) : null}
+                      {cancellationTab === 'pending' ? (
+                        <select
+                          value=""
+                          disabled={isSaving}
+                          onChange={(event) => {
+                            const outcome = event.target.value as CancellationOutcome | '';
+                            if (!outcome) return;
+                            if (outcome === 'COMPLETED_LATER') {
+                              setCompletedLaterPickerId(appointment.id);
+                              return;
+                            }
+                            void saveCancellationOutcome(appointment, outcome);
+                          }}
+                          className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500 disabled:opacity-60"
+                          aria-label={`Set cancellation outcome for ${appointmentPatientName(appointment)}`}
+                        >
+                          <option value="">{isSaving ? 'Saving…' : 'Set outcome'}</option>
+                          <option value="NO_SHOW">No Show</option>
+                          <option value="RESCHEDULED">Rescheduled</option>
+                          {appointment.patient_id ? <option value="COMPLETED_LATER">Completed on Later Date</option> : null}
+                        </select>
+                      ) : (
+                        <button type="button" disabled={isSaving} onClick={() => void saveCancellationOutcome(appointment, null)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60">Clear outcome</button>
+                      )}
+                    </div>
+                  </div>
+                  {isPickerOpen ? (
+                    <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                      <label className="block text-xs font-semibold text-indigo-900">Completed appointment on a later date</label>
+                      {candidates.length === 0 ? (
+                        <p className="mt-1 text-xs text-indigo-700">No later completed appointments are available for this patient.</p>
+                      ) : (
+                        <select
+                          defaultValue=""
+                          disabled={isSaving}
+                          onChange={(event) => {
+                            if (event.target.value) void saveCancellationOutcome(appointment, 'COMPLETED_LATER', event.target.value);
+                          }}
+                          className="mt-2 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">Choose completed appointment…</option>
+                          {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{formatAppointmentDate(candidate.date)} · {candidate.time || '--:--'} · {candidate.type || 'No type'}</option>)}
+                        </select>
+                      )}
+                      <button type="button" disabled={isSaving} onClick={() => setCompletedLaterPickerId(null)} className="mt-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900">Cancel</button>
+                    </div>
+                  ) : null}
                 </article>
               );
             })}
@@ -842,7 +1011,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             {renderTriagePanel({
               title: 'Upcoming Recalls',
               description: 'Scheduled patient follow-ups.',
@@ -861,14 +1030,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({
               icon: <AlertTriangle className="h-4 w-4" />
             })}
 
-            {renderTriagePanel({
-              title: 'Cancelled Appointments',
-              description: 'Cancelled visits, newest first.',
-              rows: recallsCancelsLists.cancelled,
-              emptyMessage: 'No cancelled appointments.',
-              tone: 'cancelled',
-              icon: <XCircle className="h-4 w-4" />
-            })}
+            <div className="xl:col-span-2">
+              <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Cancelled appointment follow-up outcomes">
+                {[
+                  { id: 'pending', label: 'Needs Follow-up', count: recallsCancelsLists.cancelled.length },
+                  { id: 'no-show', label: 'No Show', count: recallsCancelsLists.noShow.length },
+                  { id: 'rescheduled', label: 'Rescheduled', count: recallsCancelsLists.rescheduled.length },
+                  { id: 'completed-later', label: 'Completed Later', count: recallsCancelsLists.completedLater.length }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={cancellationTab === tab.id}
+                    onClick={() => setCancellationTab(tab.id as typeof cancellationTab)}
+                    className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${cancellationTab === tab.id ? 'border-rose-500 bg-rose-600 text-white shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200 hover:bg-rose-50'}`}
+                  >
+                    {tab.label} <span className="ml-1 opacity-80">{tab.count}</span>
+                  </button>
+                ))}
+              </div>
+              {renderCancellationPanel()}
+            </div>
           </div>
         </div>
       ) : (

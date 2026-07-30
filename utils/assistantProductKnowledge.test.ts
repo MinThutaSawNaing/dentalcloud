@@ -29,7 +29,7 @@ describe('assistant product knowledge', () => {
   it('documents current appointment, patient list, and audit workflows', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Scheduled first, Completed second, Cancelled last');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('New Patient/lead appointments should keep guest fields');
-    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Recalls & Cancels is read-only reporting');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Cancelled appointments begin in Needs Follow-up');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Created Date');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Last Visit');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('future or impossible dates are rejected');
