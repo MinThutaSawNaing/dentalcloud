@@ -17,6 +17,7 @@ describe('isReceiptItemRecent', () => {
   it('returns false for empty or invalid dates', () => {
     expect(isReceiptItemRecent('', today)).toBe(false);
     expect(isReceiptItemRecent('not-a-date', today)).toBe(false);
+    expect(isReceiptItemRecent('2025-02-30', today)).toBe(false);
   });
 });
 

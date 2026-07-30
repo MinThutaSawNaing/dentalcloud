@@ -7,8 +7,8 @@ const migration = readFileSync(migrationPath, 'utf8');
 
 describe('Material & Lab staff authorization migration', () => {
   it('keeps the deployed RPC signatures stable', () => {
-    expect(migration).toContain('public.replace_treatment_costs(\n  p_audit_log_id UUID,\n  p_items JSONB,\n  p_admin_user_id UUID,\n  p_admin_password TEXT,\n  p_request_token UUID');
-    expect(migration).toContain('public.acknowledge_commission_recalculation(\n  p_patient_id UUID, p_request_token UUID, p_admin_user_id UUID, p_admin_password TEXT');
+    expect(migration).toMatch(/public\.replace_treatment_costs\(\r?\n  p_audit_log_id UUID,\r?\n  p_items JSONB,\r?\n  p_admin_user_id UUID,\r?\n  p_admin_password TEXT,\r?\n  p_request_token UUID/);
+    expect(migration).toMatch(/public\.acknowledge_commission_recalculation\(\r?\n  p_patient_id UUID, p_request_token UUID, p_admin_user_id UUID, p_admin_password TEXT/);
   });
 
   it('requires normal staff to have the exact permission and their own valid token', () => {
@@ -29,8 +29,8 @@ describe('Material & Lab staff authorization migration', () => {
   });
 
   it('is transactional and reloads the API schema only after secured functions exist', () => {
-    expect(migration).toMatch(/^--[\s\S]*\nBEGIN;/);
-    expect(migration).toContain("NOTIFY pgrst, 'reload schema';\n\nCOMMIT;");
+    expect(migration).toMatch(/^--[\s\S]*\r?\nBEGIN;/);
+    expect(migration).toMatch(/NOTIFY pgrst, 'reload schema';\r?\n\r?\nCOMMIT;/);
     expect(migration).toContain("REVOKE ALL ON FUNCTION public.replace_treatment_costs(UUID, JSONB, UUID, TEXT, UUID) FROM PUBLIC;");
   });
 });

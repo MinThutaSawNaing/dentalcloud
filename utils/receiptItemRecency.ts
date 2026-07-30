@@ -1,18 +1,19 @@
 const ISO_DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-const toLocalDateKey = (date: Date): string => {
+export const getLocalDateKey = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 
-const normalizeDateKey = (dateStr: string): string | null => {
+export const getReceiptItemDateKey = (dateStr: string): string | null => {
   const trimmed = dateStr.trim();
   if (!trimmed) return null;
 
   if (ISO_DATE_ONLY_PATTERN.test(trimmed)) {
-    return trimmed;
+    const parsed = new Date(`${trimmed}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) || getLocalDateKey(parsed) !== trimmed ? null : trimmed;
   }
 
   const parsed = new Date(trimmed);
@@ -20,12 +21,12 @@ const normalizeDateKey = (dateStr: string): string | null => {
     return null;
   }
 
-  return toLocalDateKey(parsed);
+  return getLocalDateKey(parsed);
 };
 
 export const isReceiptItemRecent = (dateStr: string, today: Date = new Date()): boolean => {
-  const normalizedDate = normalizeDateKey(dateStr);
+  const normalizedDate = getReceiptItemDateKey(dateStr);
   if (!normalizedDate) return false;
-  return normalizedDate === toLocalDateKey(today);
+  return normalizedDate === getLocalDateKey(today);
 };
 
