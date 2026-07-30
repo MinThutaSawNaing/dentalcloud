@@ -10,6 +10,10 @@ import { buildRecallsCancelsExportRows, type RecallsCancelsExportRow } from './r
 import { buildPatientReport } from './patientReport';
 import { buildPatientReportPdfData } from './patientReportExport';
 
+export const RECALLS_CANCELS_PDF_TABLE_WIDTH = 252;
+export const RECALLS_CANCELS_PDF_COLUMN_WIDTHS = [16, 12, 23, 18, 17, 17, 21, 22, 30, 36, 20, 20] as const;
+export const RECALLS_CANCELS_PDF_HEADERS = ['Date', 'Time', 'Patient', 'Type', 'Phone', 'Source', 'Appt.', 'Doctor', 'Focus', 'Notes', 'Status', 'Done date'] as const;
+
 // Add type declaration for jsPDF with autoTable
 declare module 'jspdf' {
   interface jsPDF {
@@ -367,7 +371,7 @@ export const exportRecallsCancelsToPDF = (
     38
   );
 
-  const tableHeaders = [['Date', 'Time', 'Patient', 'Patient Type', 'Phone', 'Source', 'Appointment', 'Doctor', 'Clinical Focus', 'Notes', 'Outcome', 'Completed Later']];
+  const tableHeaders = [RECALLS_CANCELS_PDF_HEADERS];
   const tableBody = (rows: RecallsCancelsExportRow[]) => rows.map(row => [
     row.date,
     row.time || '-',
@@ -410,14 +414,24 @@ export const exportRecallsCancelsToPDF = (
       head: tableHeaders,
       body: section.rows.length > 0 ? tableBody(section.rows) : [['No records', '', '', '', '', '', '', '', '', '', '', '']],
       theme: 'grid',
-      headStyles: { fillColor: section.color, fontSize: 8, fontStyle: 'bold' },
+      headStyles: {
+        fillColor: section.color,
+        fontSize: 6.5,
+        fontStyle: 'bold',
+        cellPadding: 1.2,
+        overflow: 'ellipsize',
+        valign: 'middle'
+      },
       bodyStyles: { fontSize: 7, textColor: [51, 65, 85], cellPadding: 2, overflow: 'linebreak' },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: 14, right: 14, bottom: 18 },
       columnStyles: {
-        0: { cellWidth: 18 }, 1: { cellWidth: 13 }, 2: { cellWidth: 28 }, 3: { cellWidth: 22 },
-        4: { cellWidth: 20 }, 5: { cellWidth: 22 }, 6: { cellWidth: 25 }, 7: { cellWidth: 25 },
-        8: { cellWidth: 38 }, 9: { cellWidth: 42 }
+        0: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[0] }, 1: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[1] },
+        2: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[2] }, 3: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[3] },
+        4: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[4] }, 5: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[5] },
+        6: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[6] }, 7: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[7] },
+        8: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[8] }, 9: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[9] },
+        10: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[10] }, 11: { cellWidth: RECALLS_CANCELS_PDF_COLUMN_WIDTHS[11] }
       }
     });
     startY = (doc as any).lastAutoTable.finalY + 10;
