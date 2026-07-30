@@ -430,6 +430,11 @@ AS $$
 DECLARE
   v_completed_appointment appointments%ROWTYPE;
 BEGIN
+  IF NEW.status <> 'Cancelled' AND NEW.cancellation_outcome IS NOT NULL THEN
+    NEW.cancellation_outcome := NULL;
+    NEW.completed_later_appointment_id := NULL;
+    RETURN NEW;
+  END IF;
   IF NEW.patient_id IS NULL AND NEW.cancellation_outcome = 'COMPLETED_LATER' THEN
     NEW.cancellation_outcome := NULL;
     NEW.completed_later_appointment_id := NULL;

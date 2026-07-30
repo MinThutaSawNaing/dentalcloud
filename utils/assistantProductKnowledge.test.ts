@@ -6,7 +6,7 @@ import {
 
 describe('assistant product knowledge', () => {
   it('documents the current payment and immutable receipt workflow', () => {
-    expect(ASSISTANT_PRODUCT_KNOWLEDGE_VERSION).toBe('2026-07-20');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE_VERSION).toBe('2026-07-30');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Every payment requires one supported payment type');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('split across multiple distinct supported payment types');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('allocations must exactly equal the amount received');
@@ -15,6 +15,9 @@ describe('assistant product knowledge', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('immutable receipt snapshot');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('treatment and medicine lines');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('today in the clinic');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain("By default it shows only today's treatment visits");
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Past Treatments reveals earlier visits');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Advanced shows individual treatments');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('80 mm thermal');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Payment corrections are admin-only');
   });
@@ -30,6 +33,8 @@ describe('assistant product knowledge', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Scheduled first, Completed second, Cancelled last');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('New Patient/lead appointments should keep guest fields');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Cancelled appointments begin in Needs Follow-up');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('If staff reopen a cancelled appointment as Scheduled or Completed, its cancellation outcome is cleared');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('compact columns include Status and Done date');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Created Date');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Last Visit');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('future or impossible dates are rejected');

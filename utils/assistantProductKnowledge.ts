@@ -5,7 +5,7 @@
  * model to confuse with older Dental Cloud behavior. Action schemas remain
  * in AIAssistantView because they are only exposed in Agent Mode.
  */
-export const ASSISTANT_PRODUCT_KNOWLEDGE_VERSION = '2026-07-20';
+export const ASSISTANT_PRODUCT_KNOWLEDGE_VERSION = '2026-07-30';
 
 export const ASSISTANT_PRODUCT_KNOWLEDGE = `
 CURRENT DENTAL CLOUD WORKFLOW KNOWLEDGE (verified ${ASSISTANT_PRODUCT_KNOWLEDGE_VERSION}):
@@ -17,7 +17,7 @@ PAYMENTS AND RECEIPTS:
 - Payment submission is protected against duplicate posting with an in-flight guard and submission key. If staff reports a double-click, retry, or slow connection during payment, do not assume a second real payment was created; ask them to verify the payment record/receipt before taking corrective action.
 - Payment records have receipt numbers and can preserve an immutable receipt snapshot. A saved snapshot keeps the clinic heading/contact details, currency, patient details, amount paid, payment type, full/partial status, balance before and after, collector, and the treatment and medicine lines captured at payment time.
 - Reprinting a saved payment receipt must use its stored snapshot, so later edits to patient details, receipt settings, treatments, medicines, or balances do not rewrite the historical receipt.
-- The receipt item picker supports both treatments and standalone medicine sales. Its "Recent" / "NEW" marker means the item date is today in the clinic's local calendar, not "within the last several days."
+- The receipt item picker supports both treatments and standalone medicine sales. By default it shows only today's treatment visits, grouping all treatments completed on the same calendar day into one selectable visit. Past Treatments reveals earlier visits, and Advanced shows individual treatments when staff need to select only part of a visit. Its "Recent" / "NEW" marker means the item date is today in the clinic's local calendar, not "within the last several days."
 - Receipt header title, currency, and default output size (A4, 55 mm thermal, or 80 mm thermal) are shared clinic settings across devices. Changes apply to new receipts; stored historical snapshots keep their original values.
 - Payment corrections are admin-only. Direct payment audit edits are disabled; use the financial correction flow, require a reason, update the live balance consistently, and keep an immutable correction/audit entry.
 
@@ -35,6 +35,8 @@ APPOINTMENTS AND CLINICAL RECORDS:
 - Appointment editing is sanitized to match the form: registered-patient appointments should use an existing patient, New Patient/lead appointments should keep guest fields, and missing date/time/type/branch/doctor should be requested instead of invented.
 - Date reschedules can require a staff reason and are written to the Audit Log as rescheduled appointments.
 - Admin Dashboard > Recalls & Cancels shows appointment follow-up data: Upcoming Recalls are future Scheduled registered-patient appointments from Clinical Focus next appointment and Late / No-show are past Scheduled appointments including unregistered leads. Cancelled appointments begin in Needs Follow-up and can be moved to No Show, Rescheduled, or Completed Later. Completed Later requires a linked later Completed appointment for the same registered patient; this never changes the original Cancelled status.
+- The cancellation outcome tabs are Needs Follow-up, No Show, Rescheduled, and Completed Later. Clearing an outcome returns the original cancelled appointment to Needs Follow-up. If staff reopen a cancelled appointment as Scheduled or Completed, its cancellation outcome is cleared because it no longer applies.
+- Recalls & Cancels PDF and Excel exports include separate cancellation outcome sections. Their compact columns include Status and Done date; Done date is populated only for Completed Later links.
 
 OVERVIEW TREATMENT ANALYSIS:
 - Staff with Overview access can open the read-only Treatment Analysis screen from Overview > Treatment Mix (Range) > More Detail. The screen uses the Overview From/To dates and Report Scope branch. Date changes reload an open Treatment Analysis; changing Report Scope returns to Overview, so select More Detail again for the new branch scope. Loli may explain this navigation but has no action that opens the screen.

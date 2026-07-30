@@ -37,6 +37,14 @@ AS $$
 DECLARE
   v_completed_appointment appointments%ROWTYPE;
 BEGIN
+  -- Reopening a cancelled appointment makes its cancellation follow-up outcome
+  -- inapplicable. Preserve normal status changes by clearing it atomically.
+  IF NEW.status <> 'Cancelled' AND NEW.cancellation_outcome IS NOT NULL THEN
+    NEW.cancellation_outcome := NULL;
+    NEW.completed_later_appointment_id := NULL;
+    RETURN NEW;
+  END IF;
+
   -- Patient deletion preserves appointment history by clearing patient_id. A traceable
   -- completed-later relationship cannot survive that unlink, so clear it atomically.
   IF NEW.patient_id IS NULL AND NEW.cancellation_outcome = 'COMPLETED_LATER' THEN

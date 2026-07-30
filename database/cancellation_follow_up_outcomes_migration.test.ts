@@ -23,4 +23,9 @@ describe('cancellation follow-up outcomes migration', () => {
     expect(migration).toContain("NEW.patient_id IS NULL AND NEW.cancellation_outcome = 'COMPLETED_LATER'");
     expect(migration).toMatch(/NOTIFY pgrst, 'reload schema';\r?\n\r?\nCOMMIT;/);
   });
+
+  it('clears a follow-up outcome when an appointment is reopened from Cancelled', () => {
+    expect(migration).toContain("NEW.status <> 'Cancelled' AND NEW.cancellation_outcome IS NOT NULL");
+    expect(migration).toContain('NEW.completed_later_appointment_id := NULL;');
+  });
 });
