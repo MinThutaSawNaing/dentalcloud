@@ -138,7 +138,7 @@ describe('doctor commission ledger', () => {
     expect(afterRateChange[0].earnings).toBe(15_000);
   });
 
-  it('deducts material cost once across partial payments', () => {
+  it('deducts material cost once and distributes the base across partial payments', () => {
     const treatments = [treatment({ cost: 300_000, materialCost: 50_000 })];
     const allocations = allocateCommissionablePayments(treatments, [
       { id: 'p1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 30_000, treatmentIds: ['treatment-1'] },
@@ -146,7 +146,55 @@ describe('doctor commission ledger', () => {
     ]);
     const entries = calculateCommissionLedgerEntries(treatments, allocations);
 
-    expect(entries.map((entry) => entry.earnings)).toEqual([0, 8_000]);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        paymentId: 'p1',
+        materialDeduction: 11_538.46,
+        commissionBase: 18_461.54,
+        earnings: 1_846.15
+      }),
+      expect.objectContaining({
+        paymentId: 'p2',
+        materialDeduction: 38_461.54,
+        commissionBase: 61_538.46,
+        earnings: 6_153.85
+      })
+    ]);
+    expect(entries.reduce((sum, entry) => sum + entry.materialDeduction, 0)).toBe(50_000);
+    expect(entries.reduce((sum, entry) => sum + entry.earnings, 0)).toBe(8_000);
+  });
+
+  it('falls back to zero instead of producing non-finite commission values', () => {
+    const treatments = [treatment({ commissionPercentage: Number.NaN })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 100_000,
+      treatmentIds: ['treatment-1']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)[0]).toMatchObject({
+      commissionRate: 0,
+      commissionBase: 100_000,
+      earnings: 0
+    });
+  });
+
+  it('caps percentage rates at the database-supported maximum', () => {
+    const treatments = [treatment({ commissionPercentage: 150 })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 100_000,
+      treatmentIds: ['treatment-1']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)[0]).toMatchObject({
+      commissionRate: 100,
+      earnings: 100_000
+    });
   });
 
   it('pays 85,080 Ks from a 240,000 Ks payment after 27,300 Ks material and lab cost at 40%', () => {
@@ -170,6 +218,63 @@ describe('doctor commission ledger', () => {
       commissionRate: 40,
       earnings: 85_080
     });
+  });
+
+  it('pools material costs once across treatments in a same-rate visit', () => {
+    const treatments = [
+      treatment({ id: 't1', cost: 100_000, materialCost: 80_000 }),
+      treatment({ id: 't2', cost: 100_000, materialCost: 0 })
+    ];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 200_000,
+      treatmentIds: ['t1', 't2']
+    }]);
+    const entries = calculateCommissionLedgerEntries(treatments, allocations);
+
+    expect(entries.reduce((sum, entry) => sum + entry.commissionBase, 0)).toBe(120_000);
+    expect(entries.reduce((sum, entry) => sum + entry.earnings, 0)).toBe(12_000);
+    expect(entries).toEqual([
+      expect.objectContaining({ treatmentId: 't1', commissionBase: 60_000, earnings: 6_000 }),
+      expect.objectContaining({ treatmentId: 't2', commissionBase: 60_000, earnings: 6_000 })
+    ]);
+  });
+
+  it('keeps material deductions treatment-specific when visit rates differ', () => {
+    const treatments = [
+      treatment({ id: 't1', cost: 100_000, materialCost: 80_000, commissionPercentage: 10 }),
+      treatment({ id: 't2', cost: 100_000, materialCost: 0, commissionPercentage: 20 })
+    ];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 200_000,
+      treatmentIds: ['t1', 't2']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)).toEqual([
+      expect.objectContaining({ treatmentId: 't1', commissionBase: 20_000, earnings: 2_000 }),
+      expect.objectContaining({ treatmentId: 't2', commissionBase: 100_000, earnings: 20_000 })
+    ]);
+  });
+
+  it('assigns rounding residue to the final same-rate visit entry', () => {
+    const treatments = [
+      treatment({ id: 't1', cost: 1, commissionPercentage: 10 }),
+      treatment({ id: 't2', cost: 1, commissionPercentage: 10 }),
+      treatment({ id: 't3', cost: 1, commissionPercentage: 10 })
+    ];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1', patientId: 'patient-1', date: '2026-07-01',
+      commissionableAmount: 3, treatmentIds: ['t1', 't2', 't3']
+    }]);
+    const entries = calculateCommissionLedgerEntries(treatments, allocations);
+
+    expect(Math.round(entries.reduce((sum, entry) => sum + entry.earnings, 0) * 100) / 100).toBe(0.3);
+    expect(entries.map((entry) => entry.earnings)).toEqual([0.1, 0.1, 0.1]);
   });
 
   it('pays flat commission only once for multiple treatment rows in one visit', () => {

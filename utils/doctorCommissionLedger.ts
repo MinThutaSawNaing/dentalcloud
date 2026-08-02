@@ -53,6 +53,15 @@ export interface CalculatedCommissionEntry extends TreatmentPaymentAllocation {
 
 const roundMoney = (amount: number): number => Math.round(amount * 100) / 100;
 
+const toNonNegativeFiniteNumber = (value: unknown): number => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? Math.max(0, numericValue) : 0;
+};
+
+const toPercentageRate = (value: unknown): number => (
+  Math.min(100, toNonNegativeFiniteNumber(value))
+);
+
 // Percentage commission is paid only from the amount left after every cost
 // recorded for the treatment (both material and lab) has been recovered.
 // Applying this per payment also makes partial payments deterministic: the
@@ -61,8 +70,8 @@ const calculatePercentageCommissionBase = (
   allocatedPayment: number,
   remainingTreatmentCost: number
 ): { materialDeduction: number; commissionBase: number } => {
-  const safeAllocation = Math.max(0, Number(allocatedPayment) || 0);
-  const safeCost = Math.max(0, Number(remainingTreatmentCost) || 0);
+  const safeAllocation = toNonNegativeFiniteNumber(allocatedPayment);
+  const safeCost = toNonNegativeFiniteNumber(remainingTreatmentCost);
   const materialDeduction = Math.min(safeCost, safeAllocation);
 
   return {
@@ -174,9 +183,11 @@ export const calculateCommissionLedgerEntries = (
     existingEntries.map((entry) => [`${entry.paymentId}|${entry.treatmentId}`, entry])
   );
   const percentageRows: CalculatedCommissionEntry[] = [];
-  const materialRemainingByTreatment = new Map(
-    treatments.map((treatment) => [treatment.id, Math.max(0, Number(treatment.materialCost || 0))])
-  );
+  const percentageCandidates: Array<TreatmentPaymentAllocation & {
+    treatment: CommissionTreatmentInput;
+    rate: number;
+    visitKey: string;
+  }> = [];
   const flatCandidates = new Map<string, Array<TreatmentPaymentAllocation & { treatment: CommissionTreatmentInput }>>();
 
   [...allocations]
@@ -194,29 +205,113 @@ export const calculateCommissionLedgerEntries = (
       }
 
       const existing = existingByAllocation.get(`${allocation.paymentId}|${allocation.treatmentId}`);
-      const rate = existing?.calculationMode === 'percentage'
+      const rawRate = existing?.calculationMode === 'percentage'
         ? Number(existing.commissionRate || 0)
         : Number(treatment.customCommissionPercentage ?? treatment.commissionPercentage ?? 0);
+      const rate = toPercentageRate(rawRate);
+      percentageCandidates.push({ ...allocation, treatment, rate, visitKey });
+    });
+
+  const percentageCandidatesByVisit = new Map<string, typeof percentageCandidates>();
+  percentageCandidates.forEach((candidate) => {
+    const candidates = percentageCandidatesByVisit.get(candidate.visitKey) || [];
+    candidates.push(candidate);
+    percentageCandidatesByVisit.set(candidate.visitKey, candidates);
+  });
+
+  percentageCandidatesByVisit.forEach((visitCandidates) => {
+    const rates = new Set(visitCandidates.map((candidate) => candidate.rate));
+
+    if (rates.size === 1) {
+      const rate = visitCandidates[0].rate;
+      const sample = visitCandidates[0].treatment;
+      const visitMaterialCost = treatments.reduce((sum, treatment) => {
+        const sameVisit = treatment.doctorId === sample.doctorId
+          && treatment.patientId === sample.patientId
+          && treatment.date === sample.date
+          && !usesFlatVisitCommission(treatment.specialization);
+        if (!sameVisit) return sum;
+
+        const treatmentCandidate = visitCandidates.find(
+          (candidate) => candidate.treatment.id === treatment.id
+        );
+        const treatmentRate = treatmentCandidate?.rate ?? toPercentageRate(
+          treatment.customCommissionPercentage ?? treatment.commissionPercentage ?? 0
+        );
+        return treatmentRate === rate
+          ? sum + toNonNegativeFiniteNumber(treatment.materialCost)
+          : sum;
+      }, 0);
+      const visitCollected = roundMoney(visitCandidates.reduce(
+        (sum, candidate) => sum + toNonNegativeFiniteNumber(candidate.amount),
+        0
+      ));
+      const visitCommissionBase = roundMoney(Math.max(0, visitCollected - visitMaterialCost));
+      const visitEarnings = roundMoney(visitCommissionBase * (rate / 100));
+      let distributedBase = 0;
+      let distributedEarnings = 0;
+
+      visitCandidates.forEach((candidate, index) => {
+        const { treatment, rate: _candidateRate, visitKey, ...allocation } = candidate;
+        const isLast = index === visitCandidates.length - 1;
+        const share = visitCollected > 0 ? candidate.amount / visitCollected : 0;
+        const commissionBase = isLast
+          ? roundMoney(visitCommissionBase - distributedBase)
+          : roundMoney(visitCommissionBase * share);
+        const earnings = isLast
+          ? roundMoney(visitEarnings - distributedEarnings)
+          : roundMoney(visitEarnings * share);
+        distributedBase = roundMoney(distributedBase + commissionBase);
+        distributedEarnings = roundMoney(distributedEarnings + earnings);
+
+        percentageRows.push({
+          ...allocation,
+          doctorId: treatment.doctorId as string,
+          patientId: treatment.patientId,
+          treatmentDate: treatment.date,
+          visitKey,
+          calculationMode: 'percentage',
+          commissionRate: rate,
+          materialDeduction: roundMoney(Math.max(0, candidate.amount - commissionBase)),
+          commissionBase,
+          earnings
+        });
+      });
+      return;
+    }
+
+    const materialRemainingByTreatment = new Map<string, number>();
+    visitCandidates.forEach((candidate) => {
+      const { treatment, rate, visitKey, ...allocation } = candidate;
+      if (!materialRemainingByTreatment.has(treatment.id)) {
+        materialRemainingByTreatment.set(
+          treatment.id,
+          toNonNegativeFiniteNumber(treatment.materialCost)
+        );
+      }
       const materialRemaining = materialRemainingByTreatment.get(treatment.id) || 0;
       const { materialDeduction, commissionBase } = calculatePercentageCommissionBase(
-        allocation.amount,
+        candidate.amount,
         materialRemaining
       );
-      materialRemainingByTreatment.set(treatment.id, roundMoney(materialRemaining - materialDeduction));
-
+      materialRemainingByTreatment.set(
+        treatment.id,
+        roundMoney(materialRemaining - materialDeduction)
+      );
       percentageRows.push({
         ...allocation,
-        doctorId: treatment.doctorId,
+        doctorId: treatment.doctorId as string,
         patientId: treatment.patientId,
         treatmentDate: treatment.date,
         visitKey,
         calculationMode: 'percentage',
         commissionRate: rate,
-        materialDeduction: roundMoney(materialDeduction),
-        commissionBase: roundMoney(commissionBase),
+        materialDeduction,
+        commissionBase,
         earnings: roundMoney(commissionBase * (rate / 100))
       });
     });
+  });
 
   const flatRows: CalculatedCommissionEntry[] = [];
   flatCandidates.forEach((candidates, visitKey) => {
@@ -236,9 +331,10 @@ export const calculateCommissionLedgerEntries = (
       ? sorted.find((candidate) => candidate.paymentId === existing.paymentId && candidate.treatment.id === existing.treatmentId) || sorted[0]
       : sorted[0];
     if (!selected?.treatment.doctorId) return;
-    const flatAmount = existing
+    const rawFlatAmount = existing
       ? Number(existing.commissionRate || 0)
       : Math.max(0, Number(selected.treatment.commissionPerVisit || 0));
+    const flatAmount = toNonNegativeFiniteNumber(rawFlatAmount);
 
     flatRows.push({
       paymentId: selected.paymentId,

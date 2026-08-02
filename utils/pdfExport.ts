@@ -371,7 +371,7 @@ export const exportRecallsCancelsToPDF = (
     38
   );
 
-  const tableHeaders = [RECALLS_CANCELS_PDF_HEADERS];
+  const tableHeaders = [[...RECALLS_CANCELS_PDF_HEADERS]];
   const tableBody = (rows: RecallsCancelsExportRow[]) => rows.map(row => [
     row.date,
     row.time || '-',
