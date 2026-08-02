@@ -27,7 +27,7 @@ describe('material cost calculations', () => {
     });
     const materialCost = () => 10_000;
 
-    expect(calculateMaterialAdjustedDoctorEarnings([record], materialCost)).toBe(18_000);
+    expect(calculateMaterialAdjustedDoctorEarnings([record])).toBe(18_000);
     expect(calculateMaterialNetProfit([record], materialCost)).toBe(72_000);
   });
 
@@ -38,7 +38,7 @@ describe('material cost calculations', () => {
       doctor_commission_per_visit: 15_000
     });
 
-    expect(calculateMaterialAdjustedDoctorEarnings([record], () => 10_000)).toBe(40_000);
+    expect(calculateMaterialAdjustedDoctorEarnings([record])).toBe(40_000);
     expect(calculateMaterialNetProfit([record], () => 10_000)).toBe(50_000);
   });
 
@@ -50,14 +50,14 @@ describe('material cost calculations', () => {
       doctorEarnings: 15_000
     });
 
-    expect(calculateMaterialAdjustedDoctorEarnings([record], () => 10_000)).toBe(15_000);
+    expect(calculateMaterialAdjustedDoctorEarnings([record])).toBe(15_000);
     expect(calculateMaterialNetProfit([record], () => 10_000)).toBe(75_000);
   });
 
   it('uses stored earnings even when commission settings are unavailable', () => {
     const record = treatment({ doctor_commission_percentage: null });
 
-    expect(calculateMaterialAdjustedDoctorEarnings([record], () => 25_000)).toBe(40_000);
+    expect(calculateMaterialAdjustedDoctorEarnings([record])).toBe(40_000);
     expect(calculateMaterialNetProfit([record], () => 25_000)).toBe(35_000);
   });
 
@@ -68,7 +68,7 @@ describe('material cost calculations', () => {
       doctorEarnings: 0
     });
 
-    expect(calculateMaterialAdjustedDoctorEarnings([record], () => 120_000)).toBe(0);
+    expect(calculateMaterialAdjustedDoctorEarnings([record])).toBe(0);
     expect(calculateMaterialNetProfit([record], () => 120_000)).toBe(-20_000);
   });
 });

@@ -53,6 +53,24 @@ export interface CalculatedCommissionEntry extends TreatmentPaymentAllocation {
 
 const roundMoney = (amount: number): number => Math.round(amount * 100) / 100;
 
+// Percentage commission is paid only from the amount left after every cost
+// recorded for the treatment (both material and lab) has been recovered.
+// Applying this per payment also makes partial payments deterministic: the
+// cost is deducted once, from the earliest collected amount(s).
+const calculatePercentageCommissionBase = (
+  allocatedPayment: number,
+  remainingTreatmentCost: number
+): { materialDeduction: number; commissionBase: number } => {
+  const safeAllocation = Math.max(0, Number(allocatedPayment) || 0);
+  const safeCost = Math.max(0, Number(remainingTreatmentCost) || 0);
+  const materialDeduction = Math.min(safeCost, safeAllocation);
+
+  return {
+    materialDeduction: roundMoney(materialDeduction),
+    commissionBase: roundMoney(Math.max(0, safeAllocation - materialDeduction))
+  };
+};
+
 const byPaymentOrder = (a: CommissionPaymentInput, b: CommissionPaymentInput) => (
   a.date.localeCompare(b.date) ||
   String(a.createdAt || '').localeCompare(String(b.createdAt || '')) ||
@@ -180,8 +198,10 @@ export const calculateCommissionLedgerEntries = (
         ? Number(existing.commissionRate || 0)
         : Number(treatment.customCommissionPercentage ?? treatment.commissionPercentage ?? 0);
       const materialRemaining = materialRemainingByTreatment.get(treatment.id) || 0;
-      const materialDeduction = Math.min(materialRemaining, allocation.amount);
-      const commissionBase = Math.max(0, allocation.amount - materialDeduction);
+      const { materialDeduction, commissionBase } = calculatePercentageCommissionBase(
+        allocation.amount,
+        materialRemaining
+      );
       materialRemainingByTreatment.set(treatment.id, roundMoney(materialRemaining - materialDeduction));
 
       percentageRows.push({

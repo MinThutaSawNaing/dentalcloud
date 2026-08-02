@@ -149,6 +149,29 @@ describe('doctor commission ledger', () => {
     expect(entries.map((entry) => entry.earnings)).toEqual([0, 8_000]);
   });
 
+  it('pays 85,080 Ks from a 240,000 Ks payment after 27,300 Ks material and lab cost at 40%', () => {
+    const treatments = [treatment({
+      cost: 240_000,
+      materialCost: 27_300,
+      commissionPercentage: 40
+    })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 240_000,
+      treatmentIds: ['treatment-1']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)[0]).toMatchObject({
+      amount: 240_000,
+      materialDeduction: 27_300,
+      commissionBase: 212_700,
+      commissionRate: 40,
+      earnings: 85_080
+    });
+  });
+
   it('pays flat commission only once for multiple treatment rows in one visit', () => {
     const treatments = [
       treatment({ id: 't1', specialization: 'Surgery', commissionPerVisit: 15_000, cost: 100_000 }),

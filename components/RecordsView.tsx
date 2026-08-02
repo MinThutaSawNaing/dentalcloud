@@ -155,10 +155,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
 
   const getAdjustedDoctorEarned = (record: ClinicalRecord & { _groupedRecords?: ClinicalRecord[] }) => {
     const groupedRecords = record._groupedRecords?.length ? record._groupedRecords : [record];
-    return calculateMaterialAdjustedDoctorEarnings(
-      groupedRecords,
-      (treatmentId) => Number(materialSummaries[treatmentId]?.totalAmount || 0)
-    );
+    return calculateMaterialAdjustedDoctorEarnings(groupedRecords);
   };
 
   const auditRows = useMemo<AuditExportRow[]>(

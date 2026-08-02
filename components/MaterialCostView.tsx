@@ -209,12 +209,13 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
     }, 0);
   };
 
+  const getNetReceive = (record: ClinicalRecord & { _groupedRecords?: ClinicalRecord[] }) => {
+    return Math.max(0, getCollectedAmount(record) - getMaterialTotal(record));
+  };
+
   const getAdjustedDoctorEarned = (record: ClinicalRecord & { _groupedRecords?: ClinicalRecord[] }) => {
     const groupedRecords = record._groupedRecords?.length ? record._groupedRecords : [record];
-    return calculateMaterialAdjustedDoctorEarnings(
-      groupedRecords,
-      (treatmentId) => Number(materialSummaries[treatmentId]?.totalAmount || 0)
-    );
+    return calculateMaterialAdjustedDoctorEarnings(groupedRecords);
   };
 
   const getNetProfit = (record: ClinicalRecord & { _groupedRecords?: ClinicalRecord[] }) => {
@@ -476,7 +477,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
             tabIndex={isTableScrollable ? 0 : -1}
             className="overflow-x-auto focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--hover-300)]"
           >
-          <table className="min-w-[1420px] w-full">
+          <table className="min-w-[1560px] w-full">
             <thead className="border-b border-slate-200 bg-slate-50">
               <tr>
                 <th className="px-6 py-4 text-left text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Date</th>
@@ -489,6 +490,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                 <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Material Cost</th>
                 <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Lab Cost</th>
                 <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Total Cost</th>
+                <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Net Receive</th>
                 <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Doctor Earned</th>
                 <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Net Profit</th>
                 <th className="sticky right-0 z-20 min-w-[172px] border-l border-slate-200 bg-slate-50 px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500 shadow-[-10px_0_16px_-14px_rgba(15,23,42,0.55)]">Action</th>
@@ -497,7 +499,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
             <tbody className="divide-y divide-slate-100 bg-white">
               {statusFilteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-6 py-12 text-center">
+                  <td colSpan={14} className="px-6 py-12 text-center">
                     <div className="mx-auto max-w-sm rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6">
                       <p className="text-sm font-semibold text-slate-600">No treatment rows found</p>
                       <p className="mt-1 text-xs text-slate-400">Try another date range or clear the search field.</p>
@@ -509,6 +511,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                   const record = row.record;
                   const treatmentAmount = getTreatmentAmount(record);
                   const collectedAmount = getCollectedAmount(record);
+                  const netReceive = getNetReceive(record);
                   const adjustedDoctorEarned = getAdjustedDoctorEarned(record);
                   const netProfit = getNetProfit(record);
                   return (
@@ -528,6 +531,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                       <td className="px-4 py-4 text-right text-sm font-bold xl:px-6">{renderTypedCost(record, 'material')}</td>
                       <td className="px-4 py-4 text-right text-sm font-bold xl:px-6">{renderTypedCost(record, 'lab')}</td>
                       <td className="px-4 py-4 text-right text-sm font-black text-slate-800 xl:px-6">{getMaterialTotal(record) > 0 ? formatCurrency(getMaterialTotal(record), currency) : '-'}</td>
+                      <td className="px-4 py-4 text-right text-sm font-black text-teal-700 xl:px-6">{collectedAmount > 0 ? formatCurrency(netReceive, currency) : '-'}</td>
                       <td className="px-4 py-4 text-right text-sm font-bold text-emerald-700 xl:px-6">{adjustedDoctorEarned > 0 ? formatCurrency(adjustedDoctorEarned, currency) : '-'}</td>
                       <td className={`px-4 py-4 text-right text-sm font-black xl:px-6 ${netProfit >= 0 ? 'text-slate-900' : 'text-red-600'}`}>{formatCurrency(netProfit, currency)}</td>
                       <td className="sticky right-0 z-10 min-w-[172px] border-l border-slate-100 bg-white px-4 py-4 text-right shadow-[-10px_0_16px_-14px_rgba(15,23,42,0.55)] transition-colors group-hover:bg-[var(--hover-50)] xl:px-6">
@@ -567,6 +571,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
               const adjustedDoctorEarned = getAdjustedDoctorEarned(record);
               const netProfit = getNetProfit(record);
               const totalCost = getMaterialTotal(record);
+              const netReceive = getNetReceive(record);
               return (
                 <article key={`material-cost-card-${record.id}`} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="border-l-4 border-[var(--hover-300)] p-3 sm:p-4">
@@ -613,6 +618,10 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                       <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-100 p-3">
                         <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Total cost</dt>
                         <dd className="mt-1 break-words text-sm font-black text-slate-800">{totalCost > 0 ? formatCurrency(totalCost, currency) : '-'}</dd>
+                      </div>
+                      <div className="min-w-0 rounded-xl border border-teal-100 bg-teal-50 p-3">
+                        <dt className="text-[10px] font-bold uppercase tracking-wide text-teal-700">Net receive</dt>
+                        <dd className="mt-1 break-words text-sm font-black text-teal-700">{collectedAmount > 0 ? formatCurrency(netReceive, currency) : '-'}</dd>
                       </div>
                       <div className="col-span-2 min-w-0 rounded-xl border border-emerald-100 bg-emerald-50 p-3 sm:col-span-3">
                         <dt className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Doctor earned</dt>

@@ -3,8 +3,7 @@ import type { ClinicalRecord } from '../types';
 const roundMoney = (amount: number): number => Math.round(amount * 100) / 100;
 
 export const calculateMaterialAdjustedDoctorEarnings = (
-  records: ClinicalRecord[],
-  _getMaterialCost: (treatmentId: string) => number
+  records: ClinicalRecord[]
 ): number => {
   const total = records.reduce((sum, record) => {
     return sum + Math.max(0, Number(record.doctorEarnings || 0));
@@ -19,6 +18,6 @@ export const calculateMaterialNetProfit = (
 ): number => {
   const treatmentAmount = records.reduce((sum, record) => sum + Math.max(0, Number(record.cost || 0)), 0);
   const materialCost = records.reduce((sum, record) => sum + Math.max(0, Number(getMaterialCost(record.id) || 0)), 0);
-  const doctorEarnings = calculateMaterialAdjustedDoctorEarnings(records, getMaterialCost);
+  const doctorEarnings = calculateMaterialAdjustedDoctorEarnings(records);
   return roundMoney(treatmentAmount - materialCost - doctorEarnings);
 };
