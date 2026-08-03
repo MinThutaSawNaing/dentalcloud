@@ -73,6 +73,7 @@ export interface ClinicalRecord {
   doctor_id?: string;
   doctor_name?: string; // Joined field for clinical ownership
   doctor_specialization?: string | null;
+  doctor_commission_type?: 'percentage' | 'flat_visit' | null;
   doctor_commission_percentage?: number | null;
   doctor_commission_per_visit?: number | null;
   treatment_type_id?: string | null;
@@ -303,10 +304,11 @@ export interface Doctor {
   email?: string;
   phone?: string;
   specialization?: string;
+  commission_type?: 'percentage' | 'flat_visit';
   password?: string;
   schedules: DoctorSchedule[]; // Array of schedules for different days/times
   commission_percentage?: number; // e.g., 50 means 50% of treatment cost goes to doctor
-  commission_per_visit?: number; // Flat per-visit amount for Ortho/Implant/Surgery
+  commission_per_visit?: number; // Flat amount paid once per patient visit
   custom_commissions?: DoctorTreatmentCommission[];
   created_at?: string;
 }
@@ -320,10 +322,11 @@ export interface DoctorInput {
   email?: string;
   phone?: string;
   specialization?: string;
+  commission_type?: 'percentage' | 'flat_visit';
   password?: string;
   schedules?: DoctorScheduleInput[];
   commission_percentage?: number; // e.g., 50 means 50% of treatment cost goes to doctor
-  commission_per_visit?: number; // Flat per-visit amount for Ortho/Implant/Surgery
+  commission_per_visit?: number; // Flat amount paid once per patient visit
   created_at?: string;
 }
 

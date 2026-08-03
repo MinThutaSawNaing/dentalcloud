@@ -11,7 +11,7 @@ import { getPaymentHeaderMethod, normalizePaymentAllocations, normalizePaymentMe
 import { normalizePaymentReceiptSnapshot } from '../utils/paymentReceipt';
 import { getPaymentTreatmentShare } from '../utils/paymentTreatmentAllocation';
 import { DEFAULT_RECEIPT_PREFERENCES, normalizeReceiptPreferences } from '../utils/receiptPreferences';
-import { usesFlatVisitCommission } from '../utils/doctorCommission';
+import { resolveDoctorCommissionType, validateDoctorCommissionPercentage, validateDoctorCommissionPerVisit, validateDoctorCommissionType } from '../utils/doctorCommission';
 import { allocateCommissionablePayments, calculateCommissionLedgerEntries } from '../utils/doctorCommissionLedger';
 import { enumValue, finiteNumber, strictDateString, trimOptional, trimRequired } from '../utils/validation';
 import { buildPatientCreatedAt } from '../utils/patientCreationDate';
@@ -123,13 +123,13 @@ const getPaymentReceiptTreatmentIds = (payment: any): string[] => {
 const recalculatePatientDoctorCommissions = async (patientId: string): Promise<void> => {
   let { data: treatmentRows, error: treatmentError } = await supabase
     .from('treatments')
-    .select('id, location_id, patient_id, doctor_id, treatment_type_id, date, cost, doctors(specialization, commission_percentage, commission_per_visit)')
+    .select('id, location_id, patient_id, doctor_id, treatment_type_id, date, cost, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
     .eq('patient_id', patientId);
 
   if (treatmentError && isMissingColumnError(treatmentError, 'treatment_type_id')) {
     const fallback = await supabase
       .from('treatments')
-      .select('id, location_id, patient_id, doctor_id, date, cost, doctors(specialization, commission_percentage, commission_per_visit)')
+      .select('id, location_id, patient_id, doctor_id, date, cost, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
       .eq('patient_id', patientId);
     treatmentRows = (fallback.data || []).map((row: any) => ({ ...row, treatment_type_id: null }));
     treatmentError = fallback.error;
@@ -181,6 +181,10 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     cost: Math.max(0, Number(row.cost || 0)),
     materialCost: materialByTreatment[row.id]?.totalAmount || 0,
     specialization: row.doctors?.specialization,
+    commissionType: resolveDoctorCommissionType({
+      commissionType: row.doctors?.commission_type,
+      specialization: row.doctors?.specialization
+    }),
     commissionPercentage: Number(row.doctors?.commission_percentage || 0),
     commissionPerVisit: Number(row.doctors?.commission_per_visit || 0),
     customCommissionPercentage: row.doctor_id && row.treatment_type_id
@@ -796,6 +800,10 @@ const mapDoctor = (doc: any): Doctor => {
     email: doc.email,
     phone: doc.phone,
     specialization: doc.specialization,
+    commission_type: resolveDoctorCommissionType({
+      commissionType: doc.commission_type,
+      specialization: doc.specialization
+    }),
     commission_percentage: doc.commission_percentage ?? 0,
     commission_per_visit: doc.commission_per_visit ?? 0,
     schedules: (doc.doctor_schedules || []).map((sched: any) => ({
@@ -3263,7 +3271,7 @@ export const api = {
     getHistory: async (patientId: string): Promise<ClinicalRecord[]> => {
       let { data, error } = await supabase
         .from('treatments')
-        .select('*, doctors(name, specialization, commission_percentage, commission_per_visit)')
+        .select('*, doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
         .eq('patient_id', patientId)
         .order('date', { ascending: false });
 
@@ -3293,15 +3301,27 @@ export const api = {
                 doctorId: rec.doctor_id,
                 paymentDate: rec.date,
                 treatmentDate: rec.date,
-                calculationMode: usesFlatVisitCommission(rec.doctors?.specialization) ? 'flat_visit' : 'percentage',
+                calculationMode: resolveDoctorCommissionType({
+                  commissionType: rec.doctors?.commission_type,
+                  specialization: rec.doctors?.specialization
+                }),
                 allocatedPayment: Number(rec.cost || 0),
-                commissionRate: Number(rec.doctors?.commission_percentage || rec.doctors?.commission_per_visit || 0),
+                commissionRate: Number(resolveDoctorCommissionType({
+                  commissionType: rec.doctors?.commission_type,
+                  specialization: rec.doctors?.specialization
+                }) === 'flat_visit'
+                  ? rec.doctors?.commission_per_visit ?? 0
+                  : rec.doctors?.commission_percentage ?? 0),
                 earnings: Number(rec.doctor_earnings || 0)
               }]
             : []
         ),
         doctor_name: rec.doctors?.name || undefined,
         doctor_specialization: rec.doctors?.specialization || null,
+        doctor_commission_type: resolveDoctorCommissionType({
+          commissionType: rec.doctors?.commission_type,
+          specialization: rec.doctors?.specialization
+        }),
         doctor_commission_percentage: rec.doctors?.commission_percentage !== undefined ? Number(rec.doctors.commission_percentage || 0) : null,
         doctor_commission_per_visit: rec.doctors?.commission_per_visit !== undefined ? Number(rec.doctors.commission_per_visit || 0) : null
       }));
@@ -3456,7 +3476,7 @@ export const api = {
       try {
         let query = supabase
           .from('treatments')
-          .select('*, patients(name, balance, patient_type), doctors(name, specialization, commission_percentage, commission_per_visit)')
+          .select('*, patients(name, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
           .order('date', { ascending: false });
 
         const limit = options?.limit === undefined ? 50 : options.limit;
@@ -3509,9 +3529,17 @@ export const api = {
                   doctorId: rec.doctor_id,
                   paymentDate: rec.date,
                   treatmentDate: rec.date,
-                  calculationMode: usesFlatVisitCommission(rec.doctors?.specialization) ? 'flat_visit' : 'percentage',
+                  calculationMode: resolveDoctorCommissionType({
+                    commissionType: rec.doctors?.commission_type,
+                    specialization: rec.doctors?.specialization
+                  }),
                   allocatedPayment: Number(rec.cost || 0),
-                  commissionRate: Number(rec.doctors?.commission_percentage || rec.doctors?.commission_per_visit || 0),
+                  commissionRate: Number(resolveDoctorCommissionType({
+                    commissionType: rec.doctors?.commission_type,
+                    specialization: rec.doctors?.specialization
+                  }) === 'flat_visit'
+                    ? rec.doctors?.commission_per_visit ?? 0
+                    : rec.doctors?.commission_percentage ?? 0),
                   earnings: Number(rec.doctor_earnings || 0)
                 }]
               : []
@@ -3521,6 +3549,10 @@ export const api = {
           patient_balance: Number(rec.patients?.balance || 0),
           doctor_name: rec.doctors?.name || undefined,
           doctor_specialization: rec.doctors?.specialization || null,
+          doctor_commission_type: resolveDoctorCommissionType({
+            commissionType: rec.doctors?.commission_type,
+            specialization: rec.doctors?.specialization
+          }),
           doctor_commission_percentage: rec.doctors?.commission_percentage !== undefined ? Number(rec.doctors.commission_percentage || 0) : null,
           doctor_commission_per_visit: rec.doctors?.commission_per_visit !== undefined ? Number(rec.doctors.commission_per_visit || 0) : null
         }));
@@ -3927,6 +3959,11 @@ export const api = {
       if (trimmedPassword && !trimmedEmail) {
         throw new Error('Doctor email is required to create a doctor login account.');
       }
+      const commissionType = data.commission_type === undefined
+        ? resolveDoctorCommissionType({ specialization: data.specialization })
+        : validateDoctorCommissionType(data.commission_type);
+      const commissionPercentage = validateDoctorCommissionPercentage(data.commission_percentage);
+      const commissionPerVisit = validateDoctorCommissionPerVisit(data.commission_per_visit);
       // First create the doctor
       const { data: doctorData, error: doctorError } = await supabase
         .from('doctors')
@@ -3935,10 +3972,11 @@ export const api = {
           name: data.name,
           email: trimmedEmail || null,
           phone: data.phone,
-          specialization: data.specialization,
+          specialization: String(data.specialization || '').trim() || 'General',
+          commission_type: commissionType,
           password: trimmedPassword || null,
-          commission_percentage: data.commission_percentage ?? 0,
-          commission_per_visit: usesFlatVisitCommission(data.specialization) ? Number(data.commission_per_visit || 0) : 0
+          commission_percentage: commissionPercentage,
+          commission_per_visit: commissionPerVisit
         })
         .select()
         .single();
@@ -4072,13 +4110,18 @@ export const api = {
         name: data.name,
         email: nextEmail || null,
         phone: data.phone,
-        specialization: data.specialization
+        specialization: data.specialization === undefined
+          ? undefined
+          : String(data.specialization || '').trim() || 'General'
       };
       if (data.commission_percentage !== undefined) {
-        doctorUpdatePayload.commission_percentage = data.commission_percentage;
+        doctorUpdatePayload.commission_percentage = validateDoctorCommissionPercentage(data.commission_percentage);
+      }
+      if (data.commission_type !== undefined) {
+        doctorUpdatePayload.commission_type = validateDoctorCommissionType(data.commission_type);
       }
       if (data.commission_per_visit !== undefined) {
-        doctorUpdatePayload.commission_per_visit = usesFlatVisitCommission(data.specialization) ? Number(data.commission_per_visit || 0) : 0;
+        doctorUpdatePayload.commission_per_visit = validateDoctorCommissionPerVisit(data.commission_per_visit);
       }
       if (trimmedPassword) {
         doctorUpdatePayload.password = trimmedPassword;

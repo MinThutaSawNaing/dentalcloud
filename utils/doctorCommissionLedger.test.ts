@@ -13,6 +13,7 @@ const treatment = (overrides: Partial<CommissionTreatmentInput> = {}): Commissio
   date: '2026-06-15',
   cost: 500_000,
   specialization: 'General',
+  commissionType: 'percentage',
   commissionPercentage: 10,
   materialCost: 0,
   ...overrides
@@ -307,8 +308,8 @@ describe('doctor commission ledger', () => {
 
   it('pays flat commission only once for multiple treatment rows in one visit', () => {
     const treatments = [
-      treatment({ id: 't1', specialization: 'Surgery', commissionPerVisit: 15_000, cost: 100_000 }),
-      treatment({ id: 't2', specialization: 'Surgery', commissionPerVisit: 15_000, cost: 100_000 })
+      treatment({ id: 't1', specialization: 'General', commissionType: 'flat_visit', commissionPerVisit: 15_000, cost: 100_000 }),
+      treatment({ id: 't2', specialization: 'General', commissionType: 'flat_visit', commissionPerVisit: 15_000, cost: 100_000 })
     ];
     const allocations = allocateCommissionablePayments(treatments, [{
       id: 'payment-1',
@@ -343,7 +344,7 @@ describe('doctor commission ledger', () => {
   });
 
   it('preserves the flat visit snapshot if correction moves the earning to another payment', () => {
-    const treatments = [treatment({ specialization: 'Surgery', commissionPerVisit: 25_000 })];
+    const treatments = [treatment({ specialization: 'General', commissionType: 'flat_visit', commissionPerVisit: 25_000 })];
     const allocations = allocateCommissionablePayments(treatments, [{
       id: 'payment-2',
       patientId: 'patient-1',
@@ -360,5 +361,88 @@ describe('doctor commission ledger', () => {
     }]);
 
     expect(entries[0]).toMatchObject({ paymentId: 'payment-2', commissionRate: 15_000, earnings: 15_000 });
+  });
+
+  it('keeps an existing percentage visit in percentage mode after the doctor switches to fixed', () => {
+    const treatments = [treatment({
+      commissionType: 'flat_visit',
+      commissionPercentage: 25,
+      commissionPerVisit: 30_000,
+      materialCost: 20_000
+    })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 100_000,
+      treatmentIds: ['treatment-1']
+    }]);
+
+    const entries = calculateCommissionLedgerEntries(treatments, allocations, [{
+      paymentId: 'payment-1',
+      treatmentId: 'treatment-1',
+      calculationMode: 'percentage',
+      commissionRate: 10,
+      visitKey: 'doctor-1|patient-1|2026-06-15'
+    }]);
+
+    expect(entries[0]).toMatchObject({
+      calculationMode: 'percentage',
+      commissionRate: 10,
+      commissionBase: 80_000,
+      earnings: 8_000
+    });
+  });
+
+  it('keeps an existing fixed visit in fixed mode after the doctor switches to percentage', () => {
+    const treatments = [treatment({
+      commissionType: 'percentage',
+      commissionPercentage: 25,
+      commissionPerVisit: 30_000
+    })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-2',
+      patientId: 'patient-1',
+      date: '2026-07-02',
+      commissionableAmount: 100_000,
+      treatmentIds: ['treatment-1']
+    }]);
+
+    const entries = calculateCommissionLedgerEntries(treatments, allocations, [{
+      paymentId: 'payment-1',
+      treatmentId: 'treatment-1',
+      calculationMode: 'flat_visit',
+      commissionRate: 15_000,
+      visitKey: 'doctor-1|patient-1|2026-06-15'
+    }]);
+
+    expect(entries[0]).toMatchObject({
+      calculationMode: 'flat_visit',
+      commissionRate: 15_000,
+      earnings: 15_000
+    });
+  });
+
+  it('preserves a percentage snapshot when a correction moves it to another payment', () => {
+    const treatments = [treatment({ commissionPercentage: 25 })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-2', patientId: 'patient-1', date: '2026-07-02',
+      commissionableAmount: 100_000, treatmentIds: ['treatment-1']
+    }]);
+    const entries = calculateCommissionLedgerEntries(treatments, allocations, [{
+      paymentId: 'payment-1', treatmentId: 'treatment-1', calculationMode: 'percentage',
+      commissionRate: 10, visitKey: 'doctor-1|patient-1|2026-06-15'
+    }]);
+
+    expect(entries[0]).toMatchObject({
+      paymentId: 'payment-2', calculationMode: 'percentage', commissionRate: 10, earnings: 10_000
+    });
+  });
+
+  it('rejects conflicting historical modes for one visit', () => {
+    expect(() => calculateCommissionLedgerEntries([treatment()], [], [
+      { paymentId: 'p1', treatmentId: 't1', calculationMode: 'percentage', commissionRate: 10, visitKey: 'visit-1' },
+      { paymentId: 'p2', treatmentId: 't2', calculationMode: 'flat_visit', commissionRate: 10_000, visitKey: 'visit-1' }
+    ])).toThrow('Conflicting historical commission modes for visit visit-1.');
   });
 });

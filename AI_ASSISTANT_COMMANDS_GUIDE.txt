@@ -161,7 +161,7 @@ RECORD TREATMENT (auto-calculates doctor commission):
   ]
 } }
 
-Doctor commission follows the doctor's specialization: General/Specialists use commission_percentage (or treatment custom rates); Ortho/Implant/Surgery use commission_per_visit flat amount.
+Doctor commission follows the commission method selected for that doctor, independently of specialization. Percentage mode uses commission_percentage (or treatment custom rates); fixed mode uses commission_per_visit once per patient visit.
 
 UNDO TREATMENT RECORD:
 { "action": "tr_undo", "params": { 

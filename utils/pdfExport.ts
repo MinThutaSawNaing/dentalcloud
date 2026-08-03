@@ -552,11 +552,12 @@ export const exportDoctorsToPDF = (doctors: Doctor[]) => {
   // Table
   autoTable(doc, {
     startY: 40,
-    head: [['Doctor Name', 'Specialization', 'Commission', 'Contact', 'Email']],
+    head: [['Doctor Name', 'Specialization', 'Method', 'Commission', 'Contact', 'Email']],
     body: exportDoctors.map(doctor => [
       formatDoctorName(doctor.name, 'N/A'),
       doctor.specialization || 'General',
-      usesFlatVisitCommission(doctor.specialization) ? `${doctor.commission_per_visit || 0}/visit` : (doctor.commission_percentage != null ? `${doctor.commission_percentage}%` : '0%'),
+      usesFlatVisitCommission({ commissionType: doctor.commission_type, specialization: doctor.specialization }) ? 'Fixed/visit' : 'Percentage',
+      usesFlatVisitCommission({ commissionType: doctor.commission_type, specialization: doctor.specialization }) ? `${doctor.commission_per_visit || 0}/visit` : (doctor.commission_percentage != null ? `${doctor.commission_percentage}%` : '0%'),
       doctor.phone || 'N/A',
       doctor.email || 'N/A'
     ]),

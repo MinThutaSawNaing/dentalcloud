@@ -93,7 +93,7 @@ describe('treatments.getAllRecords', () => {
     expect(supabaseMock.calls).toContainEqual({
       table: 'treatments',
       action: 'select',
-      columns: '*, patients(name, balance, patient_type), doctors(name, specialization, commission_percentage, commission_per_visit)'
+      columns: '*, patients(name, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)'
     });
     expect(supabaseMock.calls).not.toContainEqual({ action: 'limit', count: 50 });
     expect(supabaseMock.calls).toContainEqual({ action: 'eq', column: 'location_id', value: 'location-1' });
@@ -111,7 +111,7 @@ describe('treatments.getAllRecords', () => {
       doctor_earnings: 20_000,
       date: '2026-07-16',
       patients: { name: 'Patient One', balance: 300_000, patient_type: 'Returning' },
-      doctors: { name: 'Doctor One', specialization: 'General', commission_percentage: 10, commission_per_visit: 0 }
+      doctors: { name: 'Doctor One', specialization: 'General', commission_type: 'percentage', commission_percentage: 10, commission_per_visit: 0 }
     }];
     supabaseMock.ledgerError = { message: '<!DOCTYPE html> 502 Bad gateway' };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -142,7 +142,7 @@ describe('treatments.getAllRecords', () => {
       doctor_earnings: 5_000,
       date: '2026-07-16',
       patients: { name: 'Patient Two', balance: 0, patient_type: 'Marketing' },
-      doctors: { name: 'Doctor Two', specialization: 'General', commission_percentage: 10, commission_per_visit: 0 }
+      doctors: { name: 'Doctor Two', specialization: 'General', commission_type: 'percentage', commission_percentage: 10, commission_per_visit: 0 }
     }];
     supabaseMock.ledgerThrow = new TypeError('fetch failed');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

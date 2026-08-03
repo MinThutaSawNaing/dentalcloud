@@ -1,4 +1,4 @@
-import { usesFlatVisitCommission } from './doctorCommission';
+import { usesFlatVisitCommission, type DoctorCommissionType } from './doctorCommission';
 
 export interface CommissionTreatmentInput {
   id: string;
@@ -9,6 +9,7 @@ export interface CommissionTreatmentInput {
   cost: number;
   materialCost?: number;
   specialization?: string | null;
+  commissionType?: DoctorCommissionType | null;
   commissionPercentage?: number | null;
   commissionPerVisit?: number | null;
   customCommissionPercentage?: number | null;
@@ -188,6 +189,28 @@ export const calculateCommissionLedgerEntries = (
   const existingByAllocation = new Map(
     existingEntries.map((entry) => [`${entry.paymentId}|${entry.treatmentId}`, entry])
   );
+  const existingModeByVisit = new Map<string, ExistingCommissionEntryInput['calculationMode']>();
+  existingEntries.forEach((entry) => {
+    if (!entry.visitKey) return;
+    const existingMode = existingModeByVisit.get(entry.visitKey);
+    if (existingMode && existingMode !== entry.calculationMode) {
+      throw new Error(`Conflicting historical commission modes for visit ${entry.visitKey}.`);
+    }
+    existingModeByVisit.set(entry.visitKey, entry.calculationMode);
+  });
+  const existingPercentageByVisitAndTreatment = new Map(
+    existingEntries
+      .filter((entry) => entry.calculationMode === 'percentage' && entry.visitKey)
+      .map((entry) => [`${entry.visitKey}|${entry.treatmentId}`, entry])
+  );
+  const resolveTreatmentMode = (treatment: CommissionTreatmentInput): ExistingCommissionEntryInput['calculationMode'] => {
+    const visitKey = `${treatment.doctorId}|${treatment.patientId}|${treatment.date}`;
+    return existingModeByVisit.get(visitKey)
+      || (usesFlatVisitCommission({
+        commissionType: treatment.commissionType,
+        specialization: treatment.specialization
+      }) ? 'flat_visit' : 'percentage');
+  };
   const percentageRows: CalculatedCommissionEntry[] = [];
   const percentageCandidates: Array<TreatmentPaymentAllocation & {
     treatment: CommissionTreatmentInput;
@@ -202,15 +225,20 @@ export const calculateCommissionLedgerEntries = (
       const treatment = treatmentById.get(allocation.treatmentId);
       if (!treatment?.doctorId || allocation.amount <= 0) return;
       const visitKey = `${treatment.doctorId}|${treatment.patientId}|${treatment.date}`;
+      const exactExisting = existingByAllocation.get(`${allocation.paymentId}|${allocation.treatmentId}`);
+      const existing = exactExisting
+        || existingPercentageByVisitAndTreatment.get(`${visitKey}|${allocation.treatmentId}`);
+      const calculationMode = existing?.calculationMode
+        || existingModeByVisit.get(visitKey)
+        || resolveTreatmentMode(treatment);
 
-      if (usesFlatVisitCommission(treatment.specialization)) {
+      if (calculationMode === 'flat_visit') {
         const candidates = flatCandidates.get(visitKey) || [];
         candidates.push({ ...allocation, treatment });
         flatCandidates.set(visitKey, candidates);
         return;
       }
 
-      const existing = existingByAllocation.get(`${allocation.paymentId}|${allocation.treatmentId}`);
       const rawRate = existing?.calculationMode === 'percentage'
         ? Number(existing.commissionRate || 0)
         : Number(treatment.customCommissionPercentage ?? treatment.commissionPercentage ?? 0);
@@ -235,7 +263,7 @@ export const calculateCommissionLedgerEntries = (
         const sameVisit = treatment.doctorId === sample.doctorId
           && treatment.patientId === sample.patientId
           && treatment.date === sample.date
-          && !usesFlatVisitCommission(treatment.specialization);
+          && resolveTreatmentMode(treatment) === 'percentage';
         if (!sameVisit) return sum;
 
         const treatmentCandidate = visitCandidates.find(
