@@ -112,11 +112,17 @@ export const allocateCommissionablePayments = (
     let amountLeft = Math.max(0, Number(payment.commissionableAmount || 0));
     if (amountLeft <= 0) return;
 
-    const explicitTreatments = Array.from(new Set(payment.treatmentIds || []))
+    const explicitTreatmentIds = Array.from(new Set(payment.treatmentIds || []));
+    const explicitTreatments = explicitTreatmentIds
       .map((id) => treatmentById.get(id))
       .filter((treatment): treatment is CommissionTreatmentInput => (
         !!treatment && treatment.patientId === payment.patientId
       ));
+
+    // Explicit links must never silently become an unlinked balance payment or
+    // be partially redistributed within a scoped dataset. This matters for
+    // location/date-scoped reports where one referenced treatment may be absent.
+    if (explicitTreatments.length !== explicitTreatmentIds.length) return;
 
     if (explicitTreatments.length > 0) {
       const eligible = explicitTreatments.filter((treatment) => (remainingByTreatment.get(treatment.id) || 0) > 0);

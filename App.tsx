@@ -81,6 +81,7 @@ import { dataCache } from './utils/dataCache';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
 import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, normalizePaymentReceiptSnapshot } from './utils/paymentReceipt';
 import { hasRecordedServiceFeeForVisit } from './utils/serviceFee';
+import { getPaymentDedupeKey } from './utils/paymentTreatmentAllocation';
 import { toLocalDateInputValue } from './utils/patientCreationDate';
 
 // Lazy Load Views
@@ -278,9 +279,9 @@ const readPaymentRecords = (): PaymentRecord[] => {
 };
 
 const mergeLegacyPaymentRecords = (records: PaymentRecord[], locationId?: string): PaymentRecord[] => {
-  const knownIds = new Set(records.map((record) => record.id));
+  const knownPaymentKeys = new Set(records.map(getPaymentDedupeKey));
   const legacyRecords = readPaymentRecords().filter(
-    (record) => !knownIds.has(record.id) && (!locationId || record.location_id === locationId)
+    (record) => !knownPaymentKeys.has(getPaymentDedupeKey(record)) && (!locationId || record.location_id === locationId)
   );
   return [...records, ...legacyRecords].sort((a, b) =>
     (b.createdAt || b.date).localeCompare(a.createdAt || a.date)

@@ -1,6 +1,10 @@
 import type { ClinicalRecord, PaymentRecord } from '../types';
 import { allocateCommissionablePayments } from './doctorCommissionLedger';
-import { getPaymentServiceFeeAmount } from './serviceFee';
+import {
+  dedupePaymentRecords,
+  getPaymentTreatmentIds,
+  getPaymentTreatmentShare
+} from './paymentTreatmentAllocation';
 
 const roundMoney = (amount: number): number => Math.round(amount * 100) / 100;
 
@@ -9,15 +13,11 @@ const toNonNegativeFiniteNumber = (value: unknown): number => {
   return Number.isFinite(numericValue) ? Math.max(0, numericValue) : 0;
 };
 
-const getReceiptTreatmentIds = (payment: PaymentRecord): string[] => (
-  payment.receiptSnapshot?.treatments || []
-).map((treatment) => treatment.id).filter(Boolean);
-
 export const calculateCollectedByTreatmentId = (
   records: ClinicalRecord[],
   payments: PaymentRecord[]
 ): Record<string, number> => {
-  const uniquePayments = Array.from(new Map(payments.map((payment) => [payment.id, payment])).values());
+  const uniquePayments = dedupePaymentRecords(payments);
   const allocations = allocateCommissionablePayments(
     records.map((record) => ({
       id: record.id,
@@ -30,14 +30,8 @@ export const calculateCollectedByTreatmentId = (
       patientId: payment.patientId,
       date: payment.date,
       createdAt: payment.createdAt,
-      commissionableAmount: Math.max(
-        0,
-        toNonNegativeFiniteNumber(payment.clearedAmount ?? payment.amount) - getPaymentServiceFeeAmount(payment)
-      ),
-      treatmentIds: Array.from(new Set([
-        ...(payment.treatmentIds || []),
-        ...getReceiptTreatmentIds(payment)
-      ]))
+      commissionableAmount: getPaymentTreatmentShare(payment),
+      treatmentIds: getPaymentTreatmentIds(payment)
     }))
   );
 

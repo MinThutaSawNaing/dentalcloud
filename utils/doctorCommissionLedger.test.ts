@@ -57,6 +57,34 @@ describe('doctor commission ledger', () => {
     ]);
   });
 
+  it('does not reassign a payment when its explicit treatment is unavailable', () => {
+    const allocations = allocateCommissionablePayments([
+      treatment({ id: 'visible-treatment', cost: 100_000 })
+    ], [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 100_000,
+      treatmentIds: ['treatment-outside-current-scope']
+    }]);
+
+    expect(allocations).toEqual([]);
+  });
+
+  it('does not over-allocate the visible part of a partially unavailable explicit payment', () => {
+    const allocations = allocateCommissionablePayments([
+      treatment({ id: 'visible-treatment', cost: 100_000 })
+    ], [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-07-01',
+      commissionableAmount: 100_000,
+      treatmentIds: ['visible-treatment', 'treatment-outside-current-scope']
+    }]);
+
+    expect(allocations).toEqual([]);
+  });
+
   it('caps commissionable allocation at treatment debt', () => {
     const allocations = allocateCommissionablePayments([treatment({ cost: 100_000 })], [{
       id: 'payment-1',

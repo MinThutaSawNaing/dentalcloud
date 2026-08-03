@@ -50,6 +50,16 @@ describe('monthly report', () => {
     expect(report.rows[0].payment).toBe(60);
   });
 
+  it('does not reassign explicitly linked payments outside the report scope', () => {
+    const report = buildMonthlyReport({
+      records: [record()],
+      payments: [payment({ treatmentIds: ['treatment-outside-report'] })],
+      costSummaries: {}
+    });
+
+    expect(report.rows[0].payment).toBe(0);
+  });
+
   it('reports losses and normalizes missing demographic data', () => {
     const report = buildMonthlyReport({
       records: [record({ patient_age: null, patient_phone: '', patient_city: '', patient_type: null, doctor_name: '', doctorEarnings: 120 })],

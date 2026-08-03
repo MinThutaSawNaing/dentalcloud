@@ -9,6 +9,7 @@ import { buildSupabasePublicUrl, deleteSupabaseStorageFile, isSupabaseStorageRea
 import { findInvalidTeeth } from '../utils/toothNumbering';
 import { getPaymentHeaderMethod, normalizePaymentAllocations, normalizePaymentMethod, validatePaymentAllocations } from '../utils/paymentMethods';
 import { normalizePaymentReceiptSnapshot } from '../utils/paymentReceipt';
+import { getPaymentTreatmentShare } from '../utils/paymentTreatmentAllocation';
 import { DEFAULT_RECEIPT_PREFERENCES, normalizeReceiptPreferences } from '../utils/receiptPreferences';
 import { usesFlatVisitCommission } from '../utils/doctorCommission';
 import { allocateCommissionablePayments, calculateCommissionLedgerEntries } from '../utils/doctorCommissionLedger';
@@ -100,14 +101,18 @@ const generateRequestUuid = (): string => {
   });
 };
 
-const getReceiptServiceFeeAmount = (receiptSnapshot: unknown): number => {
-  const snapshot = normalizePaymentReceiptSnapshot(receiptSnapshot);
-  return Math.max(0, Number(snapshot?.payment?.serviceFeeAmount || 0));
-};
-
 const getPaymentCommissionableAmount = (payment: any): number => {
-  const clearedAmount = Math.max(0, Number(payment.cleared_amount ?? payment.amount ?? 0));
-  return Math.max(0, clearedAmount - getReceiptServiceFeeAmount(payment.receipt_snapshot));
+  const receiptSnapshot = normalizePaymentReceiptSnapshot(payment.receipt_snapshot);
+  return getPaymentTreatmentShare({
+    id: String(payment.id || ''),
+    patientId: String(payment.patient_id || ''),
+    amount: Math.max(0, Number(payment.amount || 0)),
+    clearedAmount: Math.max(0, Number(payment.cleared_amount ?? payment.amount ?? 0)),
+    date: String(payment.payment_date || payment.created_at?.slice(0, 10) || ''),
+    type: 'PARTIAL',
+    remainingBalance: 0,
+    receiptSnapshot
+  });
 };
 
 const getPaymentReceiptTreatmentIds = (payment: any): string[] => {

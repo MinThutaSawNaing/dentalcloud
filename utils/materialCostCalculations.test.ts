@@ -71,6 +71,35 @@ describe('material cost calculations', () => {
       .toEqual({ 'treatment-1': 60_000 });
   });
 
+  it('deduplicates legacy and persisted copies by receipt number', () => {
+    const persisted = payment({ id: 'persisted-id', receiptNumber: 'REC-100', amount: 60_000, clearedAmount: 60_000 });
+    const legacy = payment({ id: 'legacy-id', receiptNumber: 'REC-100', amount: 60_000, clearedAmount: 60_000 });
+
+    expect(calculateCollectedByTreatmentId([treatment()], [persisted, legacy]))
+      .toEqual({ 'treatment-1': 60_000 });
+  });
+
+  it('counts only the treatment share of a partially paid mixed receipt', () => {
+    const receiptSnapshot = {
+      receiptNumber: 'REC-MIXED',
+      payment: { serviceFeeAmount: 10_000 },
+      treatments: [{ id: 'treatment-1', finalCost: 60_000 }],
+      medicines: [{ id: 'medicine-sale-1', totalPrice: 30_000 }]
+    } as PaymentRecord['receiptSnapshot'];
+
+    expect(calculateCollectedByTreatmentId(
+      [treatment()],
+      [payment({ amount: 50_000, clearedAmount: 50_000, receiptSnapshot })]
+    )).toEqual({ 'treatment-1': 30_000 });
+  });
+
+  it('does not reassign an explicitly linked payment outside the loaded scope', () => {
+    expect(calculateCollectedByTreatmentId(
+      [treatment({ id: 'visible-treatment' })],
+      [payment({ treatmentIds: ['hidden-treatment'] })]
+    )).toEqual({});
+  });
+
   it('uses persisted payment-based doctor earnings for material cost reporting', () => {
     const record = treatment({
       doctor_specialization: 'General',
