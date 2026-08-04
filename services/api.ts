@@ -8,7 +8,7 @@ import { buildS3FileUrl, buildSupabaseS3Url, buildSupabaseS3PublicUrl, deleteS3O
 import { buildSupabasePublicUrl, deleteSupabaseStorageFile, isSupabaseStorageReady, listSupabaseStorageFiles, normalizeSupabaseStorageUrl, uploadSupabaseStorageFile } from '../utils/supabaseStorage';
 import { findInvalidTeeth } from '../utils/toothNumbering';
 import { getPaymentHeaderMethod, normalizePaymentAllocations, normalizePaymentMethod, validatePaymentAllocations } from '../utils/paymentMethods';
-import { normalizePaymentReceiptSnapshot } from '../utils/paymentReceipt';
+import { getReceiptTreatmentAllocationAmount, normalizePaymentReceiptSnapshot } from '../utils/paymentReceipt';
 import { DEFAULT_RECEIPT_PREFERENCES, normalizeReceiptPreferences } from '../utils/receiptPreferences';
 import { usesFlatVisitCommission } from '../utils/doctorCommission';
 import { allocateCommissionablePayments, calculateCommissionLedgerEntries } from '../utils/doctorCommissionLedger';
@@ -100,14 +100,9 @@ const generateRequestUuid = (): string => {
   });
 };
 
-const getReceiptServiceFeeAmount = (receiptSnapshot: unknown): number => {
-  const snapshot = normalizePaymentReceiptSnapshot(receiptSnapshot);
-  return Math.max(0, Number(snapshot?.payment?.serviceFeeAmount || 0));
-};
-
 const getPaymentCommissionableAmount = (payment: any): number => {
   const clearedAmount = Math.max(0, Number(payment.cleared_amount ?? payment.amount ?? 0));
-  return Math.max(0, clearedAmount - getReceiptServiceFeeAmount(payment.receipt_snapshot));
+  return getReceiptTreatmentAllocationAmount(clearedAmount, payment.receipt_snapshot);
 };
 
 const getPaymentReceiptTreatmentIds = (payment: any): string[] => {
@@ -4490,7 +4485,7 @@ export const api = {
       treatmentIds?: string[];
       paymentDate?: string;
       submissionKey?: string | null;
-      receiptSnapshot?: Record<string, unknown> | null;
+      receiptSnapshot?: PaymentReceiptSnapshot | Record<string, unknown> | null;
       createdByUserId?: string | null;
       createdByUserName?: string | null;
     }) => {

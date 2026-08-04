@@ -114,7 +114,7 @@ describe('buildPatientReport', () => {
     expect(report.paymentHistory?.map((item) => item.id)).toEqual(['snapshot', 'legacy']);
   });
 
-  it('attributes only the treatment share of receipts that also contain medicines and service fees', () => {
+  it('prorates a partial receipt across treatment, medicine, and service fee', () => {
     const report = buildPatientReport({
       patient, appointments: [], treatments: [treatment({ id: 'mixed-treatment', cost: 100 })], medicineSales: [],
       payments: [payment({

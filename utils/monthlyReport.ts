@@ -2,6 +2,7 @@ import type { ClinicalRecord, PaymentRecord, TreatmentCostSummary } from '../typ
 import type { Currency } from './currency';
 import { allocateCommissionablePayments } from './doctorCommissionLedger';
 import { chunkUniqueIds, REPORT_URL_BATCH_SIZE } from './reportBatching';
+import { getReceiptTreatmentAllocationAmount } from './paymentReceipt';
 
 export interface MonthlyReportSourceRecord extends ClinicalRecord {
   patient_age?: number | null;
@@ -191,11 +192,7 @@ const treatmentShare = (payment: PaymentRecord): number => {
   const collected = positiveMoney(payment.clearedAmount ?? payment.amount);
   const snapshot = payment.receiptSnapshot;
   if (!snapshot) return collected;
-  const treatmentValue = (snapshot.treatments || []).reduce((sum, item) => sum + positiveMoney(item.finalCost), 0);
-  const medicineValue = (snapshot.medicines || []).reduce((sum, item) => sum + positiveMoney(item.totalPrice), 0);
-  const serviceFee = positiveMoney(snapshot.payment.serviceFeeAmount);
-  const capturedValue = treatmentValue + medicineValue + serviceFee;
-  return capturedValue > 0 ? money(collected * treatmentValue / capturedValue) : collected;
+  return money(getReceiptTreatmentAllocationAmount(collected, snapshot));
 };
 
 const buildPaymentByTreatment = (records: MonthlyReportSourceRecord[], payments: PaymentRecord[]): Map<string, number> => {

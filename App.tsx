@@ -79,7 +79,7 @@ import { loadEmailSettingsAsync } from './utils/emailSettings';
 import { buildAppointmentClinicalFocusNotes, parseAppointmentClinicalFocus } from './utils/appointmentClinicalFocus';
 import { dataCache } from './utils/dataCache';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
-import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, normalizePaymentReceiptSnapshot } from './utils/paymentReceipt';
+import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords } from './utils/paymentReceipt';
 import { hasRecordedServiceFeeForVisit } from './utils/serviceFee';
 import { toLocalDateInputValue } from './utils/patientCreationDate';
 
@@ -2246,23 +2246,6 @@ const App: React.FC = () => {
     })
   );
 
-  const getMatchedMedicineSalesForReceipt = (
-    patientId: string,
-    selectedTreatments: ClinicalRecord[],
-    referenceDate?: string
-  ): MedicineSale[] => {
-    const selectedTreatmentIds = new Set(selectedTreatments.map((treatment) => treatment.id));
-    const selectedDates = new Set(selectedTreatments.map((treatment) => treatment.date).filter(Boolean));
-
-    return medicineSales.filter((sale) => {
-      if (sale.patient_id !== patientId) return false;
-      if (sale.treatment_id && selectedTreatmentIds.has(sale.treatment_id)) return true;
-      if (sale.date && selectedDates.has(sale.date)) return true;
-      if (!sale.treatment_id && referenceDate && sale.date === referenceDate) return true;
-      return false;
-    });
-  };
-
   const handleOpenStoredPaymentReceipt = (payment: PaymentRecord) => {
     const snapshot = resolvePaymentReceiptSnapshotForViewer(payment);
     const matchedPatient = patients.find((patient) => patient.id === payment.patientId);
@@ -3122,7 +3105,7 @@ const App: React.FC = () => {
 
       const latestResponse = recordedResponses[recordedResponses.length - 1];
       const newRecords = recordedResponses.map((response) => response.record);
-      setLatestTreatmentBatch(newRecords);
+      setLatestTreatmentBatch((previous) => mergeTreatmentRecordsById(previous, newRecords));
       treatmentHistoryRequestRef.current += 1;
       
       setSelectedPatient({ ...selectedPatient, balance: latestResponse?.new_balance ?? selectedPatient.balance });
@@ -3315,19 +3298,30 @@ const App: React.FC = () => {
       const paymentDate = toLocalISODate(new Date());
       const submissionKey = paymentSubmissionKeyRef.current || createPaymentSubmissionKey();
       paymentSubmissionKeyRef.current = submissionKey;
-      const matchedMedicineSales = getMatchedMedicineSalesForReceipt(
+      const matchedMedicineSales = getUncapturedMedicineSalesForReceipt(
+        medicineSales,
+        paymentRecords,
         selectedPatient.id,
         selectedPaymentTreatments,
         paymentDate
       );
-      const provisionalReceiptSnapshot = paymentServiceFeeAmount > 0
-        ? {
-            payment: {
-              serviceFeeAmount: paymentServiceFeeAmount,
-              serviceFeeCategory: paymentDraft.serviceFeeCategory
-            }
-          }
-        : null;
+      const provisionalReceiptSnapshot = buildPaymentReceiptSnapshot({
+        patient: selectedPatient,
+        amountPaid: paymentAmountTendered,
+        paymentMethod: getPaymentHeaderMethod(effectivePaymentAllocations),
+        allocations: effectivePaymentAllocations,
+        paymentDate,
+        receiptNumber: 'PENDING',
+        balanceBefore: paymentOriginalAmount,
+        balanceAfter: Math.max(0, paymentOriginalAmount - paymentAmountTendered),
+        paymentStatus: paymentAmountTendered >= paymentOriginalAmount ? 'FULL' : 'PARTIAL',
+        recordedByUserName: currentUser || session?.username || null,
+        serviceFeeAmount: paymentServiceFeeAmount,
+        serviceFeeCategory: paymentDraft.serviceFeeCategory,
+        treatments: selectedPaymentTreatments,
+        medicines: matchedMedicineSales,
+        clinic: { appName, receiptHeaderTitle, receiptInfo, currency }
+      });
       const res = await api.finance.processPayment({
         patientId: selectedPatient.id,
         amount: paymentAmountTendered,
@@ -3391,7 +3385,7 @@ const App: React.FC = () => {
       setAssistantPaymentRecords((prev) => [paymentRecord, ...prev]);
 
       setSelectedPatient({ ...selectedPatient, balance: res.new_balance });
-      setLatestTreatmentBatch([]);
+      setLatestTreatmentBatch((records) => removePatientTreatmentRecords(records, selectedPatient.id));
       setLastPaymentAmount(paymentAmountTendered);
       setLastPaymentRecord(paymentRecord);
       setReceiptViewerPatient(null);

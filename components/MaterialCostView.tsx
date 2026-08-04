@@ -8,6 +8,7 @@ import { buildAuditLogRows, filterAuditLogRowsForExport, type AuditExportRow } f
 import { formatTeethWithPosition } from '../utils/toothNumbering';
 import { formatDoctorName } from '../utils/doctorName';
 import { sortMaterialCostRowsNewestFirst } from '../utils/materialCostRows';
+import { getReceiptTreatmentAllocationAmount } from '../utils/paymentReceipt';
 import {
   calculateMaterialAdjustedDoctorEarnings,
   calculateMaterialNetProfit
@@ -94,7 +95,10 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
       const linkedTreatmentIds = explicitTreatmentIds.length > 0
         ? explicitTreatmentIds
         : treatmentIdsByPatientDate.get(`${payment.patientId}|${payment.date}`) || [];
-      const collectedAmount = getPaymentCollectedAmount(payment);
+      const collectedAmount = getReceiptTreatmentAllocationAmount(
+        getPaymentCollectedAmount(payment),
+        payment.receiptSnapshot
+      );
 
       if (linkedTreatmentIds.length === 0 || collectedAmount <= 0) return summary;
 

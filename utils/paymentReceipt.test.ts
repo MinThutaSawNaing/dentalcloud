@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { Patient, PaymentRecord } from '../types';
+import type { ClinicalRecord, Patient, PaymentRecord } from '../types';
 import {
   buildLegacyPaymentReceiptSnapshot,
   buildPaymentReceiptSnapshot,
-  normalizePaymentReceiptSnapshot
+  getReceiptTreatmentAllocationAmount,
+  getUncapturedMedicineSalesForReceipt,
+  mergeTreatmentRecordsById,
+  normalizePaymentReceiptSnapshot,
+  removePatientTreatmentRecords
 } from './paymentReceipt';
 
 describe('paymentReceipt', () => {
@@ -123,6 +127,80 @@ describe('paymentReceipt', () => {
         }
       ]
     });
+  });
+
+  it('keeps separately saved treatments and replaces duplicates by treatment ID', () => {
+    const record = (id: string, cost: number): ClinicalRecord => ({
+      id, location_id: 'branch-1', patient_id: 'patient-1', teeth: [], description: id, cost, date: '2026-08-04'
+    });
+
+    expect(mergeTreatmentRecordsById(
+      [record('treatment-a', 100_000)],
+      [record('treatment-b', 200_000), record('treatment-a', 110_000)]
+    ).map(({ id, cost }) => ({ id, cost }))).toEqual([
+      { id: 'treatment-a', cost: 110_000 },
+      { id: 'treatment-b', cost: 200_000 }
+    ]);
+  });
+
+  it('clears only the patient whose payment succeeded', () => {
+    const records = [
+      { id: 'a', location_id: 'branch-1', patient_id: 'patient-a', teeth: [], description: 'A', cost: 100, date: '2026-08-04' },
+      { id: 'b', location_id: 'branch-1', patient_id: 'patient-b', teeth: [], description: 'B', cost: 200, date: '2026-08-04' }
+    ] as ClinicalRecord[];
+
+    expect(removePatientTreatmentRecords(records, 'patient-a').map((record) => record.id)).toEqual(['b']);
+  });
+
+  it('does not capture the same medicine sale on a later same-day receipt', () => {
+    const sale = { id: 'medicine-1', location_id: 'branch-1', patient_id: 'patient-1', medicine_id: 'm1', medicine_name: 'Medicine', quantity: 1, unit_price: 80, total_price: 80, date: '2026-08-04' };
+    const priorPayment = {
+      id: 'payment-1', patientId: 'patient-1', amount: 80, date: '2026-08-04', type: 'FULL' as const, remainingBalance: 0,
+      receiptSnapshot: buildPaymentReceiptSnapshot({
+        patient: { id: 'patient-1', location_id: 'branch-1', name: 'Patient', email: '', phone: '', balance: 0, loyalty_points: 0 },
+        amountPaid: 80, paymentMethod: 'CASH', paymentDate: '2026-08-04', receiptNumber: 'REC-1', balanceBefore: 80, balanceAfter: 0,
+        paymentStatus: 'FULL', medicines: [sale], clinic
+      })
+    };
+
+    expect(getUncapturedMedicineSalesForReceipt([sale], [priorPayment], 'patient-1', [], '2026-08-04')).toEqual([]);
+  });
+
+  it('allocates only treatment money after medicine and service fee', () => {
+    const snapshot = buildPaymentReceiptSnapshot({
+      patient: { id: 'patient-1', location_id: 'branch-1', name: 'Patient', email: '', phone: '', balance: 0, loyalty_points: 0 },
+      amountPaid: 397_000,
+      paymentMethod: 'CASH',
+      paymentDate: '2026-08-04',
+      receiptNumber: 'PENDING',
+      balanceBefore: 397_000,
+      balanceAfter: 0,
+      paymentStatus: 'FULL',
+      serviceFeeAmount: 10_000,
+      treatments: [
+        { id: 'treatment-a', location_id: 'branch-1', patient_id: 'patient-1', teeth: [], description: 'A', cost: 100_000, date: '2026-08-04' },
+        { id: 'treatment-b', location_id: 'branch-1', patient_id: 'patient-1', teeth: [], description: 'B', cost: 200_000, date: '2026-08-04' }
+      ],
+      medicines: [{ id: 'medicine-1', location_id: 'branch-1', patient_id: 'patient-1', medicine_id: 'm1', medicine_name: 'Medicine', quantity: 1, unit_price: 87_000, total_price: 87_000, date: '2026-08-04' }],
+      clinic
+    });
+
+    expect(snapshot.allocationReconciled).toBe(true);
+    expect(getReceiptTreatmentAllocationAmount(397_000, snapshot)).toBe(300_000);
+  });
+
+  it('prorates partial mixed payments across treatment, medicine, and service fee', () => {
+    const snapshot = buildPaymentReceiptSnapshot({
+      patient: { id: 'patient-1', location_id: 'branch-1', name: 'Patient', email: '', phone: '', balance: 100, loyalty_points: 0 },
+      amountPaid: 100, paymentMethod: 'CASH', paymentDate: '2026-08-04', receiptNumber: 'REC-PARTIAL', balanceBefore: 200,
+      balanceAfter: 100, paymentStatus: 'PARTIAL', serviceFeeAmount: 20,
+      treatments: [{ id: 'treatment-1', location_id: 'branch-1', patient_id: 'patient-1', teeth: [], description: 'Treatment', cost: 100, date: '2026-08-04' }],
+      medicines: [{ id: 'medicine-1', location_id: 'branch-1', patient_id: 'patient-1', medicine_id: 'm1', medicine_name: 'Medicine', quantity: 1, unit_price: 80, total_price: 80, date: '2026-08-04' }],
+      clinic
+    });
+
+    expect(snapshot.allocationReconciled).toBeUndefined();
+    expect(getReceiptTreatmentAllocationAmount(100, snapshot)).toBe(50);
   });
 
   it('builds a safe legacy payment receipt snapshot when stored snapshot is unavailable', () => {
