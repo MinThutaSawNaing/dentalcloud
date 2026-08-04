@@ -40,7 +40,7 @@ The main component responsible for AI interactions, featuring:
 - **Appointment**: Patient-doctor-date-time relationship with status tracking
 - **ClinicalRecord/Treatment**: Treatment descriptions, costs, teeth involved
 - **PaymentRecord**: Payment amount/type, balance movement, receipt number, collector, and optional immutable receipt snapshot
-- **Doctor**: Medical professionals with specializations, schedules, and commission percentage
+- **Doctor**: Medical professionals with custom specializations, schedules, and an explicit percentage or fixed-per-visit commission method
 - **TreatmentType**: Standardized treatment procedures with costs
 - **Medicine**: Inventory items with stock levels, pricing, categories
 - **Expense**: Business expenses with categories and dates
@@ -267,22 +267,12 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 - `receiptSnapshot`: Immutable JSON snapshot used for accurate historical reprints
 - Snapshot line items can include treatments and standalone medicine sales captured at payment time
 
-### Doctor Commission (Percentage-Based Earnings)
-- `commission_percentage` on Doctor: 0-100%, set in the Doctor tab
-- When a treatment is recorded, the system looks up the treating doctor's commission_percentage
-- `doctorEarnings = treatment_cost × (commission_percentage / 100)`
-- The calculated earnings are stored in the treatments table as `doctor_earnings`
-- Visible in:
-  - **Doctor Dashboard**: Monthly Commission & Weekly Commission cards
-  - **Admin Dashboard**: Doctor Earnings (Commission) aggregated table
-  - **Admin Dashboard**: Per-Treatment Commission Breakdown for individual records
-  - **Records Tab**: Doctor Earned column per treatment
-
-### Doctor Commission (Percentage-Based Earnings)
-- `commission_percentage` on Doctor: 0-100%, set in the Doctor tab
-- When a treatment is recorded, the system looks up the treating doctor's commission_percentage
-- `doctorEarnings = treatment_cost x (commission_percentage / 100)`
-- The calculated earnings are stored in the treatments table as `doctor_earnings`
+### Doctor Commission
+- Each doctor has an explicit commission method, independent of their custom specialization: `percentage` or `flat_visit`.
+- Percentage mode uses a treatment-specific percentage when configured, otherwise the doctor's default `commission_percentage` (0-100%). Commission is earned from collected treatment payments after recorded material and lab costs are recovered.
+- Fixed mode uses `commission_per_visit` once for each doctor/patient/date visit after an eligible treatment payment is collected.
+- Commission ledger entries snapshot the applicable method and rate. Later configuration changes do not rewrite the method or rate already earned for a visit.
+- Commission is reported by payment date and summarized into `treatments.doctor_earnings` for compatibility.
 - Visible in:
   - Doctor Dashboard: Monthly Commission & Weekly Commission cards
   - Admin Dashboard: Doctor Earnings (Commission) aggregated table

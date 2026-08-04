@@ -3,6 +3,8 @@
 -- patient + doctor + treatment-date visit, then the resulting commission is
 -- distributed across that visit's treatments by their collected-payment share.
 -- This is the same total shown by Material & Lab.
+-- MANUAL ONE-TIME REPAIR: depends on
+-- manual_20260802_01_recalculate_historical_percentage_commissions_by_visit.sql.
 
 BEGIN;
 

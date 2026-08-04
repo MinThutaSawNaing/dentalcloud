@@ -3,6 +3,9 @@
 -- Payment distribution matches the Material & Lab screen: a payment linked to
 -- multiple treatments is split in proportion to treatment amounts.
 -- Flat per-visit specialties (Ortho, Implant, Surgery) are excluded.
+-- MANUAL ONE-TIME REPAIR: intentionally not named as an automatic Supabase
+-- migration. Run this script before manual_20260802_02, which consumes its
+-- recalculation snapshot. Do not rerun against production without review.
 
 BEGIN;
 

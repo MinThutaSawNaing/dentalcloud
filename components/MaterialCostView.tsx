@@ -8,8 +8,8 @@ import { buildAuditLogRows, filterAuditLogRowsForExport, type AuditExportRow } f
 import { formatTeethWithPosition } from '../utils/toothNumbering';
 import { formatDoctorName } from '../utils/doctorName';
 import { sortMaterialCostRowsNewestFirst } from '../utils/materialCostRows';
-import { getReceiptTreatmentAllocationAmount } from '../utils/paymentReceipt';
 import {
+  calculateCollectedByTreatmentId,
   calculateMaterialAdjustedDoctorEarnings,
   calculateMaterialNetProfit
 } from '../utils/materialCostCalculations';
@@ -32,17 +32,6 @@ const getTreatmentRecordIds = (record: ClinicalRecord & { _groupedRecords?: Clin
   const groupedRecords = record._groupedRecords?.length ? record._groupedRecords : [record];
   return groupedRecords.map((item) => item.id).filter(Boolean);
 };
-
-const getPaymentCollectedAmount = (payment: PaymentRecord) => Math.max(0, Number(payment.clearedAmount ?? payment.amount ?? 0));
-
-const getReceiptTreatmentIds = (payment: PaymentRecord) => (
-  payment.receiptSnapshot?.treatments || []
-).map((treatment) => treatment.id).filter(Boolean);
-
-const paymentDedupeKey = (payment: PaymentRecord) => (
-  payment.receiptNumber ||
-  `${payment.patientId}|${payment.date}|${payment.amount}|${payment.createdAt || ''}|${payment.paymentMethod || ''}`
-);
 
 const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRecords, loading, currency, canManageMaterials, onRefresh }) => {
   const summaryRequestVersion = React.useRef(0);
@@ -71,51 +60,10 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
       .filter((row): row is TreatmentAuditRow => row.kind === 'treatment')
   ), [records]);
 
-  const collectedByTreatmentId = useMemo(() => {
-    const treatmentCostById = new Map<string, number>();
-    const treatmentIdsByPatientDate = new Map<string, string[]>();
-    const uniquePayments = Array.from(new Map(paymentRecords.map((payment) => [paymentDedupeKey(payment), payment])).values());
-
-    records.forEach((record) => {
-      if (!record.id) return;
-      treatmentCostById.set(record.id, Math.max(0, Number(record.cost || 0)));
-      if (record.patient_id && record.date) {
-        const key = `${record.patient_id}|${record.date}`;
-        const ids = treatmentIdsByPatientDate.get(key) || [];
-        ids.push(record.id);
-        treatmentIdsByPatientDate.set(key, ids);
-      }
-    });
-
-    return uniquePayments.reduce((summary, payment) => {
-      const explicitTreatmentIds = Array.from(new Set([
-        ...(payment.treatmentIds || []),
-        ...getReceiptTreatmentIds(payment)
-      ].filter(Boolean)));
-      const linkedTreatmentIds = explicitTreatmentIds.length > 0
-        ? explicitTreatmentIds
-        : treatmentIdsByPatientDate.get(`${payment.patientId}|${payment.date}`) || [];
-      const collectedAmount = getReceiptTreatmentAllocationAmount(
-        getPaymentCollectedAmount(payment),
-        payment.receiptSnapshot
-      );
-
-      if (linkedTreatmentIds.length === 0 || collectedAmount <= 0) return summary;
-
-      const totalLinkedCost = linkedTreatmentIds.reduce((sum, treatmentId) => {
-        return sum + Math.max(0, Number(treatmentCostById.get(treatmentId) || 0));
-      }, 0);
-
-      linkedTreatmentIds.forEach((treatmentId) => {
-        const weight = totalLinkedCost > 0
-          ? Math.max(0, Number(treatmentCostById.get(treatmentId) || 0)) / totalLinkedCost
-          : 1 / linkedTreatmentIds.length;
-        summary[treatmentId] = (summary[treatmentId] || 0) + (collectedAmount * weight);
-      });
-
-      return summary;
-    }, {} as Record<string, number>);
-  }, [records, paymentRecords]);
+  const collectedByTreatmentId = useMemo(
+    () => calculateCollectedByTreatmentId(records, paymentRecords),
+    [records, paymentRecords]
+  );
 
   const baseFilteredRows = useMemo(() => {
     return filterAuditLogRowsForExport(treatmentRows, {
