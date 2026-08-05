@@ -274,6 +274,21 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
     { value: 'tomorrow', label: 'Tomorrow' },
     { value: 'today', label: 'Today' }
   ];
+
+  const handleDateFromChange = (value: string) => {
+    setDateFrom(value);
+    if (dateTo && value > dateTo) setDateTo(value);
+    setMaterialFilter('custom');
+    setCurrentPage(1);
+  };
+
+  const handleDateToChange = (value: string) => {
+    setDateTo(value);
+    if (dateFrom && value < dateFrom) setDateFrom(value);
+    setMaterialFilter('custom');
+    setCurrentPage(1);
+  };
+
   const handleMaterialFilterChange = (filter: MaterialCostFilter) => {
     setMaterialFilter(filter);
     if (filter === 'all') {
@@ -351,20 +366,27 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                       className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
                     />
                   </div>
-                  <div className="flex min-w-0 items-center gap-2 xl:w-auto">
-                    <label className="shrink-0 text-sm font-semibold text-slate-600">Filter day</label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setDateFrom(value);
-                        setDateTo(value);
-                        setMaterialFilter('custom');
-                        setCurrentPage(1);
-                      }}
-                      className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] xl:w-36"
-                    />
+                  <div className="grid min-w-0 grid-cols-2 gap-2 xl:w-auto">
+                    <label className="min-w-0 text-xs font-semibold text-slate-600">
+                      From
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        max={dateTo || undefined}
+                        onChange={(event) => handleDateFromChange(event.target.value)}
+                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] xl:w-36"
+                      />
+                    </label>
+                    <label className="min-w-0 text-xs font-semibold text-slate-600">
+                      To
+                      <input
+                        type="date"
+                        value={dateTo}
+                        min={dateFrom || undefined}
+                        onChange={(event) => handleDateToChange(event.target.value)}
+                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] xl:w-36"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={() => {
@@ -373,7 +395,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                         setMaterialFilter('all');
                         setCurrentPage(1);
                       }}
-                      className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
+                      className="col-span-2 shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
                     >
                       Clear
                     </button>
