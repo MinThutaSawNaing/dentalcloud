@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeftRight, Beaker, Loader2, Package, Plus, RotateCw } from 'lucide-react';
+import { ArrowLeftRight, Beaker, Loader2, Package, Plus, RotateCw, Search } from 'lucide-react';
 import type { ClinicalRecord, PaymentRecord, TreatmentCostSummary } from '../types';
 import { api } from '../services/api';
 import { formatCurrency, type Currency } from '../utils/currency';
@@ -54,6 +54,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
   }, []);
   const [dateFrom, setDateFrom] = useState(todayKey);
   const [dateTo, setDateTo] = useState(todayKey);
+  const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
   const itemsPerPage = 10;
 
   const treatmentRows = useMemo<TreatmentAuditRow[]>(() => (
@@ -293,6 +294,13 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
     setCurrentPage(1);
   };
 
+  const handleResetToToday = () => {
+    setDateFrom(todayKey);
+    setDateTo(todayKey);
+    setMaterialFilter('today');
+    setCurrentPage(1);
+  };
+
   const handleMaterialFilterChange = (filter: MaterialCostFilter) => {
     setMaterialFilter(filter);
     if (filter === 'all') {
@@ -345,8 +353,8 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
           <div className="w-full min-w-0 space-y-3 xl:max-w-5xl">
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
               <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:flex xl:flex-1 xl:flex-wrap xl:items-center">
-                  <div className="min-w-0 xl:w-40">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:flex xl:flex-1 xl:flex-wrap xl:items-end">
+                  <div className="relative min-w-0 xl:w-52">
                     <input
                       type="text"
                       placeholder="Patient name or ID"
@@ -355,8 +363,9 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                         setPatientSearchTerm(event.target.value);
                         setCurrentPage(1);
                       }}
-                      className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
+                      className="w-full min-w-0 rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
                     />
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
                   </div>
                   <div className="min-w-0 xl:w-36">
                     <input
@@ -383,37 +392,37 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
                     />
                   </div>
                   <div className="grid min-w-0 grid-cols-2 gap-2 xl:w-auto">
-                    <label className="min-w-0 text-xs font-semibold text-slate-600">
+                    <label className="min-w-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
                       From
                       <input
                         type="date"
                         value={dateFrom}
                         max={dateTo || undefined}
                         onChange={(event) => handleDateFromChange(event.target.value)}
-                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] xl:w-36"
+                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-xs text-slate-800 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 min-[380px]:text-sm xl:w-36 xl:px-3"
                       />
                     </label>
-                    <label className="min-w-0 text-xs font-semibold text-slate-600">
+                    <label className="min-w-0 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
                       To
                       <input
                         type="date"
                         value={dateTo}
                         min={dateFrom || undefined}
                         onChange={(event) => handleDateToChange(event.target.value)}
-                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] xl:w-36"
+                        className="mt-1 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-xs text-slate-800 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 min-[380px]:text-sm xl:w-36 xl:px-3"
                       />
                     </label>
                     <button
                       type="button"
-                      onClick={() => {
-                        setDateFrom('');
-                        setDateTo('');
-                        setMaterialFilter('all');
-                        setCurrentPage(1);
-                      }}
-                      className="col-span-2 shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
+                      onClick={handleResetToToday}
+                      title={isTodayRange ? 'Showing today only' : 'Custom date range selected. Click to reset to today.'}
+                      className={`col-span-2 min-h-10 w-full rounded-xl border px-4 py-2.5 text-xs font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)] ${
+                        isTodayRange
+                          ? 'theme-accent-border theme-accent-soft-bg theme-accent-text hover:bg-blue-100'
+                          : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      }`}
                     >
-                      Clear
+                      {isTodayRange ? 'Today' : 'Custom'}
                     </button>
                   </div>
                 </div>
