@@ -67,6 +67,7 @@ export interface ClinicalRecord {
   location_id: string;
   patient_id: string;
   patient_name?: string; // Joined field for global view
+  patient_unique_id?: string; // Joined field for global view
   patient_type?: string | null; // Joined field for audit log patient type display
   patient_balance?: number; // Joined field for audit log balance/debt display
   serviceCharges?: number; // Audit-only calculated patient service charge total for this treatment visit

@@ -38,6 +38,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
   const [doctorSearchTerm, setDoctorSearchTerm] = useState('');
   const [treatmentSearchTerm, setTreatmentSearchTerm] = useState('');
   const [materialFilter, setMaterialFilter] = useState<MaterialCostFilter>('today');
@@ -75,6 +76,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
   }, [treatmentRows, dateFrom, dateTo]);
 
   const statusFilteredRows = useMemo(() => {
+    const patientTerm = patientSearchTerm.trim().toLowerCase();
     const doctorTerm = doctorSearchTerm.trim().toLowerCase();
     const treatmentTerm = treatmentSearchTerm.trim().toLowerCase();
 
@@ -82,16 +84,18 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
       const record = row.record;
       const groupedRecords = record._groupedRecords?.length ? record._groupedRecords : [record];
 
+      const matchesPatient = !patientTerm || [record.patient_name, record.patient_unique_id, record.patient_id]
+        .some((value) => (value || '').toLowerCase().includes(patientTerm));
       const matchesDoctor = !doctorTerm || (record.doctor_name || '').toLowerCase().includes(doctorTerm);
       const matchesTreatment = !treatmentTerm || groupedRecords.some((item) =>
         (item.description || '').toLowerCase().includes(treatmentTerm)
       );
 
-      return matchesDoctor && matchesTreatment;
+      return matchesPatient && matchesDoctor && matchesTreatment;
     });
 
     return sortMaterialCostRowsNewestFirst(matchingRows);
-  }, [baseFilteredRows, doctorSearchTerm, treatmentSearchTerm]);
+  }, [baseFilteredRows, patientSearchTerm, doctorSearchTerm, treatmentSearchTerm]);
 
   const loadMaterialSummaries = React.useCallback(async (rowsToLoad: TreatmentAuditRow[]) => {
     const requestVersion = ++summaryRequestVersion.current;
@@ -191,7 +195,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [records, doctorSearchTerm, treatmentSearchTerm, dateFrom, dateTo, materialFilter]);
+  }, [records, patientSearchTerm, doctorSearchTerm, treatmentSearchTerm, dateFrom, dateTo, materialFilter]);
 
   React.useEffect(() => {
     if (loading) {
@@ -342,6 +346,18 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
               <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:flex xl:flex-1 xl:flex-wrap xl:items-center">
+                  <div className="min-w-0 xl:w-40">
+                    <input
+                      type="text"
+                      placeholder="Patient name or ID"
+                      value={patientSearchTerm}
+                      onChange={(event) => {
+                        setPatientSearchTerm(event.target.value);
+                        setCurrentPage(1);
+                      }}
+                      className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--hover-300)]"
+                    />
+                  </div>
                   <div className="min-w-0 xl:w-36">
                     <input
                       type="text"

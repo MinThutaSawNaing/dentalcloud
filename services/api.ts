@@ -3476,7 +3476,7 @@ export const api = {
       try {
         let query = supabase
           .from('treatments')
-          .select('*, patients(name, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
+          .select('*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
           .order('date', { ascending: false });
 
         const limit = options?.limit === undefined ? 50 : options.limit;
@@ -3545,6 +3545,7 @@ export const api = {
               : []
           ),
           patient_name: rec.patients?.name || 'Unknown',
+          patient_unique_id: rec.patients?.patient_unique_id || undefined,
           patient_type: rec.patients?.patient_type || null,
           patient_balance: Number(rec.patients?.balance || 0),
           doctor_name: rec.doctors?.name || undefined,
