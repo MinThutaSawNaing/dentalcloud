@@ -42,6 +42,15 @@ interface AppointmentsViewProps {
   canExport?: boolean;
   uiStyle?: 'table' | 'cards';
   initialDateQuickFilter?: 'all' | 'tomorrow' | 'today';
+  totalAppointments?: number;
+  onQueryChange?: (query: {
+    dateQuickFilter: 'all' | 'tomorrow' | 'today' | 'custom';
+    date: string;
+    search: string;
+    doctor: string;
+    treatment: string;
+    page: number;
+  }) => void;
 }
 
 const AppointmentsView: React.FC<AppointmentsViewProps> = ({
@@ -68,7 +77,9 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
   canViewChart = true,
   canExport = true,
   uiStyle = 'table',
-  initialDateQuickFilter = 'today'
+  initialDateQuickFilter = 'today',
+  totalAppointments,
+  onQueryChange
 }) => {
   const [viewMode, setViewMode] = useState<'current' | 'calendar'>('current');
   const [upcomingPage, setUpcomingPage] = useState(1);
@@ -134,6 +145,19 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
     setSelectedCalendarDate(null);
     resetAppointmentPages();
   }, [initialDateQuickFilter]);
+
+  useEffect(() => {
+    if (!onQueryChange) return;
+    const timer = window.setTimeout(() => onQueryChange({
+      dateQuickFilter,
+      date: dateFilter,
+      search: searchTerm,
+      doctor: doctorFilter,
+      treatment: treatmentFilter,
+      page: currentPage
+    }), searchTerm ? 300 : 0);
+    return () => window.clearTimeout(timer);
+  }, [dateQuickFilter, dateFilter, searchTerm, doctorFilter, treatmentFilter, currentPage, onQueryChange]);
 
   const tomorrowISO = useMemo(() => {
     const nextDay = new Date();
@@ -469,6 +493,7 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
   }, [pastAppointments, pastPage, showAllPast]);
 
   const paginatedTableAppointments = useMemo(() => {
+    if (onQueryChange) return sortedTableAppointments;
     if (showAll) return sortedTableAppointments;
     const startIndex = (currentPage - 1) * itemsPerPage;
     return sortedTableAppointments.slice(startIndex, startIndex + itemsPerPage);
@@ -880,7 +905,7 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
                           {tableRows.length === 0 ? (
                             <tr>
                               <td colSpan={8} className="px-3 py-8 text-center text-gray-400 italic">
-                                No appointments found.
+                                No appointments found{dateQuickFilter === 'all' ? '.' : ` for ${dateQuickFilter}.`}
                               </td>
                             </tr>
                           ) : (
@@ -961,10 +986,13 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
               {uiStyle === 'table' && (
                 <div className="mt-4 rounded-xl border border-gray-100 bg-white p-3">
                   <Pagination
-                    totalItems={sortedTableAppointments.length}
+                    totalItems={onQueryChange ? (totalAppointments || 0) : sortedTableAppointments.length}
                     itemsPerPage={itemsPerPage}
                     currentPage={currentPage}
-                    onPageChange={setCurrentPage}
+                    onPageChange={(page) => {
+                      setShowAll(false);
+                      setCurrentPage(page);
+                    }}
                     showAll={showAll}
                     onToggleShowAll={() => setShowAll(!showAll)}
                     showAllToggle={false}

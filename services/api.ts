@@ -612,7 +612,7 @@ const fetchSyntheticMaterialCostExpenses = async (
   const auditIds = Array.from(new Set((materialRows || []).map((row: any) => row.audit_log_id).filter(Boolean)));
   if (auditIds.length === 0) return [];
 
-  const auditBatches = await Promise.all(chunk(auditIds, 100).map(async (auditIdBatch) => {
+  const auditBatches = await Promise.all(chunk(auditIds, 25).map(async (auditIdBatch) => {
     const { data, error } = await supabase
       .from('audit_logs')
       .select('id, source_id, location_id')
@@ -631,7 +631,7 @@ const fetchSyntheticMaterialCostExpenses = async (
   if (auditRows.length === 0) return [];
 
   const treatmentIds = Array.from(new Set(auditRows.map((row) => row.source_id).filter(Boolean)));
-  const treatmentBatches = await Promise.all(chunk(treatmentIds, 100).map(async (treatmentIdBatch) => {
+  const treatmentBatches = await Promise.all(chunk(treatmentIds, 25).map(async (treatmentIdBatch) => {
     const { data, error } = await supabase
       .from('treatments')
       .select('id, location_id, patient_id, date, description, patients(name)')
@@ -2400,39 +2400,107 @@ export const api = {
   },
 
   appointments: {
-    getAll: async (locationId?: string): Promise<Appointment[]> => {
-      try {
+    list: async (
+      locationId: string | undefined,
+      options: {
+        date?: string;
+        page?: number;
+        pageSize?: number;
+        search?: string;
+        doctorIds?: string[];
+        treatment?: string;
+      } = {}
+    ): Promise<{ appointments: Appointment[]; total: number }> => {
+      const pageSize = Math.min(Math.max(options.pageSize || 100, 1), 100);
+      const page = Math.max(options.page || 1, 1);
+      const safeTerm = (value: string) => value.replace(/[%,_(),]/g, ' ').trim();
+      const search = safeTerm(options.search || '');
+      const treatment = safeTerm(options.treatment || '');
+
+      let matchingPatientIds: string[] = [];
+      if (search) {
+        let patientQuery = supabase.from('patients').select('id').ilike('name', `%${search}%`).limit(1000);
+        if (locationId) patientQuery = patientQuery.eq('location_id', locationId);
+        const { data, error } = await patientQuery;
+        if (error) throw error;
+        matchingPatientIds = (data || []).map((patient: any) => patient.id);
+      }
+
+      const buildQuery = (withRelations: boolean) => {
         let query = supabase
           .from('appointments')
-          .select('*, patients!appointments_patient_id_fkey(name, balance), doctors(name)')
-          .order('date');
+          .select(withRelations ? '*, patients!appointments_patient_id_fkey(name, balance), doctors(name)' : '*', { count: 'exact' })
+          .order('date')
+          .order('time')
+          .order('id')
+          .range((page - 1) * pageSize, page * pageSize - 1);
 
-        if (locationId) {
-          query = query.eq('location_id', locationId);
+        if (locationId) query = query.eq('location_id', locationId);
+        if (options.date) query = query.eq('date', options.date);
+        if (options.doctorIds?.length) query = query.in('doctor_id', options.doctorIds);
+        if (treatment) query = query.or(`type.ilike.%${treatment}%,notes.ilike.%${treatment}%`);
+        if (search) {
+          const filters = [
+            `guest_name.ilike.%${search}%`,
+            `guest_phone.ilike.%${search}%`,
+            `guest_source.ilike.%${search}%`,
+            `guest_notes.ilike.%${search}%`,
+            `type.ilike.%${search}%`,
+            `notes.ilike.%${search}%`,
+            `date.ilike.%${search}%`,
+            `time.ilike.%${search}%`,
+            `status.ilike.%${search}%`
+          ];
+          if (matchingPatientIds.length) filters.push(`patient_id.in.(${matchingPatientIds.join(',')})`);
+          query = query.or(filters.join(','));
         }
+        return query;
+      };
 
-        const initialResult = await query;
-        let data: any[] | null = initialResult.data;
-        let error: any = initialResult.error;
+      let { data, error, count } = await buildQuery(true);
+      if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
+        ({ data, error, count } = await buildQuery(false));
+      }
+      if (error) throw error;
 
-        if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
-          let fallbackQuery = supabase
-            .from('appointments')
-            .select('*')
-            .order('date');
+      return {
+        appointments: (data || []).map((apt: any) => ({
+          ...apt,
+          patient_name: apt.patients?.name || apt.guest_name || 'Unknown',
+          patient_balance: apt.patients?.balance ?? null,
+          doctor_name: getAppointmentDoctorDisplayName(apt)
+        })),
+        total: count || 0
+      };
+    },
+    getAll: async (locationId?: string): Promise<Appointment[]> => {
+      try {
+        const pageSize = 1000;
+        const appointments: any[] = [];
 
-          if (locationId) {
-            fallbackQuery = fallbackQuery.eq('location_id', locationId);
+        for (let offset = 0; ; offset += pageSize) {
+          const buildQuery = (withRelations: boolean) => {
+            let query = supabase
+              .from('appointments')
+              .select(withRelations ? '*, patients!appointments_patient_id_fkey(name, balance), doctors(name)' : '*')
+              .order('date')
+              .order('id')
+              .range(offset, offset + pageSize - 1);
+
+            if (locationId) query = query.eq('location_id', locationId);
+            return query;
+          };
+
+          let { data, error } = await buildQuery(true);
+          if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
+            ({ data, error } = await buildQuery(false));
           }
+          if (error) throw error;
 
-          const fallback = await fallbackQuery;
-          data = fallback.data;
-          error = fallback.error;
+          const page = data || [];
+          appointments.push(...page);
+          if (page.length < pageSize) break;
         }
-
-        if (error) throw error;
-
-        const appointments = data || [];
         const completedAppointments = appointments.filter(
           (apt: any) => apt.status === 'Completed' && apt.patient_id && apt.date
         );
@@ -5729,7 +5797,8 @@ export const api = {
           const { data, error } = await query;
           if (error) throw error;
           const storedExpenses = (data || []) as Expense[];
-          const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses);
+          const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses)
+            .catch(() => []);
           return [...storedExpenses, ...syntheticMaterialExpenses]
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         } catch (err) {

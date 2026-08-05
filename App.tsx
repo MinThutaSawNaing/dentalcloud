@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
 import {
   Home,
   LayoutDashboard,
@@ -414,6 +414,11 @@ const App: React.FC = () => {
   const [patientTypes, setPatientTypes] = useState<PatientType[]>(buildDefaultPatientTypeRecords());
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentPageAppointments, setAppointmentPageAppointments] = useState<Appointment[]>([]);
+  const [appointmentPageTotal, setAppointmentPageTotal] = useState(0);
+  const [appointmentPageLoading, setAppointmentPageLoading] = useState(false);
+  const [appointmentPageRefreshKey, setAppointmentPageRefreshKey] = useState(0);
+  const appointmentPageRequestRef = useRef(0);
   const [appointmentRescheduleLogs, setAppointmentRescheduleLogs] = useState<AppointmentRescheduleLog[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [treatmentHistory, setTreatmentHistory] = useState<ClinicalRecord[]>([]); 
@@ -1476,7 +1481,7 @@ const App: React.FC = () => {
     scopeLocationId?: string,
     knownLocations?: Location[],
     // Preloaded data from fetchInitialData to avoid redundant API calls.
-    preloaded?: { patients?: Patient[]; appointments?: Appointment[]; records?: ClinicalRecord[]; expenses?: Expense[] }
+    preloaded?: { patients?: Patient[]; appointments?: Appointment[] | Promise<Appointment[]>; records?: ClinicalRecord[]; expenses?: Expense[] }
   ) => {
     const requestId = ++dashboardFetchRequestRef.current;
     const session = auth.getSession();
@@ -1541,6 +1546,62 @@ const App: React.FC = () => {
     setAssistantMedicineSales(salesData);
     setAssistantPaymentRecords(mergeLegacyPaymentRecords(paymentData, assistantLocationId));
   };
+
+  const loadAppointmentPage = useCallback(async (query: {
+    dateQuickFilter: 'all' | 'tomorrow' | 'today' | 'custom';
+    date: string;
+    search: string;
+    doctor: string;
+    treatment: string;
+    page: number;
+  }) => {
+    const locationId = currentLocationId || undefined;
+    if (!locationId) return;
+
+    const now = new Date();
+    const toLocalISODate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const date = query.dateQuickFilter === 'today'
+      ? toLocalISODate(now)
+      : query.dateQuickFilter === 'tomorrow'
+        ? toLocalISODate(tomorrow)
+        : query.dateQuickFilter === 'custom'
+          ? query.date
+          : undefined;
+    const doctorTerm = query.doctor.trim().toLowerCase();
+    const doctorIds = doctorTerm
+      ? doctors.filter((doctor) => doctor.id === query.doctor || doctor.name.toLowerCase().includes(doctorTerm)).map((doctor) => doctor.id)
+      : undefined;
+    if (doctorTerm && !doctorIds?.length) {
+      setAppointmentPageAppointments([]);
+      setAppointmentPageTotal(0);
+      setAppointmentPageLoading(false);
+      return;
+    }
+    const requestId = ++appointmentPageRequestRef.current;
+    setAppointmentPageLoading(true);
+    try {
+      const result = await api.appointments.list(locationId, {
+        date,
+        page: query.page,
+        pageSize: 100,
+        search: query.search,
+        doctorIds,
+        treatment: query.treatment
+      });
+      if (requestId !== appointmentPageRequestRef.current) return;
+      setAppointmentPageAppointments(result.appointments);
+      setAppointmentPageTotal(result.total);
+    } catch (err) {
+      if (requestId !== appointmentPageRequestRef.current) return;
+      console.warn('Error fetching appointment page:', err);
+      setAppointmentPageAppointments([]);
+      setAppointmentPageTotal(0);
+    } finally {
+      if (requestId === appointmentPageRequestRef.current) setAppointmentPageLoading(false);
+    }
+  }, [currentLocationId, doctors, appointmentPageRefreshKey]);
 
   const fetchInitialData = async (
     overrideLocationId?: string,
@@ -1624,13 +1685,13 @@ const App: React.FC = () => {
           : [];
         const doctorQueryLocationIds = sessionDoctorId && doctorLocationIds.length > 0 ? doctorLocationIds : [locId];
         const isDoctorMultiBranchSession = !!sessionDoctorId && doctorQueryLocationIds.length > 1;
-        const [patData, aptData, docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await Promise.all([
+        const appointmentsPromise = isDoctorMultiBranchSession
+          ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Appointments for doctor branch ${locationId}`, api.appointments.getAll(locationId), []))).then((groups) => groups.flat())
+          : api.appointments.getAll(locId);
+        const [patData, docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await Promise.all([
           isDoctorMultiBranchSession
             ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Patients for doctor branch ${locationId}`, api.patients.getAll(locationId), []))).then((groups) => groups.flat())
             : api.patients.getAll(locId),
-          isDoctorMultiBranchSession
-            ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Appointments for doctor branch ${locationId}`, api.appointments.getAll(locationId), []))).then((groups) => groups.flat())
-            : api.appointments.getAll(locId),
           activeSessionDoctor ? Promise.resolve([activeSessionDoctor]) : safeLoad('Doctors', api.doctors.getAll(locId), []),
           safeLoad('Treatment types', api.treatments.getTypes(locId), []),
           isDoctorMultiBranchSession
@@ -1643,14 +1704,13 @@ const App: React.FC = () => {
         if (requestId !== initialDataFetchRequestRef.current) return;
 
         const isDoctorSession = session?.role === 'doctor' && !!session?.doctor_id;
-        const doctorAppointments = isDoctorSession
+        const doctorAppointmentsPromise = appointmentsPromise.then((aptData) => isDoctorSession
           ? aptData.filter((appointment) => appointment.doctor_id === session.doctor_id)
-          : aptData;
+          : aptData);
         const doctorRecords = isDoctorSession
           ? recordsData.filter((record) => record.doctor_id === session.doctor_id)
           : recordsData;
         const doctorPatientIds = new Set<string>([
-          ...doctorAppointments.map((appointment) => appointment.patient_id).filter((patientId): patientId is string => !!patientId),
           ...doctorRecords.map((record) => record.patient_id)
         ]);
         const scopedPatients = isDoctorSession
@@ -1662,7 +1722,7 @@ const App: React.FC = () => {
           : docData;
 
         setPatients(scopedPatients);
-        setAppointments(doctorAppointments);
+        setAppointments([]);
         setDoctors(scopedDoctors);
         setTreatmentTypes(typeData);
         setGlobalRecords(doctorRecords);
@@ -1677,6 +1737,15 @@ const App: React.FC = () => {
         if (requestId === initialDataFetchRequestRef.current) {
           setLoading(false);
         }
+
+        void doctorAppointmentsPromise.then((doctorAppointments) => {
+          if (requestId !== initialDataFetchRequestRef.current) return;
+          setAppointments(doctorAppointments);
+          if (isDoctorSession) {
+            const appointmentPatientIds = new Set(doctorAppointments.map((appointment) => appointment.patient_id).filter((patientId): patientId is string => !!patientId));
+            setPatients(patData.filter((patient) => doctorPatientIds.has(patient.id) || appointmentPatientIds.has(patient.id)));
+          }
+        });
 
         // � Deferred data: load in background so the UI is interactive faster �
         void (async () => {
@@ -1699,7 +1768,7 @@ const App: React.FC = () => {
         if (requestId === initialDataFetchRequestRef.current) {
           await fetchDashboardData(locId, locData, {
             patients: scopedPatients,
-            appointments: doctorAppointments,
+            appointments: doctorAppointmentsPromise,
             records: doctorRecords,
           });
         }
@@ -2563,6 +2632,7 @@ const App: React.FC = () => {
       }
       setShowAppointmentModal(false);
       await fetchInitialData(currentLocationId || undefined);
+      setAppointmentPageRefreshKey((key) => key + 1);
       const targetBranch = locations.find((loc) => loc.id === targetLocationId);
       const viewingDifferentBranch = !!currentLocationId && targetLocationId !== currentLocationId;
       const branchHint = viewingDifferentBranch
@@ -2834,6 +2904,7 @@ const App: React.FC = () => {
     try {
       await api.appointments.delete(id);
       fetchInitialData();
+      setAppointmentPageRefreshKey((key) => key + 1);
     } catch (err: any) {
       alert(err.message);
     }
@@ -2989,6 +3060,7 @@ const App: React.FC = () => {
     try {
       const result = await api.appointments.updateStatus(id, status, options);
       await fetchInitialData(currentLocationId || undefined);
+      setAppointmentPageRefreshKey((key) => key + 1);
       if (status === 'Completed' && result) {
         setToast({ message: 'Appointment completed successfully.', type: 'success', show: true });
       }
@@ -4056,13 +4128,15 @@ const App: React.FC = () => {
                 patientToEdit={patientToEditFromAppointment}
                 onPatientEditHandled={() => setPatientToEditFromAppointment(null)}
             />}
-            {currentView === 'appointments' && canAccessView('appointments') && <AppointmentsView 
-                appointments={appointments} 
+            {currentView === 'appointments' && canAccessView('appointments') && <AppointmentsView
+                appointments={appointmentPageAppointments}
                 patients={patients}
                 doctors={doctors}
                 treatmentTypes={treatmentTypes}
-                loading={loading} 
-                onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }}
+                loading={appointmentPageLoading}
+                totalAppointments={appointmentPageTotal}
+                onQueryChange={loadAppointmentPage}
+                onRefresh={() => setAppointmentPageRefreshKey((key) => key + 1)}
                 onAddAppointment={() => {setEditingAppointment(null); resetAppointmentForm(); setShowAppointmentModal(true)}} 
                 onEditAppointment={(apt) => {
                   const clinicalPlan = parseAppointmentClinicalFocus(apt.notes);
