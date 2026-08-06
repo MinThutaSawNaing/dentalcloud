@@ -28,6 +28,20 @@ let conversationsDoctorUserSupport: boolean | null = null;
 let storageConfigVersion = 0;
 
 const MEDICINE_ITEM_TYPES = ['Medicine', 'Retail', 'Supply', 'Other'] as const;
+const SUPABASE_PAGE_SIZE = 1000;
+
+const fetchAllRows = async <T,>(
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
+): Promise<{ data: T[] | null; error: any }> => {
+  const rows: T[] = [];
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const result = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (result.error) return { data: null, error: result.error };
+    const page = result.data || [];
+    rows.push(...page);
+    if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
+  }
+};
 
 const isMissingColumnError = (error: any, columnName: string): boolean => {
   return typeof error?.message === 'string' && error.message.toLowerCase().includes(columnName.toLowerCase());
@@ -553,14 +567,17 @@ const fetchSyntheticMaterialCostExpenses = async (
   locationId: string | undefined,
   existingExpenses: Expense[]
 ): Promise<Expense[]> => {
-  let { data: materialRows, error: materialError } = await supabase
+  const fetchMaterialRows = (columns: string) => fetchAllRows<any>((from, to) => supabase
     .from('patient_material_costs')
-    .select('audit_log_id, material_name, cost_type, total_amount, created_at, updated_at');
+    .select(columns)
+    .order('id')
+    .range(from, to));
+  let { data: materialRows, error: materialError } = await fetchMaterialRows(
+    'audit_log_id, material_name, cost_type, total_amount, created_at, updated_at'
+  );
 
   if (materialError && isMissingColumnError(materialError, 'cost_type')) {
-    const legacyResult = await supabase
-      .from('patient_material_costs')
-      .select('audit_log_id, material_name, total_amount, created_at, updated_at');
+    const legacyResult = await fetchMaterialRows('audit_log_id, material_name, total_amount, created_at, updated_at');
     materialRows = (legacyResult.data || []).map((row: any) => ({ ...row, cost_type: 'material' }));
     materialError = legacyResult.error;
   }
@@ -864,6 +881,12 @@ const getJoinedOne = <T = any>(value: T | T[] | null | undefined): T | null => (
 const getLocalISODate = (date = new Date()): string => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+};
+
+const getLocalDateBoundaryISO = (date: string, addDays = 0): string => {
+  const [year, month, day] = date.split('-').map(Number);
+  const boundary = new Date(year, (month || 1) - 1, (day || 1) + addDays);
+  return boundary.toISOString();
 };
 
 const getOneMonthAgoISO = (date = new Date()): string => {
@@ -1542,11 +1565,13 @@ export const api = {
 
         const basePatientColumns = 'id, patient_unique_id, location_id, name, email, phone, age, address, city, patient_type, balance, loyalty_points, medical_history, created_at';
         const baseColumns = `${basePatientColumns}, patient_auth(id, username)`;
-        const buildQuery = (regionColumn: 'township' | 'state_region') => {
+        const buildQuery = (regionColumn: 'township' | 'state_region', offset: number) => {
           let query = supabase
             .from('patients')
             .select(`${baseColumns}, ${regionColumn}`)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .order('id')
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
 
           if (locationId) {
             query = query.eq('location_id', locationId);
@@ -1555,43 +1580,51 @@ export const api = {
           return query;
         };
 
-        const initialResult = await buildQuery('township');
-        let data: any[] | null = initialResult.data;
-        let error: any = initialResult.error;
-
-        if (error && isMissingColumnError(error, 'township')) {
-          const fallbackResult = await buildQuery('state_region');
-          data = fallbackResult.data;
-          error = fallbackResult.error;
-        }
-
-        if (error && isOptionalRelationAccessError(error, ['patient_auth'])) {
-          const buildPatientOnlyQuery = (regionColumn: 'township' | 'state_region') => {
-            let query = supabase
-              .from('patients')
-              .select(`${basePatientColumns}, ${regionColumn}`)
-              .order('created_at', { ascending: false });
-
-            if (locationId) {
-              query = query.eq('location_id', locationId);
-            }
-
-            return query;
-          };
-
-          const fallbackResult = await buildPatientOnlyQuery('township');
-          data = fallbackResult.data;
-          error = fallbackResult.error;
+        const patients: any[] = [];
+        for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
+          const initialResult = await buildQuery('township', offset);
+          let data: any[] | null = initialResult.data;
+          let error: any = initialResult.error;
 
           if (error && isMissingColumnError(error, 'township')) {
-            const legacyFallbackResult = await buildPatientOnlyQuery('state_region');
-            data = legacyFallbackResult.data;
-            error = legacyFallbackResult.error;
+            const fallbackResult = await buildQuery('state_region', offset);
+            data = fallbackResult.data;
+            error = fallbackResult.error;
           }
-        }
 
-        if (error) throw error;
-        return (data || []).map(mapPatient);
+          if (error && isOptionalRelationAccessError(error, ['patient_auth'])) {
+            const buildPatientOnlyQuery = (regionColumn: 'township' | 'state_region', pageOffset: number) => {
+              let query = supabase
+                .from('patients')
+                .select(`${basePatientColumns}, ${regionColumn}`)
+                .order('created_at', { ascending: false })
+                .order('id')
+                .range(pageOffset, pageOffset + SUPABASE_PAGE_SIZE - 1);
+
+              if (locationId) {
+                query = query.eq('location_id', locationId);
+              }
+
+              return query;
+            };
+
+            const fallbackResult = await buildPatientOnlyQuery('township', offset);
+            data = fallbackResult.data;
+            error = fallbackResult.error;
+
+            if (error && isMissingColumnError(error, 'township')) {
+              const legacyFallbackResult = await buildPatientOnlyQuery('state_region', offset);
+              data = legacyFallbackResult.data;
+              error = legacyFallbackResult.error;
+            }
+          }
+
+          if (error) throw error;
+          const page = data || [];
+          patients.push(...page);
+          if (page.length < SUPABASE_PAGE_SIZE) break;
+        }
+        return patients.map(mapPatient);
       } catch (err) {
         console.warn("Error fetching patients:", err);
         return []; // Return empty array instead of crashing
@@ -2473,7 +2506,12 @@ export const api = {
         total: count || 0
       };
     },
-    getAll: async (locationId?: string): Promise<Appointment[]> => {
+    getAll: async (locationId?: string, options?: {
+      dateFrom?: string;
+      dateTo?: string;
+      doctorId?: string;
+      throwOnError?: boolean;
+    }): Promise<Appointment[]> => {
       try {
         const pageSize = 1000;
         const appointments: any[] = [];
@@ -2488,6 +2526,9 @@ export const api = {
               .range(offset, offset + pageSize - 1);
 
             if (locationId) query = query.eq('location_id', locationId);
+            if (options?.dateFrom) query = query.gte('date', options.dateFrom);
+            if (options?.dateTo) query = query.lte('date', options.dateTo);
+            if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
             return query;
           };
 
@@ -2567,6 +2608,7 @@ export const api = {
         }));
       } catch (err) {
         console.warn("Error fetching appointments:", err);
+        if (options?.throwOnError) throw err;
         return [];
       }
     },
@@ -2936,18 +2978,24 @@ export const api = {
   },
 
   appointmentRescheduleLogs: {
-    getAll: async (locationId?: string): Promise<AppointmentRescheduleLog[]> => {
+    getAll: async (locationId?: string, options?: {
+      dateFrom?: string;
+      dateTo?: string;
+      throwOnError?: boolean;
+    }): Promise<AppointmentRescheduleLog[]> => {
       try {
-        let query = supabase
-          .from('appointment_reschedule_logs')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-
-        const { data, error } = await query;
+        const { data, error } = await fetchAllRows<any>((from, to) => {
+          let query = supabase
+            .from('appointment_reschedule_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .order('id')
+            .range(from, to);
+          if (locationId) query = query.eq('location_id', locationId);
+          if (options?.dateFrom) query = query.gte('created_at', getLocalDateBoundaryISO(options.dateFrom));
+          if (options?.dateTo) query = query.lt('created_at', getLocalDateBoundaryISO(options.dateTo, 1));
+          return query;
+        });
         if (error) {
           if (isMissingRelationError(error, 'appointment_reschedule_logs')) {
             return [];
@@ -2961,6 +3009,7 @@ export const api = {
           return [];
         }
         console.warn('Failed to load appointment reschedule logs:', error?.message || error);
+        if (options?.throwOnError) throw error;
         return [];
       }
     },
@@ -3540,50 +3589,59 @@ export const api = {
       }
       return { records, allocationRecords };
     },
-    getAllRecords: async (locationId?: string, options?: { limit?: number | null }): Promise<ClinicalRecord[]> => {
+    getAllRecords: async (locationId?: string, options?: {
+      limit?: number | null;
+      dateFrom?: string;
+      dateTo?: string;
+      doctorId?: string;
+      includeCommissionEntries?: boolean;
+      throwOnError?: boolean;
+    }): Promise<ClinicalRecord[]> => {
       try {
-        let query = supabase
-          .from('treatments')
-          .select('*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
-          .order('date', { ascending: false });
-
         const limit = options?.limit === undefined ? 50 : options.limit;
-        if (typeof limit === 'number' && limit > 0) {
-          query = query.limit(limit);
-        }
-
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-
-        const initialResult = await query;
-        let data: any[] | null = initialResult.data;
-        let error: any = initialResult.error;
-
-        if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
-          let fallbackQuery = supabase
+        const effectiveLimit = typeof limit === 'number' && limit > 0 ? limit : null;
+        const records: any[] = [];
+        for (let offset = 0; effectiveLimit === null || records.length < effectiveLimit; offset += SUPABASE_PAGE_SIZE) {
+          const pageSize = effectiveLimit === null ? SUPABASE_PAGE_SIZE : Math.min(SUPABASE_PAGE_SIZE, effectiveLimit - records.length);
+          let query = supabase
             .from('treatments')
-            .select('*')
-            .order('date', { ascending: false });
+            .select('*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
+            .order('date', { ascending: false })
+            .order('id')
+            .range(offset, offset + pageSize - 1);
+          if (locationId) query = query.eq('location_id', locationId);
+          if (options?.dateFrom) query = query.gte('date', options.dateFrom);
+          if (options?.dateTo) query = query.lte('date', options.dateTo);
+          if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
+          let { data, error } = await query;
 
-          if (typeof limit === 'number' && limit > 0) {
-            fallbackQuery = fallbackQuery.limit(limit);
+          if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
+            let fallbackQuery = supabase
+              .from('treatments')
+              .select('*')
+              .order('date', { ascending: false })
+              .order('id')
+              .range(offset, offset + pageSize - 1);
+            if (locationId) fallbackQuery = fallbackQuery.eq('location_id', locationId);
+            if (options?.dateFrom) fallbackQuery = fallbackQuery.gte('date', options.dateFrom);
+            if (options?.dateTo) fallbackQuery = fallbackQuery.lte('date', options.dateTo);
+            if (options?.doctorId) fallbackQuery = fallbackQuery.eq('doctor_id', options.doctorId);
+            const fallback = await fallbackQuery;
+            data = fallback.data;
+            error = fallback.error;
           }
 
-          if (locationId) {
-            fallbackQuery = fallbackQuery.eq('location_id', locationId);
-          }
-
-          const fallback = await fallbackQuery;
-          data = fallback.data;
-          error = fallback.error;
+          if (error) throw error;
+          const page = data || [];
+          records.push(...page);
+          if (page.length < pageSize) break;
         }
 
-        if (error) throw error;
+        const entriesByTreatment = options?.includeCommissionEntries === false
+          ? new Map<string, any[]>()
+          : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id));
 
-        const entriesByTreatment = await getDoctorEarningEntriesByTreatmentIds((data || []).map((rec: any) => rec.id));
-
-        return (data || []).map((rec: any) => ({
+        return records.map((rec: any) => ({
           ...rec,
           standardCost: rec.standard_cost ?? null,
           discountAmount: Number(rec.discount_amount || 0),
@@ -3627,6 +3685,7 @@ export const api = {
         }));
       } catch (err) {
         console.warn("Error fetching records:", err);
+        if (options?.throwOnError) throw err;
         return [];
       }
     },
@@ -4528,10 +4587,24 @@ export const api = {
       }
       return payments;
     },
-    getPayments: async (locationId?: string): Promise<PaymentRecord[]> => {
-      let query = supabase
-        .from('payments')
-        .select(`
+    getPayments: async (locationId?: string, options?: {
+      dateFrom?: string;
+      dateTo?: string;
+    }): Promise<PaymentRecord[]> => {
+      const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
+        let query = supabase
+          .from('payments')
+          .select(columns)
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(from, to);
+        if (locationId) query = query.eq('location_id', locationId);
+        if (options?.dateFrom) query = query.gte('payment_date', options.dateFrom);
+        if (options?.dateTo) query = query.lte('payment_date', options.dateTo);
+        return query;
+      };
+
+      const fullColumns = `
           *,
           patients(name, balance, patient_type),
           payment_allocations (id, payment_id, payment_method, amount, reference),
@@ -4551,40 +4624,24 @@ export const api = {
               username
             )
           )
-        `)
-        .order('created_at', { ascending: false });
+        `;
 
-      if (locationId) query = query.eq('location_id', locationId);
-
-      let { data, error } = await query;
+      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(fullColumns));
       if (error && isOptionalRelationAccessError(error, ['payment_allocations'])) {
-        let fallbackQuery = supabase
-          .from('payments')
-          .select('*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))')
-          .order('created_at', { ascending: false });
-        if (locationId) fallbackQuery = fallbackQuery.eq('location_id', locationId);
-        const fallback = await fallbackQuery;
+        const fallback = await fetchAllRows<any>(buildPaymentQuery(
+          '*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))'
+        ));
         data = fallback.data;
         error = fallback.error;
       }
       if (error && isMissingRelationError(error, 'payment_corrections')) {
-        let fallbackQuery = supabase
-          .from('payments')
-          .select('*, patients(name, balance, patient_type)')
-          .order('created_at', { ascending: false });
-        if (locationId) fallbackQuery = fallbackQuery.eq('location_id', locationId);
-        const fallback = await fallbackQuery;
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*, patients(name, balance, patient_type)'));
         data = fallback.data;
         error = fallback.error;
       }
 
       if (error && isOptionalRelationAccessError(error, ['patients', 'payment_allocations', 'payment_corrections', 'users'])) {
-        let fallbackQuery = supabase
-          .from('payments')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (locationId) fallbackQuery = fallbackQuery.eq('location_id', locationId);
-        const fallback = await fallbackQuery;
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*'));
         data = fallback.data;
         error = fallback.error;
       }
@@ -5785,16 +5842,16 @@ export const api = {
   expenses: {
     getAll: async (locationId?: string): Promise<Expense[]> => {
       try {
-        let query = supabase
-          .from('expenses')
-          .select('*')
-          .order('date', { ascending: false });
-        
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-
-          const { data, error } = await query;
+          const { data, error } = await fetchAllRows<Expense>((from, to) => {
+            let query = supabase
+              .from('expenses')
+              .select('*')
+              .order('date', { ascending: false })
+              .order('id')
+              .range(from, to);
+            if (locationId) query = query.eq('location_id', locationId);
+            return query;
+          });
           if (error) throw error;
           const storedExpenses = (data || []) as Expense[];
           const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses)
@@ -6512,34 +6569,22 @@ export const api = {
     },
     getSales: async (locationId?: string, patientId?: string, options?: { throwOnError?: boolean }): Promise<MedicineSale[]> => {
       try {
-        let query = supabase
-          .from('medicine_sales')
-          .select('*, patients(name), medicines(name, unit)')
-          .order('date', { ascending: false });
+        const buildSalesQuery = (columns: string) => (from: number, to: number) => {
+          let query = supabase
+            .from('medicine_sales')
+            .select(columns)
+            .order('date', { ascending: false })
+            .order('id')
+            .range(from, to);
+          if (locationId) query = query.eq('location_id', locationId);
+          if (patientId) query = query.eq('patient_id', patientId);
+          return query;
+        };
 
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-        if (patientId) {
-          query = query.eq('patient_id', patientId);
-        }
-
-        let { data, error } = await query;
+        let { data, error } = await fetchAllRows<any>(buildSalesQuery('*, patients(name), medicines(name, unit)'));
 
         if (error && isOptionalRelationAccessError(error, ['patients', 'medicines'])) {
-          let fallbackQuery = supabase
-            .from('medicine_sales')
-            .select('*')
-            .order('date', { ascending: false });
-
-          if (locationId) {
-            fallbackQuery = fallbackQuery.eq('location_id', locationId);
-          }
-          if (patientId) {
-            fallbackQuery = fallbackQuery.eq('patient_id', patientId);
-          }
-
-          const fallback = await fallbackQuery;
+          const fallback = await fetchAllRows<any>(buildSalesQuery('*'));
           data = fallback.data;
           error = fallback.error;
         }
@@ -6569,28 +6614,21 @@ export const api = {
     },
     getTopSelling: async (locationId?: string, limit: number = 10): Promise<{ medicine_id: string; medicine_name: string; total_quantity: number; total_revenue: number }[]> => {
       try {
-        let query = supabase
-          .from('medicine_sales')
-          .select('medicine_id, medicines(name), quantity, total_price');
-
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-
-        const initialResult = await query;
+        const buildTopSellingQuery = (columns: string) => (from: number, to: number) => {
+          let query = supabase
+            .from('medicine_sales')
+            .select(columns)
+            .order('id')
+            .range(from, to);
+          if (locationId) query = query.eq('location_id', locationId);
+          return query;
+        };
+        const initialResult = await fetchAllRows<any>(buildTopSellingQuery('medicine_id, medicines(name), quantity, total_price'));
         let data: any[] | null = initialResult.data;
         let error: any = initialResult.error;
 
         if (error && isOptionalRelationAccessError(error, ['medicines'])) {
-          let fallbackQuery = supabase
-            .from('medicine_sales')
-            .select('medicine_id, quantity, total_price');
-
-          if (locationId) {
-            fallbackQuery = fallbackQuery.eq('location_id', locationId);
-          }
-
-          const fallback = await fallbackQuery;
+          const fallback = await fetchAllRows<any>(buildTopSellingQuery('medicine_id, quantity, total_price'));
           data = fallback.data;
           error = fallback.error;
         }
@@ -6751,15 +6789,17 @@ export const api = {
   loyalty: {
     getTransactions: async (patientId: string, locationId?: string): Promise<LoyaltyTransaction[]> => {
       try {
-        let query = supabase
-          .from('loyalty_transactions')
-          .select('*')
-          .eq('patient_id', patientId)
-          .order('date', { ascending: false });
-        if (locationId) {
-          query = query.eq('location_id', locationId);
-        }
-        const { data, error } = await query;
+        const { data, error } = await fetchAllRows<LoyaltyTransaction>((from, to) => {
+          let query = supabase
+            .from('loyalty_transactions')
+            .select('*')
+            .eq('patient_id', patientId)
+            .order('date', { ascending: false })
+            .order('id')
+            .range(from, to);
+          if (locationId) query = query.eq('location_id', locationId);
+          return query;
+        });
         if (error) throw error;
         return data || [];
       } catch (err) {
@@ -6997,24 +7037,21 @@ export const api = {
           created_at
         `;
 
-      let query = supabase
-        .from('conversations')
-        .select(selectClause)
-        .order('last_message_time', { ascending: false, nullsFirst: false });
-
-      if (userType === 'patient') {
-        query = query.eq('patient_id', userId);
-      } else {
-        query = query.eq('admin_id', userId);
-      }
-
-      if (locationId) {
-        // Include conversations for this branch OR conversations without a location
-        // (created before the branch feature was added)
-        query = query.or(`location_id.eq.${locationId},location_id.is.null`);
-      }
-
-      const { data: conversations, error } = await query;
+      const { data: conversations, error } = await fetchAllRows<any>((from, to) => {
+        let query = supabase
+          .from('conversations')
+          .select(selectClause)
+          .order('last_message_time', { ascending: false, nullsFirst: false })
+          .order('id')
+          .range(from, to);
+        query = userType === 'patient' ? query.eq('patient_id', userId) : query.eq('admin_id', userId);
+        if (locationId) {
+          // Include conversations for this branch OR conversations without a location
+          // (created before the branch feature was added)
+          query = query.or(`location_id.eq.${locationId},location_id.is.null`);
+        }
+        return query;
+      });
       
       if (error) throw new Error(error.message);
 
@@ -7056,15 +7093,25 @@ export const api = {
       
       // Get unread message counts for each conversation
       const conversationIds = conversations.map((conv: any) => conv.id);
-      let unreadQuery = supabase
-        .from('messages')
-        .select('conversation_id, recipient_id, recipient_type, read')
-        .in('conversation_id', conversationIds)
-        .eq('recipient_id', userId)
-        .eq('recipient_type', userType)
-        .eq('read', false);
-
-      const { data: unreadMessages, error: unreadError } = await unreadQuery;
+      const unreadMessages: any[] = [];
+      let unreadError: any = null;
+      for (let index = 0; index < conversationIds.length; index += 25) {
+        const conversationIdBatch = conversationIds.slice(index, index + 25);
+        const result = await fetchAllRows<any>((from, to) => supabase
+          .from('messages')
+          .select('id, conversation_id, recipient_id, recipient_type, read')
+          .in('conversation_id', conversationIdBatch)
+          .eq('recipient_id', userId)
+          .eq('recipient_type', userType)
+          .eq('read', false)
+          .order('id')
+          .range(from, to));
+        if (result.error) {
+          unreadError = result.error;
+          break;
+        }
+        unreadMessages.push(...(result.data || []));
+      }
       
       if (unreadError) {
         console.warn('Error fetching unread message counts:', unreadError.message);
@@ -7086,11 +7133,13 @@ export const api = {
       // Perform automatic cleanup before fetching messages
       await api.messages.performAutomaticCleanup();
       
-      const { data, error } = await supabase
+      const { data, error } = await fetchAllRows<Message>((from, to) => supabase
         .from('messages')
         .select('*')
         .eq('conversation_id', conversationId)
-        .order('timestamp', { ascending: true });
+        .order('timestamp', { ascending: true })
+        .order('id')
+        .range(from, to));
       
       if (error) throw new Error(error.message);
       return data || [];
