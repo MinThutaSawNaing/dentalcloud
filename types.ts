@@ -517,7 +517,7 @@ export interface LoyaltyTransaction {
   patient_id: string;
   location_id: string;
   points: number; // positive for earned, negative for redeemed
-  type: 'EARNED' | 'REDEEMED' | 'EXPIRED';
+  type: 'EARNED' | 'REDEEMED' | 'EXPIRED' | 'REVERSED';
   description: string;
   date: string;
 }

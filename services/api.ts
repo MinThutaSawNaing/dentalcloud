@@ -1009,53 +1009,6 @@ const completeAppointmentWithClinicalFee = async (
   };
 };
 
-const completeScheduledAppointmentForTreatment = async ({
-  locationId,
-  patientId,
-  doctorId,
-  treatmentDate
-}: {
-  locationId: string;
-  patientId: string;
-  doctorId?: string | null;
-  treatmentDate: string;
-}): Promise<string[]> => {
-  let query = supabase
-    .from('appointments')
-    .select('id')
-    .eq('location_id', locationId)
-    .eq('patient_id', patientId)
-    .eq('date', treatmentDate)
-    .eq('status', 'Scheduled')
-    .order('time')
-    .limit(1);
-
-  if (doctorId) query = query.eq('doctor_id', doctorId);
-
-  let { data, error } = await query;
-  if (!error && (!data || data.length === 0) && doctorId) {
-    const fallback = await supabase
-      .from('appointments')
-      .select('id')
-      .eq('location_id', locationId)
-      .eq('patient_id', patientId)
-      .eq('date', treatmentDate)
-      .eq('status', 'Scheduled')
-      .order('time')
-      .limit(1);
-    data = fallback.data;
-    error = fallback.error;
-  }
-
-  if (error) throw new Error(error.message);
-
-  const ids = (data || []).map((appointment) => appointment.id).filter(Boolean);
-  for (const id of ids) {
-    await completeAppointmentWithClinicalFee(id);
-  }
-  return ids;
-};
-
 const getAppointmentDoctorDisplayName = (appointmentRow: any, clinicalDoctorName?: string): string | undefined => {
   if (appointmentRow?.status === 'Completed') {
     const completedDoctorName = getTrimmedDoctorName(clinicalDoctorName);
@@ -1870,99 +1823,14 @@ export const api = {
       return mapPatient(result);
     },
     delete: async (id: string): Promise<void> => {
-      // Patient deletion intentionally removes patient-owned data. Keep
-      // appointments as guest/lead records where possible, then delete child
-      // rows that may otherwise block the final patient delete via RESTRICT FKs.
-      const { data: patient, error: patientFetchError } = await supabase
-        .from('patients')
-        .select('name, phone')
-        .eq('id', id)
-        .single();
-
-      if (patientFetchError) {
-        throw new Error(`Failed to fetch patient before deletion: ${patientFetchError.message}`);
-      }
-
-      if (!patient) {
-        throw new Error('Patient not found.');
-      }
-
-      const { data: patientAppointments, error: fetchAppointmentsError } = await supabase
-        .from('appointments')
-        .select('id, guest_name, guest_phone')
-        .eq('patient_id', id);
-
-      if (fetchAppointmentsError) {
-        throw new Error(`Failed to check appointments before patient deletion: ${fetchAppointmentsError.message}`);
-      }
-
-      const appointmentsNeedingFix = (patientAppointments || []).filter(
-        (apt) => !apt.guest_name?.trim() || !apt.guest_phone?.trim()
-      );
-
-      if (appointmentsNeedingFix.length > 0) {
-        const { error: updateError } = await supabase
-          .from('appointments')
-          .update({
-            guest_name: patient.name || 'Unknown Patient',
-            guest_phone: patient.phone?.trim() || 'N/A',
-          })
-          .in(
-            'id',
-            appointmentsNeedingFix.map((a) => a.id)
-          );
-
-        if (updateError) {
-          throw new Error(
-            `Failed to preserve appointments before patient deletion: ${updateError.message}`
-          );
+      const { error } = await supabase.rpc('delete_patient_atomic', { p_patient_id: id });
+      if (error) {
+        if (isMissingFunctionError(error, 'delete_patient_atomic')) {
+          throw new Error('Atomic patient deletion is not installed. Apply the atomic clinical workflows migration before deleting patients.');
         }
+        throw new Error(error.message);
       }
 
-      const deleteFromTable = async (table: string, column = 'patient_id') => {
-        const { error } = await supabase
-          .from(table)
-          .delete()
-          .eq(column, id);
-
-        if (error) {
-          if (isMissingRelationError(error, table)) {
-            return;
-          }
-          throw new Error(`Failed to delete related ${table.replace(/_/g, ' ')}: ${error.message}`);
-        }
-      };
-
-      // Delete restricted/dependent child rows first. This prevents failures
-      // such as payments.patient_id ON DELETE RESTRICT while preserving normal
-      // table-level RLS/security for each delete operation.
-      await deleteFromTable('patient_auth');
-      await deleteFromTable('payments');
-      await deleteFromTable('medicine_sales');
-      await deleteFromTable('loyalty_transactions');
-      await deleteFromTable('treatments');
-      await deleteFromTable('conversations');
-
-      // Now safe to delete — appointments can SET NULL without violating
-      // guest constraints, and patient-owned child rows are gone.
-      const { error } = await supabase
-        .from('patients')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw new Error(error.message);
-    },
-    _deprecatedDelete: async (id: string): Promise<void> => {
-
-
-
-      const { error } = await supabase
-
-        .from('patients')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw new Error(error.message);
     },
 
 
@@ -3780,8 +3648,6 @@ export const api = {
     }) => {
       if (!data.location_id) throw new Error('location_id is required');
 
-      // 1. Validate Tooth Numbers using centralized utility
-      // Supports FDI/ISO permanent (11-48) and FDI primary (51-85)
       if (data.teeth && data.teeth.length > 0) {
         const invalidTeeth = findInvalidTeeth(data.teeth);
         if (invalidTeeth.length > 0) {
@@ -3789,203 +3655,59 @@ export const api = {
         }
       }
 
-      // 2. Fetch patient state
-      const { data: patient, error: fetchError } = await supabase
-        .from('patients')
-        .select('id, name, balance, loyalty_points')
-        .eq('id', data.patient_id)
-        .eq('location_id', data.location_id)
-        .single();
-
-      if (fetchError || !patient) throw new Error('Patient not found in this location');
-
-      // 3. Handle Medications (Constraint Validation)
-      let medicationTotal = 0;
-      const medicationResults = [];
-      if (data.medications && data.medications.length > 0) {
-        for (const med of data.medications) {
-          const { data: medicine, error: mError } = await supabase
-            .from('medicines')
-            .select('*')
-            .eq('id', med.id)
-            .single();
-          
-          if (mError || !medicine) throw new Error(`Medicine with ID ${med.id} not found`);
-          if (medicine.stock < med.qty) throw new Error(`Insufficient stock for ${medicine.name}. Available: ${medicine.stock}`);
-          
-          medicationTotal += Number(medicine.price) * med.qty;
-          medicationResults.push({ med, medicine });
-        }
-      }
-
-      // 4. Insert Treatment Record
       const treatmentDate = getLocalISODate();
-      const legacyTreatmentData = {
-        location_id: data.location_id,
-        patient_id: data.patient_id,
-        doctor_id: data.doctor_id || null,
-        teeth: data.teeth,
-        description: data.description,
-        cost: data.cost,
-        date: treatmentDate
-      };
-      // Doctor earnings are now payment-based, so a new unpaid treatment starts at 0.
-      // Payment collection and material-cost edits recalculate this persisted value.
-      const doctorEarnings = 0;
-      const treatmentData = {
-        ...legacyTreatmentData,
-        treatment_type_id: data.treatment_type_id || null,
-        standard_cost: data.standardCost ?? data.cost,
-        discount_amount: data.discountAmount ?? 0,
-        pricing_note: data.pricingNote || null,
-        doctor_earnings: doctorEarnings
-      };
-      
-      let { data: result, error: insertError } = await supabase
-        .from('treatments')
-        .insert(treatmentData)
-        .select()
-        .single();
+      const { data: rpcResult, error } = await supabase.rpc('record_treatment_atomic', {
+        p_location_id: data.location_id,
+        p_patient_id: data.patient_id,
+        p_doctor_id: data.doctor_id || null,
+        p_treatment_type_id: data.treatment_type_id || null,
+        p_teeth: data.teeth || [],
+        p_description: data.description,
+        p_cost: data.cost,
+        p_standard_cost: data.standardCost ?? data.cost,
+        p_discount_amount: data.discountAmount ?? 0,
+        p_pricing_note: data.pricingNote || null,
+        p_medications: data.medications || [],
+        p_treatment_date: treatmentDate
+      });
 
-      if (insertError && /treatment_type_id|standard_cost|discount_amount|pricing_note|schema cache/i.test(insertError.message || '')) {
-        const legacyInsert = await supabase
-          .from('treatments')
-          .insert(legacyTreatmentData)
-          .select()
-          .single();
-
-        result = legacyInsert.data
-          ? {
-              ...legacyInsert.data,
-              standard_cost: data.standardCost ?? data.cost,
-              discount_amount: data.discountAmount ?? 0,
-              pricing_note: data.pricingNote || null,
-              doctor_earnings: doctorEarnings
-            }
-          : legacyInsert.data;
-        insertError = legacyInsert.error;
-      }
-      
-      if (insertError) throw new Error(`Treatment recording failed: ${insertError.message}`);
-
-      // 5. Execute Medication Sales & Stock Updates
-      for (const res of medicationResults) {
-        await api.medicines.sell(data.patient_id, res.med.id, res.med.qty, data.location_id, result.id);
+      if (error) {
+        if (isMissingFunctionError(error, 'record_treatment_atomic')) {
+          throw new Error('Atomic treatment recording is not installed. Apply the atomic clinical workflows migration before recording treatments.');
+        }
+        throw new Error(error.message);
       }
 
-      // 6. Update Patient Balance and Points (Total = Treatment Cost + Medication Cost)
-      // Note: api.medicines.sell already updates balance and points. 
-      // We only need to update the balance/points for the TREATMENT cost here if not already handled.
-      // Actually, to keep it simple and avoid double counting, we'll let api.medicines.sell handle its part
-      // and we handle the treatment cost part here.
-      
-      const treatmentBalance = (patient.balance || 0) + data.cost;
-      
-      // Calculate points for TREATMENT only
-      const rules = await api.loyalty.getRules(data.location_id);
-      const treatmentRule = rules.find(r => r.event_type === 'TREATMENT' && r.active);
-      const pointsPerUnit = treatmentRule ? treatmentRule.points_per_unit : 0.001;
-      const minAmount = treatmentRule?.min_amount || 0;
-      
-      let earnedPoints = 0;
-      if (data.cost >= minAmount) {
-        earnedPoints = Math.floor(data.cost * pointsPerUnit);
-      }
-      
-      const newPoints = (patient.loyalty_points || 0) + earnedPoints;
+      const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+      if (!result?.record) throw new Error('Treatment recording returned no record.');
 
-      const { error: updateError } = await supabase
-        .from('patients')
-        .update({ balance: treatmentBalance, loyalty_points: newPoints })
-        .eq('id', data.patient_id);
-
-      if (updateError) throw new Error(`Patient balance update failed: ${updateError.message}`);
-
-      if (earnedPoints > 0) {
-        await api.loyalty.addTransaction({
-          patient_id: data.patient_id,
-          location_id: data.location_id,
-          points: earnedPoints,
-          type: 'EARNED',
-          description: `Earned from treatment: ${data.description}`
-        });
-      }
-
-      let completedAppointmentIds: string[] = [];
-      try {
-        completedAppointmentIds = await completeScheduledAppointmentForTreatment({
-          locationId: data.location_id,
-          patientId: data.patient_id,
-          doctorId: data.doctor_id || null,
-          treatmentDate
-        });
-      } catch (appointmentCompletionError) {
-        console.warn('Appointment auto-completion failed after treatment recording:', appointmentCompletionError);
-      }
-      
-      // Fetch final state for return
-      const { data: finalPatient } = await supabase.from('patients').select('balance').eq('id', data.patient_id).single();
-
-      let doctorName: string | undefined;
-      if (result?.doctor_id) {
-        const { data: doctorRow } = await supabase
-          .from('doctors')
-          .select('name')
-          .eq('id', result.doctor_id)
-          .maybeSingle();
-        doctorName = doctorRow?.name || undefined;
-      }
-      
       return {
-        status: "success",
-        new_balance: finalPatient?.balance,
-        completed_appointment_ids: completedAppointmentIds,
+        ...result,
+        status: 'success',
+        completed_appointment_ids: result.completed_appointment_ids || [],
         record: {
-          ...result,
-          standardCost: result?.standard_cost ?? null,
-          doctorEarnings: Number(result?.doctor_earnings || 0),
-          discountAmount: Number(result?.discount_amount || 0),
-          pricingNote: result?.pricing_note || null,
-          doctor_name: doctorName
+          ...result.record,
+          standardCost: result.record.standard_cost ?? null,
+          doctorEarnings: Number(result.record.doctor_earnings || 0),
+          discountAmount: Number(result.record.discount_amount || 0),
+          pricingNote: result.record.pricing_note || null
         }
       };
     },
-    undoRecord: async (recordId: string, patientId: string, cost: number) => {
-      // 1. Delete the record
-      const { error: deleteError } = await supabase
-        .from('treatments')
-        .delete()
-        .eq('id', recordId);
-      
-      if (deleteError) throw new Error(deleteError.message);
+    undoRecord: async (recordId: string) => {
+      const { data, error } = await supabase.rpc('undo_treatment_atomic', {
+        p_treatment_id: recordId
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'undo_treatment_atomic')) {
+          throw new Error('Atomic treatment undo is not installed. Apply the undo treatment migration before undoing treatments.');
+        }
+        throw new Error(error.message);
+      }
 
-      // 2. Fetch current balance
-      const { data: patient, error: fetchError } = await supabase
-        .from('patients')
-        .select('balance')
-        .eq('id', patientId)
-        .single();
-
-      if (fetchError) throw new Error(fetchError.message);
-
-      // 3. Deduct the cost (revert balance)
-      const newBalance = Math.max(0, (patient?.balance || 0) - cost);
-
-      const { error: updateError } = await supabase
-        .from('patients')
-        .update({ balance: newBalance })
-        .eq('id', patientId);
-
-      if (updateError) throw new Error(updateError.message);
-
-      const { data: remainingTreatments, error: remainingError } = await supabase
-        .from('treatments')
-        .select('id')
-        .eq('patient_id', patientId);
-      if (remainingError) throw new Error(remainingError.message);
-      await recalculateDoctorEarningsForTreatments((remainingTreatments || []).map((row: any) => row.id));
-
-      return { status: "success", new_balance: newBalance };
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.treatment_id) throw new Error('Treatment undo returned no result.');
+      return result;
     }
   },
 
@@ -6461,110 +6183,33 @@ export const api = {
         throw new Error('Quantity must be greater than 0');
       }
 
-      // 1. Get medicine and patient state (Planning/State Fetching)
-      const { data: medicine, error: mError } = await supabase
-        .from('medicines')
-        .select('*')
-        .eq('id', medicineId)
-        .eq('location_id', locationId)
-        .single();
+      const { data: rpcResult, error } = await supabase.rpc('sell_medicine_atomic', {
+        p_location_id: locationId,
+        p_patient_id: patientId,
+        p_medicine_id: medicineId,
+        p_quantity: parsedQuantity,
+        p_treatment_id: treatmentId || null,
+        p_sale_date: getLocalISODate()
+      });
 
-      if (mError || !medicine) throw new Error('Medicine not found in this location');
-      if (Number(medicine.stock) < parsedQuantity) {
-        throw new Error(`Insufficient stock. Available: ${medicine.stock} ${medicine.unit}`);
+      if (error) {
+        if (isMissingFunctionError(error, 'sell_medicine_atomic')) {
+          throw new Error('Atomic medicine sales are not installed. Apply the atomic clinical workflows migration before selling medicine.');
+        }
+        throw new Error(error.message);
       }
 
-      const { data: patient, error: pError } = await supabase
-        .from('patients')
-        .select('id, name, balance, loyalty_points')
-        .eq('id', patientId)
-        .eq('location_id', locationId)
-        .single();
-
-      if (pError || !patient) throw new Error('Patient not found in this location');
-
-      const totalPrice = Number(medicine.price) * parsedQuantity;
-      const newStock = Number(medicine.stock) - parsedQuantity;
-
-      // 2. Create sale record
-      const saleData = {
-        location_id: locationId,
-        patient_id: patientId,
-        medicine_id: medicineId,
-        quantity: parsedQuantity,
-        unit_price: medicine.price,
-        total_price: totalPrice,
-        date: new Date().toISOString().split('T')[0],
-        treatment_id: treatmentId || null
-      };
-
-      const { data: saleResult, error: saleError } = await supabase
-        .from('medicine_sales')
-        .insert(saleData)
-        .select('*')
-        .single();
-
-      if (saleError) throw new Error(`Sale failed: ${saleError.message}`);
-
-      // 3. Update stock (decrement)
-      const { error: stockError } = await supabase
-        .from('medicines')
-        .update({ stock: newStock })
-        .eq('id', medicineId)
-        .gte('stock', parsedQuantity); // Atomicity check: ensure stock hasn't changed
-
-      if (stockError) throw new Error(`Stock update failed: ${stockError.message}`);
-
-      // 4. Update patient balance and points
-      const newBalance = (patient.balance || 0) + totalPrice;
-      
-      // Calculate points based on active rules
-      const rules = await api.loyalty.getRules(locationId);
-      const purchaseRule = rules.find(r => r.event_type === 'PURCHASE' && r.active);
-      const pointsPerUnit = purchaseRule ? purchaseRule.points_per_unit : 0.001;
-      const minAmount = purchaseRule?.min_amount || 0;
-      
-      let earnedPoints = 0;
-      if (totalPrice >= minAmount) {
-        earnedPoints = Math.floor(totalPrice * pointsPerUnit);
-      }
-      
-      const newPoints = (patient.loyalty_points || 0) + earnedPoints;
-      
-      const { error: pUpdateError } = await supabase
-        .from('patients')
-        .update({ balance: newBalance, loyalty_points: newPoints })
-        .eq('id', patientId);
-
-      if (pUpdateError) throw new Error(`Patient update failed: ${pUpdateError.message}`);
-          
-      if (earnedPoints > 0) {
-        await api.loyalty.addTransaction({
-          patient_id: patientId,
-          location_id: locationId,
-          points: earnedPoints,
-          type: 'EARNED',
-          description: `Earned from medicine purchase: ${medicine.name} (Qty: ${parsedQuantity})`
-        });
-      }
+      const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+      if (!result?.sale) throw new Error('Medicine sale returned no record.');
 
       return {
         sale: {
-          id: saleResult.id,
-          location_id: saleResult.location_id,
-          patient_id: saleResult.patient_id,
-          patient_name: patient.name || 'Unknown',
-          medicine_id: saleResult.medicine_id,
-          medicine_name: medicine.name || 'Unknown',
-          medicine_unit: medicine.unit || undefined,
-          quantity: saleResult.quantity,
-          unit_price: saleResult.unit_price,
-          total_price: saleResult.total_price,
-          date: saleResult.date,
-          treatment_id: saleResult.treatment_id,
-          created_at: saleResult.created_at
+          ...result.sale,
+          quantity: Number(result.sale.quantity),
+          unit_price: Number(result.sale.unit_price),
+          total_price: Number(result.sale.total_price)
         },
-        new_stock: newStock
+        new_stock: Number(result.new_stock)
       };
     },
     getSales: async (locationId?: string, patientId?: string, options?: { throwOnError?: boolean }): Promise<MedicineSale[]> => {

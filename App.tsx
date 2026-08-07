@@ -3338,10 +3338,38 @@ const App: React.FC = () => {
     if (!selectedPatient) return;
     
     try {
-      const res = await api.treatments.undoRecord(record.id, selectedPatient.id, record.cost);
+      const res = await api.treatments.undoRecord(record.id);
       
-      setSelectedPatient({ ...selectedPatient, balance: res.new_balance });
+      setSelectedPatient({
+        ...selectedPatient,
+        balance: Number(res.new_balance),
+        loyalty_points: Number(res.new_points)
+      });
       setTreatmentHistory(treatmentHistory.filter(t => t.id !== record.id));
+
+      const reversedSaleIds = new Set<string>(res.reversed_medicine_sale_ids || []);
+      if (reversedSaleIds.size > 0) {
+        setMedicineSales(prev => prev.filter(sale => !reversedSaleIds.has(sale.id)));
+        setPatientMedicineSales(prev => prev.filter(sale => !reversedSaleIds.has(sale.id)));
+        setAssistantMedicineSales(prev => prev.filter(sale => !reversedSaleIds.has(sale.id)));
+      }
+
+      const stockByMedicineId = new Map<string, number>(
+        (res.restocked_medicines || []).map((item: any) => [item.medicine_id, Number(item.new_stock)])
+      );
+      if (stockByMedicineId.size > 0) {
+        const applyRestockedQuantities = (rows: Medicine[]) => rows.map(medicine => (
+          stockByMedicineId.has(medicine.id)
+            ? { ...medicine, stock: stockByMedicineId.get(medicine.id)! }
+            : medicine
+        ));
+        setMedicines(applyRestockedQuantities);
+        setAssistantMedicines(applyRestockedQuantities);
+      }
+
+      if (res.loyalty_reversal) {
+        setLoyaltyTransactions(prev => [res.loyalty_reversal, ...prev]);
+      }
     } catch (err: any) {
       alert(err.message);
     }

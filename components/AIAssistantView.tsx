@@ -5041,7 +5041,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                 }
                 if (!patientId) throw new Error("Patient ID or Name is required for undoing treatment.");
 
-                await api.treatments.undoRecord(params.id, patientId, params.cost);
+                await api.treatments.undoRecord(params.id);
                 const pName = getScopedPatientById(patientId)?.name || patientId;
                 currentActionResult = `✅ Treatment record undone successfully for ${pName}.`;
               } catch (err: any) {

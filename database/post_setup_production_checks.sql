@@ -1,8 +1,8 @@
 -- ============================================================================
 -- POST SETUP PRODUCTION CHECKS
 -- Purpose:
--- Run after complete_database_setup.sql, payment_corrections_migration.sql,
--- and split_payment_allocations_migration.sql before opening the app.
+-- Run after complete_database_setup.sql and every migration under
+-- supabase/migrations before opening the app.
 --
 -- This file is read-only. It does not modify schema or data.
 -- ============================================================================
@@ -71,6 +71,24 @@ FROM (
 ) AS c(column_name)
 ORDER BY c.column_name;
 
+-- Exact loyalty snapshots are required for safe treatment undo.
+SELECT
+  'clinical_undo_columns' AS check_group,
+  c.table_name || '.' || c.column_name AS item,
+  CASE WHEN EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = c.table_name
+      AND column_name = c.column_name
+  ) THEN 'OK' ELSE 'MISSING' END AS status
+FROM (
+  VALUES
+    ('treatments', 'loyalty_points_earned'),
+    ('medicine_sales', 'loyalty_points_earned')
+) AS c(table_name, column_name)
+ORDER BY c.table_name, c.column_name;
+
 -- ----------------------------------------------------------------------------
 -- 3. Required app_settings columns
 -- ----------------------------------------------------------------------------
@@ -117,7 +135,11 @@ FROM (
   VALUES
     ('process_patient_payment', 'p_patient_id uuid, p_amount numeric, p_payment_method text, p_treatment_ids uuid[], p_payment_date date, p_receipt_snapshot jsonb, p_submission_key text, p_created_by_user_id uuid, p_created_by_user_name text'),
     ('process_patient_split_payment', 'p_patient_id uuid, p_amount numeric, p_allocations jsonb, p_treatment_ids uuid[], p_payment_date date, p_receipt_snapshot jsonb, p_submission_key text, p_created_by_user_id uuid, p_created_by_user_name text'),
-    ('complete_appointment_with_clinical_fee', 'p_appointment_id uuid, p_skip_clinical_fee boolean')
+    ('complete_appointment_with_clinical_fee', 'p_appointment_id uuid, p_skip_clinical_fee boolean'),
+    ('sell_medicine_atomic', 'p_location_id uuid, p_patient_id uuid, p_medicine_id uuid, p_quantity numeric, p_treatment_id uuid, p_sale_date date'),
+    ('record_treatment_atomic', 'p_location_id uuid, p_patient_id uuid, p_doctor_id uuid, p_treatment_type_id uuid, p_teeth integer[], p_description text, p_cost numeric, p_standard_cost numeric, p_discount_amount numeric, p_pricing_note text, p_medications jsonb, p_treatment_date date'),
+    ('undo_treatment_atomic', 'p_treatment_id uuid'),
+    ('delete_patient_atomic', 'p_patient_id uuid')
 ) AS f(function_name, identity_args);
 
 -- Split tender integrity: invalid_payment_count must be zero.

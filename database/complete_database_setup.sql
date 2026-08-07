@@ -272,12 +272,14 @@ CREATE TABLE treatments (
   discount_amount DECIMAL(12,2) DEFAULT 0,
   pricing_note VARCHAR(20),
   doctor_earnings DECIMAL(12,2) DEFAULT 0,
+  loyalty_points_earned INTEGER,
   date DATE DEFAULT CURRENT_DATE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   CONSTRAINT treatments_standard_cost_check CHECK (standard_cost IS NULL OR standard_cost >= 0),
   CONSTRAINT treatments_discount_amount_check CHECK (discount_amount >= 0),
   CONSTRAINT treatments_pricing_note_check CHECK (pricing_note IS NULL OR pricing_note IN ('FOC', 'DISCOUNT')),
-  CONSTRAINT treatments_doctor_earnings_check CHECK (doctor_earnings >= 0)
+  CONSTRAINT treatments_doctor_earnings_check CHECK (doctor_earnings >= 0),
+  CONSTRAINT treatments_loyalty_points_earned_check CHECK (loyalty_points_earned IS NULL OR loyalty_points_earned >= 0)
 );
 
 CREATE SEQUENCE IF NOT EXISTS payment_receipt_seq START 1;
@@ -550,7 +552,9 @@ CREATE TABLE medicine_sales (
   total_price DECIMAL(12,2) NOT NULL,
   date DATE DEFAULT CURRENT_DATE,
   treatment_id UUID REFERENCES treatments(id) ON DELETE SET NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  loyalty_points_earned INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  CONSTRAINT medicine_sales_loyalty_points_earned_check CHECK (loyalty_points_earned IS NULL OR loyalty_points_earned >= 0)
 );
 
 -- Loyalty Rules
@@ -571,7 +575,7 @@ CREATE TABLE loyalty_transactions (
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
   location_id UUID REFERENCES locations(id),
   points INTEGER NOT NULL,
-  type VARCHAR(20) CHECK (type IN ('EARNED', 'REDEEMED', 'EXPIRED')),
+  type VARCHAR(20) CHECK (type IN ('EARNED', 'REDEEMED', 'EXPIRED', 'REVERSED')),
   description TEXT,
   date TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
