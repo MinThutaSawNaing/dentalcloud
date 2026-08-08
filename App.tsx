@@ -78,6 +78,7 @@ import { canManageMaterialCosts, resolveAllowedTabs } from './utils/permissions'
 import { loadEmailSettingsAsync } from './utils/emailSettings';
 import { buildAppointmentClinicalFocusNotes, parseAppointmentClinicalFocus } from './utils/appointmentClinicalFocus';
 import { dataCache } from './utils/dataCache';
+import type { SelectedMedicineCharge } from './components/MedicineSelectionModal';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
 import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords } from './utils/paymentReceipt';
 import { hasRecordedServiceFeeForVisit } from './utils/serviceFee';
@@ -3375,12 +3376,49 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUndoMedicineSale = async (sale: MedicineSale) => {
+    if (!selectedPatient || sale.patient_id !== selectedPatient.id) {
+      throw new Error('The selected patient changed. Reopen the medicine record and try again.');
+    }
+
+    try {
+      const result = await api.medicines.undoSale(sale.id);
+      const updatePatient = (patient: Patient) => patient.id === result.patient_id ? { ...patient, balance: result.new_balance, loyalty_points: result.new_points } : patient;
+      const removeSale = (candidate: MedicineSale) => candidate.id !== result.medicine_sale_id;
+      const updateStock = (medicine: Medicine) => medicine.id === result.medicine_id ? { ...medicine, stock: result.new_stock } : medicine;
+
+      setSelectedPatient((previous) => previous?.id === result.patient_id ? updatePatient(previous) : previous);
+      setPatients((previous) => previous.map(updatePatient));
+      setDashboardPatients((previous) => previous.map(updatePatient));
+      setAssistantPatients((previous) => previous.map(updatePatient));
+      setMedicineSales((previous) => previous.filter(removeSale));
+      setPatientMedicineSales((previous) => previous.filter(removeSale));
+      setAssistantMedicineSales((previous) => previous.filter(removeSale));
+      setMedicines((previous) => previous.map(updateStock));
+      setAssistantMedicines((previous) => previous.map(updateStock));
+      if (result.loyalty_reversal) {
+        setLoyaltyTransactions((previous) => [result.loyalty_reversal!, ...previous]);
+      }
+      api.medicines.getTopSelling(currentLocationId || sale.location_id, 10)
+        .then(setTopSellingMedicines)
+        .catch((refreshError) => console.warn('Medicine record was undone, but top-selling inventory could not be refreshed:', refreshError));
+      setToast({
+        message: `${sale.medicine_name || 'Medicine record'} deleted. Stock and patient balance were restored.`,
+        type: 'success',
+        show: true
+      });
+    } catch (err: any) {
+      alert(err?.message || 'Medicine record could not be deleted.');
+      throw err;
+    }
+  };
+
   const handleAddMedicines = () => {
     if (!selectedPatient) return;
     setShowMedicineSelectionModal(true);
   };
 
-  const handleMedicineSelectionConfirm = async (selectedMedicines: { medicine: Medicine; quantity: number }[]) => {
+  const handleMedicineSelectionConfirm = async (selectedMedicines: SelectedMedicineCharge[]) => {
     if (!selectedPatient) return;
     const salePatient = selectedPatient;
     const salePatientRequestId = medicineHistoryRequestRef.current;
@@ -3394,8 +3432,7 @@ const App: React.FC = () => {
     
     setShowMedicineSelectionModal(false);
     
-    // Calculate medicine cost
-    const medicineCost = selectedMedicines.reduce((sum, item) => sum + (item.medicine.price * item.quantity), 0);
+    const medicineCost = selectedMedicines.reduce((sum, item) => sum + item.finalTotal, 0);
     
     try {
       // Record medicine sales
@@ -3404,7 +3441,9 @@ const App: React.FC = () => {
           salePatient.id,
           item.medicine.id,
           item.quantity,
-          saleLocationId
+          saleLocationId,
+          undefined,
+          item.finalTotal
         );
         successfulSaleCount += 1;
       }
@@ -4477,6 +4516,7 @@ const App: React.FC = () => {
                 onAddMedicines={handleAddMedicines}
                 onToggleFlatRate={setUseFlatRate}
                 onUndoTreatment={handleUndoTreatment}
+                onUndoMedicineSale={handleUndoMedicineSale}
                 onRedeemPoints={handleRedeemPoints}
                 onUpdatePatient={async (id, data) => {
                   try {

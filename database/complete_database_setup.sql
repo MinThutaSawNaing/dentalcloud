@@ -550,11 +550,19 @@ CREATE TABLE medicine_sales (
   quantity DECIMAL(12,2) NOT NULL CHECK (quantity > 0),
   unit_price DECIMAL(12,2) NOT NULL,
   total_price DECIMAL(12,2) NOT NULL,
+  standard_total DECIMAL(12,2) NOT NULL,
+  discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  pricing_note VARCHAR(20),
   date DATE DEFAULT CURRENT_DATE,
   treatment_id UUID REFERENCES treatments(id) ON DELETE SET NULL,
   loyalty_points_earned INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  CONSTRAINT medicine_sales_loyalty_points_earned_check CHECK (loyalty_points_earned IS NULL OR loyalty_points_earned >= 0)
+  CONSTRAINT medicine_sales_loyalty_points_earned_check CHECK (loyalty_points_earned IS NULL OR loyalty_points_earned >= 0),
+  CONSTRAINT medicine_sales_standard_total_check CHECK (standard_total >= 0),
+  CONSTRAINT medicine_sales_discount_amount_check CHECK (discount_amount >= 0),
+  CONSTRAINT medicine_sales_total_consistency_check CHECK (total_price >= 0 AND total_price <= standard_total AND ABS((standard_total - total_price) - discount_amount) <= 0.01),
+  CONSTRAINT medicine_sales_pricing_note_check CHECK (pricing_note IS NULL OR pricing_note IN ('FOC', 'DISCOUNT')),
+  CONSTRAINT medicine_sales_pricing_semantics_check CHECK ((discount_amount = 0 AND pricing_note IS NULL) OR (discount_amount > 0 AND total_price = 0 AND pricing_note = 'FOC') OR (discount_amount > 0 AND total_price > 0 AND pricing_note = 'DISCOUNT'))
 );
 
 -- Loyalty Rules

@@ -53,13 +53,13 @@ describe('atomic clinical workflows', () => {
   it('sells medicine through one atomic RPC and uses the local business date', async () => {
     supabaseMock.rpc.mockResolvedValue({
       data: {
-        sale: { id: 'sale-1', quantity: '2', unit_price: '500', total_price: '1000' },
+        sale: { id: 'sale-1', quantity: '2', unit_price: '500', total_price: '800', standard_total: '1000', discount_amount: '200', pricing_note: 'DISCOUNT' },
         new_stock: '8'
       },
       error: null
     });
 
-    const result = await api.medicines.sell('patient-1', 'medicine-1', 2, 'location-1');
+    const result = await api.medicines.sell('patient-1', 'medicine-1', 2, 'location-1', undefined, 800);
 
     expect(supabaseMock.rpc).toHaveBeenCalledWith('sell_medicine_atomic', expect.objectContaining({
       p_location_id: 'location-1',
@@ -67,9 +67,10 @@ describe('atomic clinical workflows', () => {
       p_medicine_id: 'medicine-1',
       p_quantity: 2,
       p_treatment_id: null,
-      p_sale_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)
+      p_sale_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      p_final_total: 800
     }));
-    expect(result).toMatchObject({ new_stock: 8, sale: { total_price: 1000 } });
+    expect(result).toMatchObject({ new_stock: 8, sale: { total_price: 800, standard_total: 1000, discount_amount: 200, pricing_note: 'DISCOUNT' } });
   });
 
   it('fails closed when the required migration has not been applied', async () => {
@@ -118,5 +119,34 @@ describe('atomic clinical workflows', () => {
 
     await expect(api.treatments.undoRecord('treatment-1'))
       .rejects.toThrow(/atomic treatment undo is not installed/i);
+  });
+
+  it('undoes one medicine record through an atomic RPC and normalizes totals', async () => {
+    supabaseMock.rpc.mockResolvedValue({
+      data: {
+        status: 'success', medicine_sale_id: 'sale-1', medicine_id: 'medicine-1', patient_id: 'patient-1',
+        quantity_restocked: '2', new_stock: '12', new_balance: '500', new_points: '4', reversed_points: '1',
+        loyalty_reversal: { id: 'reversal-1', points: -1 }
+      },
+      error: null
+    });
+
+    const result = await api.medicines.undoSale('sale-1');
+
+    expect(supabaseMock.rpc).toHaveBeenCalledWith('undo_medicine_sale_atomic', { p_medicine_sale_id: 'sale-1' });
+    expect(result).toMatchObject({
+      medicine_sale_id: 'sale-1', quantity_restocked: 2, new_stock: 12,
+      new_balance: 500, new_points: 4, reversed_points: 1
+    });
+  });
+
+  it('fails closed when atomic medicine record undo is not installed', async () => {
+    supabaseMock.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'PGRST202', message: 'Could not find undo_medicine_sale_atomic' }
+    });
+
+    await expect(api.medicines.undoSale('sale-1'))
+      .rejects.toThrow(/atomic medicine record undo is not installed/i);
   });
 });

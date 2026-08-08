@@ -6176,11 +6176,15 @@ export const api = {
 
       if (error) throw new Error(error.message);
     },
-    sell: async (patientId: string, medicineId: string, quantity: number, locationId: string, treatmentId?: string): Promise<{ sale: MedicineSale; new_stock: number }> => {
+    sell: async (patientId: string, medicineId: string, quantity: number, locationId: string, treatmentId?: string, finalTotal?: number): Promise<{ sale: MedicineSale; new_stock: number }> => {
       if (!locationId) throw new Error('locationId is required for medicine sales');
       const parsedQuantity = Number(quantity);
       if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
         throw new Error('Quantity must be greater than 0');
+      }
+      const parsedFinalTotal = finalTotal === undefined ? null : Number(finalTotal);
+      if (parsedFinalTotal !== null && (!Number.isFinite(parsedFinalTotal) || parsedFinalTotal < 0)) {
+        throw new Error('Final medicine charge must be at least 0');
       }
 
       const { data: rpcResult, error } = await supabase.rpc('sell_medicine_atomic', {
@@ -6189,7 +6193,8 @@ export const api = {
         p_medicine_id: medicineId,
         p_quantity: parsedQuantity,
         p_treatment_id: treatmentId || null,
-        p_sale_date: getLocalISODate()
+        p_sale_date: getLocalISODate(),
+        p_final_total: parsedFinalTotal
       });
 
       if (error) {
@@ -6207,9 +6212,45 @@ export const api = {
           ...result.sale,
           quantity: Number(result.sale.quantity),
           unit_price: Number(result.sale.unit_price),
-          total_price: Number(result.sale.total_price)
+          total_price: Number(result.sale.total_price),
+          standard_total: Number(result.sale.standard_total ?? result.sale.total_price),
+          discount_amount: Number(result.sale.discount_amount || 0),
+          pricing_note: result.sale.pricing_note || null
         },
         new_stock: Number(result.new_stock)
+      };
+    },
+    undoSale: async (saleId: string): Promise<{
+      medicine_sale_id: string;
+      medicine_id: string;
+      patient_id: string;
+      quantity_restocked: number;
+      new_stock: number;
+      new_balance: number;
+      new_points: number;
+      reversed_points: number;
+      loyalty_reversal: LoyaltyTransaction | null;
+    }> => {
+      const { data, error } = await supabase.rpc('undo_medicine_sale_atomic', {
+        p_medicine_sale_id: saleId
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'undo_medicine_sale_atomic')) {
+          throw new Error('Atomic medicine record undo is not installed. Apply the medicine record undo migration before deleting medicine records.');
+        }
+        throw new Error(error.message);
+      }
+
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.medicine_sale_id) throw new Error('Medicine record undo returned no result.');
+      return {
+        ...result,
+        quantity_restocked: Number(result.quantity_restocked),
+        new_stock: Number(result.new_stock),
+        new_balance: Number(result.new_balance),
+        new_points: Number(result.new_points),
+        reversed_points: Number(result.reversed_points || 0),
+        loyalty_reversal: result.loyalty_reversal || null
       };
     },
     getSales: async (locationId?: string, patientId?: string, options?: { throwOnError?: boolean }): Promise<MedicineSale[]> => {
@@ -6244,9 +6285,12 @@ export const api = {
           medicine_id: sale.medicine_id,
           medicine_name: sale.medicines?.name || 'Unknown',
           medicine_unit: sale.medicines?.unit || undefined,
-          quantity: sale.quantity,
-          unit_price: sale.unit_price,
-          total_price: sale.total_price,
+          quantity: Number(sale.quantity),
+          unit_price: Number(sale.unit_price),
+          total_price: Number(sale.total_price),
+          standard_total: Number(sale.standard_total ?? sale.total_price),
+          discount_amount: Number(sale.discount_amount || 0),
+          pricing_note: sale.pricing_note || null,
           date: sale.date,
           treatment_id: sale.treatment_id,
           created_at: sale.created_at

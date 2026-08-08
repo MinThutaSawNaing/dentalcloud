@@ -12,6 +12,7 @@ import { calculateAppointmentShortcutDate, type AppointmentDateShortcut } from '
 import { getNextTreatmentOptionIndex } from '../utils/treatmentSelectorKeyboard';
 import { formatMedicineQuantity, getPatientMedicineHistory } from '../utils/medicineHistory';
 import { distributeOverallTreatmentDiscount } from '../utils/treatmentDiscount';
+import { resolveMedicineSalePricing } from '../utils/medicineSalePricing';
 
 const AboutPatientReport = React.lazy(() => import('./AboutPatientReport'));
 
@@ -57,6 +58,7 @@ interface ClinicalViewProps {
   onAddMedicines?: () => void;
   onToggleFlatRate: (value: boolean) => void;
   onUndoTreatment?: (record: ClinicalRecord) => void;
+  onUndoMedicineSale?: (sale: MedicineSale) => Promise<void>;
   onRedeemPoints?: (points: number, amount: number) => void;
   onUpdatePatient?: (id: string, data: Partial<Patient>) => Promise<void>;
   onUpdateAccount?: (patient: Patient, password: string) => void;
@@ -105,6 +107,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   onAddMedicines,
   onToggleFlatRate,
   onUndoTreatment,
+  onUndoMedicineSale,
   onRedeemPoints,
   onUpdatePatient,
   onUpdateAccount,
@@ -168,6 +171,8 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   const [isRecordingTreatment, setIsRecordingTreatment] = React.useState(false);
   const [isSavingNextAppointment, setIsSavingNextAppointment] = React.useState(false);
   const [showPatientReport, setShowPatientReport] = React.useState(false);
+  const [medicineSaleToDelete, setMedicineSaleToDelete] = React.useState<MedicineSale | null>(null);
+  const [deletingMedicineSaleId, setDeletingMedicineSaleId] = React.useState<string | null>(null);
   const [nextAppointmentFeedback, setNextAppointmentFeedback] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [nextAppointmentForm, setNextAppointmentForm] = React.useState<Partial<Appointment>>({
     date: getDefaultNextAppointmentDate(),
@@ -179,6 +184,8 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   });
   React.useEffect(() => {
     setShowPatientReport(false);
+    setMedicineSaleToDelete(null);
+    setDeletingMedicineSaleId(null);
   }, [selectedPatient?.id]);
   const appointmentTypeOptionsForAppointment = React.useMemo(() => {
     const currentType = (nextAppointmentForm.type || '').trim();
@@ -907,20 +914,21 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                   <th className="px-5 py-4">Medicine / Item</th>
                   <th className="px-5 py-4">Quantity given</th>
                   <th className="px-5 py-4 text-right">Unit price</th>
-                  <th className="px-5 py-4 text-right md:pr-7">Total</th>
+                  <th className="px-5 py-4 text-right">Total</th>
+                  {onUndoMedicineSale && <th className="px-5 py-4 text-center md:pr-7">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {medicineHistoryLoading ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center md:px-7">
+                    <td colSpan={onUndoMedicineSale ? 6 : 5} className="px-5 py-12 text-center md:px-7">
                       <Loader2 className="mx-auto mb-3 animate-spin text-emerald-500" size={30} aria-hidden="true" />
                       <p className="font-semibold text-gray-500">Loading medicine history…</p>
                     </td>
                   </tr>
                 ) : medicineHistoryError ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center md:px-7">
+                    <td colSpan={onUndoMedicineSale ? 6 : 5} className="px-5 py-12 text-center md:px-7">
                       <AlertCircle className="mx-auto mb-3 text-red-400" size={32} aria-hidden="true" />
                       <p className="font-semibold text-red-700">Medicine history could not be loaded.</p>
                       <p className="mt-1 text-sm text-gray-500">{medicineHistoryError}</p>
@@ -928,13 +936,15 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                   </tr>
                 ) : medicineHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-5 py-12 text-center md:px-7">
+                    <td colSpan={onUndoMedicineSale ? 6 : 5} className="px-5 py-12 text-center md:px-7">
                       <Package className="mx-auto mb-3 text-emerald-200" size={34} aria-hidden="true" />
                       <p className="font-semibold text-gray-500">No medicine records for this patient yet.</p>
                       <p className="mt-1 text-sm text-gray-400">Items added to the patient’s bill will appear here.</p>
                     </td>
                   </tr>
-                ) : medicineHistory.map((sale) => (
+                ) : medicineHistory.map((sale) => {
+                  const pricing = resolveMedicineSalePricing(sale as MedicineSale & Record<string, unknown>);
+                  return (
                   <tr key={sale.id} className="transition-colors hover:bg-emerald-50/30">
                     <td className="whitespace-nowrap px-5 py-4 text-gray-600 md:px-7">{sale.date}</td>
                     <td className="px-5 py-4 font-semibold text-gray-900">{sale.medicine_name || 'Inventory item'}</td>
@@ -944,13 +954,64 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-right text-gray-600">{formatCurrency(Number(sale.unit_price || 0), currency)}</td>
-                    <td className="whitespace-nowrap px-5 py-4 text-right font-black text-gray-900 md:pr-7">{formatCurrency(Number(sale.total_price || 0), currency)}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-right font-black text-gray-900 md:pr-7">
+                      {pricing.discountAmount > 0 && <div className="text-xs font-medium text-gray-400 line-through">{formatCurrency(pricing.standardTotal, currency)}</div>}
+                      <div>{formatCurrency(pricing.finalTotal, currency)}</div>
+                      {pricing.note && <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${pricing.note === 'FOC' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{pricing.note}</span>}
+                    </td>
+                    {onUndoMedicineSale && (
+                      <td className="px-5 py-4 text-center md:pr-7">
+                        <button
+                          type="button"
+                          onClick={() => setMedicineSaleToDelete(sale)}
+                          disabled={deletingMedicineSaleId === sale.id}
+                          className="rounded-lg p-2 text-emerald-400 transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-wait disabled:opacity-50"
+                          title="Undo/Delete Medicine Record"
+                          aria-label={`Delete ${sale.medicine_name || 'medicine'} record`}
+                        >
+                          {deletingMedicineSaleId === sale.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                        </button>
+                      </td>
+                    )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
+      )}
+
+      {medicineSaleToDelete && onUndoMedicineSale && (
+        <Modal title="Delete Medicine Record" closeDisabled={!!deletingMedicineSaleId} onClose={() => setMedicineSaleToDelete(null)}>
+          <div className="space-y-5">
+            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-900">
+              <p className="font-black">Undo {medicineSaleToDelete.medicine_name || 'this inventory item'}?</p>
+              <p className="mt-1 text-red-700">This restores {formatMedicineQuantity(medicineSaleToDelete.quantity, medicineSaleToDelete.medicine_unit)} to stock and reverses its patient balance and loyalty effects. Paid or receipted records cannot be deleted.</p>
+            </div>
+            <div className="flex gap-3">
+              <button type="button" disabled={!!deletingMedicineSaleId} onClick={() => setMedicineSaleToDelete(null)} className="flex-1 rounded-xl border border-gray-300 py-3 font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+              <button
+                type="button"
+                disabled={!!deletingMedicineSaleId}
+                onClick={async () => {
+                  setDeletingMedicineSaleId(medicineSaleToDelete.id);
+                  try {
+                    await onUndoMedicineSale(medicineSaleToDelete);
+                    setMedicineSaleToDelete(null);
+                  } catch {
+                    // App-level handling displays the database safety message.
+                  } finally {
+                    setDeletingMedicineSaleId(null);
+                  }
+                }}
+                className="flex-1 rounded-xl bg-red-600 py-3 font-bold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"
+              >
+                {deletingMedicineSaleId ? 'Deleting…' : 'Delete Record'}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
 

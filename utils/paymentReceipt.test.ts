@@ -123,7 +123,10 @@ describe('paymentReceipt', () => {
           medicineName: 'Pain Killer',
           quantity: 2,
           unitPrice: 1500,
-          totalPrice: 3000
+          totalPrice: 3000,
+          standardTotal: 3000,
+          discountAmount: 0,
+          pricingNote: null
         }
       ]
     });
@@ -164,6 +167,24 @@ describe('paymentReceipt', () => {
     };
 
     expect(getUncapturedMedicineSalesForReceipt([sale], [priorPayment], 'patient-1', [], '2026-08-04')).toEqual([]);
+  });
+
+  it('preserves discounted and FOC medicine pricing in immutable snapshots', () => {
+    const snapshot = buildPaymentReceiptSnapshot({
+      patient: { id: 'patient-1', location_id: 'branch-1', name: 'Patient', email: '', phone: '', balance: 0, loyalty_points: 0 },
+      amountPaid: 8000, paymentMethod: 'CASH', paymentDate: '2026-08-04', receiptNumber: 'REC-DISCOUNT',
+      balanceBefore: 8000, balanceAfter: 0, paymentStatus: 'FULL', clinic,
+      medicines: [
+        { id: 'discounted', location_id: 'branch-1', patient_id: 'patient-1', medicine_id: 'm1', medicine_name: 'Medicine', quantity: 2, unit_price: 5000, total_price: 8000, standard_total: 10000, discount_amount: 2000, pricing_note: 'DISCOUNT', date: '2026-08-04' },
+        { id: 'foc', location_id: 'branch-1', patient_id: 'patient-1', medicine_id: 'm2', medicine_name: 'Gift Item', quantity: 1, unit_price: 1000, total_price: 0, standard_total: 1000, discount_amount: 1000, pricing_note: 'FOC', date: '2026-08-04' }
+      ]
+    });
+
+    expect(snapshot.medicines).toEqual([
+      { id: 'discounted', date: '2026-08-04', medicineName: 'Medicine', quantity: 2, unitPrice: 5000, totalPrice: 8000, standardTotal: 10000, discountAmount: 2000, pricingNote: 'DISCOUNT' },
+      { id: 'foc', date: '2026-08-04', medicineName: 'Gift Item', quantity: 1, unitPrice: 1000, totalPrice: 0, standardTotal: 1000, discountAmount: 1000, pricingNote: 'FOC' }
+    ]);
+    expect(normalizePaymentReceiptSnapshot(snapshot)).toEqual(snapshot);
   });
 
   it('allocates only treatment money after medicine and service fee', () => {
@@ -326,7 +347,10 @@ describe('paymentReceipt', () => {
           medicineName: 'Antibiotic',
           quantity: 3,
           unitPrice: 2000,
-          totalPrice: 6000
+          totalPrice: 6000,
+          standardTotal: 6000,
+          discountAmount: 0,
+          pricingNote: null
         }
       ]
     });

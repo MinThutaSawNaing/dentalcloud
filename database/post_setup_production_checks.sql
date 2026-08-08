@@ -136,9 +136,10 @@ FROM (
     ('process_patient_payment', 'p_patient_id uuid, p_amount numeric, p_payment_method text, p_treatment_ids uuid[], p_payment_date date, p_receipt_snapshot jsonb, p_submission_key text, p_created_by_user_id uuid, p_created_by_user_name text'),
     ('process_patient_split_payment', 'p_patient_id uuid, p_amount numeric, p_allocations jsonb, p_treatment_ids uuid[], p_payment_date date, p_receipt_snapshot jsonb, p_submission_key text, p_created_by_user_id uuid, p_created_by_user_name text'),
     ('complete_appointment_with_clinical_fee', 'p_appointment_id uuid, p_skip_clinical_fee boolean'),
-    ('sell_medicine_atomic', 'p_location_id uuid, p_patient_id uuid, p_medicine_id uuid, p_quantity numeric, p_treatment_id uuid, p_sale_date date'),
+    ('sell_medicine_atomic', 'p_location_id uuid, p_patient_id uuid, p_medicine_id uuid, p_quantity numeric, p_treatment_id uuid, p_sale_date date, p_final_total numeric'),
     ('record_treatment_atomic', 'p_location_id uuid, p_patient_id uuid, p_doctor_id uuid, p_treatment_type_id uuid, p_teeth integer[], p_description text, p_cost numeric, p_standard_cost numeric, p_discount_amount numeric, p_pricing_note text, p_medications jsonb, p_treatment_date date'),
     ('undo_treatment_atomic', 'p_treatment_id uuid'),
+    ('undo_medicine_sale_atomic', 'p_medicine_sale_id uuid'),
     ('delete_patient_atomic', 'p_patient_id uuid')
 ) AS f(function_name, identity_args);
 

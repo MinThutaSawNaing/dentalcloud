@@ -12,6 +12,7 @@ import type {
 import type { Currency } from './currency';
 import { getPaymentHeaderMethod, normalizePaymentAllocations, normalizePaymentMethod } from './paymentMethods';
 import { resolveReceiptHeaderTitle } from './receiptPreferences';
+import { resolveMedicineSalePricing } from './medicineSalePricing';
 
 type ReceiptClinicContext = {
   appName: string;
@@ -90,13 +91,17 @@ const normalizeMedicineLine = (value: any): PaymentReceiptMedicineLine | null =>
   const medicineName = normalizeString(value.medicineName ?? value.medicine_name);
   if (!id || !date || !medicineName) return null;
 
+  const pricing = resolveMedicineSalePricing(value);
   return {
     id,
     date,
     medicineName,
     quantity: normalizeNumber(value.quantity),
     unitPrice: normalizeNumber(value.unitPrice ?? value.unit_price),
-    totalPrice: normalizeNumber(value.totalPrice ?? value.total_price)
+    totalPrice: pricing.finalTotal,
+    standardTotal: pricing.standardTotal,
+    discountAmount: pricing.discountAmount,
+    pricingNote: pricing.note === 'FOC' ? 'FOC' : pricing.note === 'Discount' ? 'DISCOUNT' : null
   };
 };
 
@@ -113,14 +118,20 @@ const buildTreatmentLines = (treatments: ClinicalRecord[] = []): PaymentReceiptT
   }));
 
 const buildMedicineLines = (medicines: MedicineSale[] = []): PaymentReceiptMedicineLine[] =>
-  medicines.map((medicine) => ({
-    id: medicine.id,
-    date: normalizeString(medicine.date),
-    medicineName: normalizeString(medicine.medicine_name) || 'Medicine',
-    quantity: normalizeNumber(medicine.quantity),
-    unitPrice: normalizeNumber(medicine.unit_price),
-    totalPrice: normalizeNumber(medicine.total_price)
-  }));
+  medicines.map((medicine) => {
+    const pricing = resolveMedicineSalePricing(medicine as MedicineSale & Record<string, unknown>);
+    return {
+      id: medicine.id,
+      date: normalizeString(medicine.date),
+      medicineName: normalizeString(medicine.medicine_name) || 'Medicine',
+      quantity: normalizeNumber(medicine.quantity),
+      unitPrice: normalizeNumber(medicine.unit_price),
+      totalPrice: pricing.finalTotal,
+      standardTotal: pricing.standardTotal,
+      discountAmount: pricing.discountAmount,
+      pricingNote: pricing.note === 'FOC' ? 'FOC' : pricing.note === 'Discount' ? 'DISCOUNT' : null
+    };
+  });
 
 export const normalizePaymentReceiptSnapshot = (value: unknown): PaymentReceiptSnapshot | null => {
   if (!value || typeof value !== 'object') return null;

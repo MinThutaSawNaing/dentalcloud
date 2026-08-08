@@ -246,6 +246,7 @@ PAYMENT RECEIPT BEHAVIOR:
 - Old saved receipts keep their original snapshot even when settings or patient data later change.
 - The receipt picker can include treatments and standalone medicine sales.
 - "Recent" / "NEW" means the treatment or medicine date is today, not merely within the last few days.
+- Clinical Focus Medicine History supports undo/delete for unpaid medicine and inventory records. Undo restores stock and reverses the final patient charge and exact loyalty points. Paid, receipted, or unsafe legacy records are blocked.
 
 GET FINANCIAL REPORT:
 { "action": "fin_report", "params": { "period": "weekly" } }
