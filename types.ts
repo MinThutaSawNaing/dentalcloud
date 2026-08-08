@@ -87,6 +87,7 @@ export interface ClinicalRecord {
   doctorEarnings?: number; // Calculated commission for this treatment
   doctorEarningEntries?: DoctorEarningEntry[];
   date: string;
+  created_at?: string;
 }
 
 export interface DoctorEarningEntry {

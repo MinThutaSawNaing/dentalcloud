@@ -274,7 +274,7 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 - Commission ledger entries snapshot the applicable method and rate. Later configuration changes do not rewrite the method or rate already earned for a visit.
 - Commission is reported by payment date and summarized into `treatments.doctor_earnings` for compatibility.
 - Visible in:
-  - Doctor Dashboard: Monthly Commission & Weekly Commission cards
+  - Doctor Dashboard: Range Commission card, filtered by the doctor's inclusive Start/End reporting range using payment dates
   - Admin Dashboard: Doctor Earnings (Commission) aggregated table
   - Admin Dashboard: Per-Treatment Commission Breakdown for individual records
   - Records Tab: Doctor Earned column per treatment
