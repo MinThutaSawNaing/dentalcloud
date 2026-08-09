@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { User, X, Upload, Trash2, FileText, Receipt as ReceiptIcon, Package, RotateCcw, Award, Zap, Key, Edit, Download, Eye, MoreVertical, Calendar, CheckCircle2, AlertCircle, ArrowLeft, Search, Loader2, FileHeart } from 'lucide-react';
+import { User, X, Upload, Trash2, FileText, Receipt as ReceiptIcon, Package, RotateCcw, Award, Zap, Key, Edit, Download, Eye, MoreVertical, Calendar, CheckCircle2, AlertCircle, ArrowLeft, Search, Loader2, FileHeart, Printer, WalletCards } from 'lucide-react';
 import { ToothSelector } from './ToothSelector';
 import { Patient, TreatmentType, ClinicalRecord, PatientFile, LoyaltyTransaction, LoyaltyRule, Doctor, Appointment, TreatmentChargeLine, AppointmentType, Location, MedicineSale, PaymentRecord } from '../types';
 import { formatCurrency, getCurrencySymbol, Currency } from '../utils/currency';
@@ -13,6 +13,8 @@ import { getNextTreatmentOptionIndex } from '../utils/treatmentSelectorKeyboard'
 import { formatMedicineQuantity, getPatientMedicineHistory } from '../utils/medicineHistory';
 import { distributeOverallTreatmentDiscount } from '../utils/treatmentDiscount';
 import { resolveMedicineSalePricing } from '../utils/medicineSalePricing';
+import { formatPaymentAllocations, formatPaymentMethod } from '../utils/paymentMethods';
+import { formatPaymentTime, getPatientPaymentHistory, getPaymentBalanceAfter, getPaymentReceiptNumber, getPaymentReceivedAmount } from '../utils/paymentHistory';
 
 const AboutPatientReport = React.lazy(() => import('./AboutPatientReport'));
 
@@ -47,6 +49,7 @@ interface ClinicalViewProps {
   onDeselectAll: () => void;
   onTreatmentSubmit: (t: TreatmentType, chargeLines?: TreatmentChargeLine[]) => Promise<void>;
   onPaymentRequest: (treatments: ClinicalRecord[]) => void;
+  onOpenPaymentReceipt?: (payment: PaymentRecord) => void;
   onServiceFeeRequest?: () => void;
   onClosePatient: () => void;
   onSelectPatient: (patient: Patient) => void;
@@ -96,6 +99,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   onDeselectAll,
   onTreatmentSubmit,
   onPaymentRequest,
+  onOpenPaymentReceipt,
   onServiceFeeRequest,
   onClosePatient,
   onSelectPatient,
@@ -123,6 +127,10 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   const medicineHistory = React.useMemo(
     () => selectedPatient ? getPatientMedicineHistory(medicineSales, selectedPatient.id) : [],
     [medicineSales, selectedPatient]
+  );
+  const paymentHistory = React.useMemo(
+    () => selectedPatient && paymentsAvailable ? getPatientPaymentHistory(paymentRecords, selectedPatient.id) : [],
+    [paymentRecords, paymentsAvailable, selectedPatient]
   );
   const appointmentTypeOptions = React.useMemo(() => {
     const activeNames = appointmentTypes
@@ -974,6 +982,91 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                       </td>
                     )}
                   </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {selectedPatient && paymentsAvailable && (
+        <div className="overflow-hidden rounded-xl border border-violet-100 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-violet-100 bg-violet-50/70 px-5 py-5 sm:flex-row sm:items-center sm:justify-between md:px-7">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-sm shadow-violet-200">
+                <WalletCards size={19} aria-hidden="true" />
+              </span>
+              <div>
+                <h3 className="text-xl font-black text-gray-900">Payment History</h3>
+                <p className="mt-0.5 text-sm text-violet-800">Payments and receipt records for this patient only.</p>
+              </div>
+            </div>
+            <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-bold text-violet-700 ring-1 ring-violet-200">
+              {paymentHistory.length} {paymentHistory.length === 1 ? 'payment' : 'payments'}
+            </span>
+          </div>
+
+          <div className="max-h-[28rem] min-h-[12rem] overflow-auto custom-scrollbar">
+            <table className="w-full min-w-[62rem] text-left text-[15px]">
+              <thead className="sticky top-0 border-b border-violet-100 bg-violet-50/90 text-xs uppercase tracking-wide text-violet-700 backdrop-blur-sm">
+                <tr>
+                  <th className="px-5 py-4 md:px-7">Date</th>
+                  <th className="px-5 py-4">Receipt</th>
+                  <th className="px-5 py-4">Payment method</th>
+                  <th className="px-5 py-4">Recorded by</th>
+                  <th className="px-5 py-4 text-right">Amount received</th>
+                  <th className="px-5 py-4 text-right">Balance after</th>
+                  <th className="px-5 py-4 text-center md:pr-7">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-violet-50">
+                {paymentHistory.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-12 text-center md:px-7">
+                      <WalletCards className="mx-auto mb-3 text-violet-200" size={34} aria-hidden="true" />
+                      <p className="font-semibold text-gray-500">No payment records for this patient yet.</p>
+                      <p className="mt-1 text-sm text-gray-400">Completed patient payments will appear here.</p>
+                    </td>
+                  </tr>
+                ) : paymentHistory.map((payment) => {
+                  const paymentMethod = payment.allocations?.length
+                    ? formatPaymentAllocations(payment.allocations)
+                    : formatPaymentMethod(payment.paymentMethod);
+                  const receiptNumber = getPaymentReceiptNumber(payment);
+                  const paymentTime = formatPaymentTime(payment.createdAt);
+
+                  return (
+                    <tr key={payment.id} className="transition-colors hover:bg-violet-50/40">
+                      <td className="whitespace-nowrap px-5 py-4 text-gray-600 md:px-7">
+                        <div className="font-semibold text-gray-800">{payment.date}</div>
+                        {paymentTime && <div className="mt-0.5 text-xs text-gray-400">{paymentTime}</div>}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex rounded-lg bg-violet-50 px-2.5 py-1 text-sm font-bold text-violet-800 ring-1 ring-violet-100">{receiptNumber}</span>
+                        {payment.corrections?.length ? (
+                          <span className="mt-2 block text-xs font-bold text-amber-700">Corrected by Admin · {payment.corrections.length} {payment.corrections.length === 1 ? 'change' : 'changes'}</span>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-4 font-semibold text-gray-800">{paymentMethod}</td>
+                      <td className="px-5 py-4 text-gray-600">{payment.createdByUserName || payment.receiptSnapshot?.payment.recordedByUserName || 'Unknown'}</td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-black text-violet-700">{formatCurrency(getPaymentReceivedAmount(payment), currency)}</td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-bold text-gray-900">{formatCurrency(getPaymentBalanceAfter(payment), currency)}</td>
+                      <td className="px-5 py-4 text-center md:pr-7">
+                        {onOpenPaymentReceipt ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenPaymentReceipt(payment)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 transition-colors hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                            aria-label={`Reprint receipt ${receiptNumber}`}
+                          >
+                            <Printer size={14} aria-hidden="true" /> Reprint Receipt
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400">Unavailable</span>
+                        )}
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>

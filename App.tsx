@@ -4539,6 +4539,7 @@ const App: React.FC = () => {
                 onDeselectAll={() => setSelectedTeeth([])}
                 onTreatmentSubmit={handleTreatmentSubmit}
                 onPaymentRequest={handleOpenPaymentModal}
+                onOpenPaymentReceipt={auth.getSession()?.role !== 'doctor' ? handleOpenStoredPaymentReceipt : undefined}
                 onServiceFeeRequest={handleOpenServiceFeePayment}
                 onClosePatient={handleClosePatient}
                 onSelectPatient={handlePatientSelect}
