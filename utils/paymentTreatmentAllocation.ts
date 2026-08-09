@@ -44,13 +44,12 @@ export const getPaymentTreatmentShare = (payment: PaymentRecord): number => {
     0
   );
   const serviceFee = positiveMoney(snapshot.payment.serviceFeeAmount);
-  const capturedValue = treatmentValue + medicineValue + serviceFee;
   const hasPricedReceiptLines = treatmentValue + medicineValue > 0;
 
   // A populated receipt snapshot is the immutable source of truth for mixed
   // receipts. Legacy/partial snapshots without priced lines retain the older
   // service-fee-only fallback instead of making the whole payment disappear.
-  return hasPricedReceiptLines && capturedValue > 0
-    ? roundMoney(collected * treatmentValue / capturedValue)
+  return hasPricedReceiptLines
+    ? roundMoney(Math.min(treatmentValue, Math.max(0, collected - serviceFee - medicineValue)))
     : roundMoney(Math.max(0, collected - serviceFee));
 };

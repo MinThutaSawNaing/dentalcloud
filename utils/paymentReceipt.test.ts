@@ -210,7 +210,7 @@ describe('paymentReceipt', () => {
     expect(getReceiptTreatmentAllocationAmount(397_000, snapshot)).toBe(300_000);
   });
 
-  it('prorates partial mixed payments across treatment, medicine, and service fee', () => {
+  it('deducts service fee and medicine before treatment on a partial mixed payment', () => {
     const snapshot = buildPaymentReceiptSnapshot({
       patient: { id: 'patient-1', location_id: 'branch-1', name: 'Patient', email: '', phone: '', balance: 100, loyalty_points: 0 },
       amountPaid: 100, paymentMethod: 'CASH', paymentDate: '2026-08-04', receiptNumber: 'REC-PARTIAL', balanceBefore: 200,
@@ -221,7 +221,7 @@ describe('paymentReceipt', () => {
     });
 
     expect(snapshot.allocationReconciled).toBeUndefined();
-    expect(getReceiptTreatmentAllocationAmount(100, snapshot)).toBe(50);
+    expect(getReceiptTreatmentAllocationAmount(100, snapshot)).toBe(0);
   });
 
   it('builds a safe legacy payment receipt snapshot when stored snapshot is unavailable', () => {

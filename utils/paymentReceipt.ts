@@ -267,10 +267,7 @@ export const getReceiptTreatmentAllocationAmount = (
   const treatmentTotal = (snapshot.treatments || []).reduce((sum, item) => sum + Math.max(0, item.finalCost), 0);
   const medicineTotal = (snapshot.medicines || []).reduce((sum, item) => sum + Math.max(0, item.totalPrice), 0);
   const serviceFee = Math.max(0, normalizeNumber(snapshot.payment.serviceFeeAmount));
-  const capturedTotal = treatmentTotal + medicineTotal + serviceFee;
-  return capturedTotal > 0
-    ? Math.min(treatmentTotal, collected * (treatmentTotal / capturedTotal))
-    : 0;
+  return Math.min(treatmentTotal, Math.max(0, collected - serviceFee - medicineTotal));
 };
 
 export const buildLegacyPaymentReceiptSnapshot = (

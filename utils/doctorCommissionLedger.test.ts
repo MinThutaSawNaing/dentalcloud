@@ -20,6 +20,19 @@ const treatment = (overrides: Partial<CommissionTreatmentInput> = {}): Commissio
 });
 
 describe('doctor commission ledger', () => {
+  it('calculates the clinic-rule commission from a mixed partial payment', () => {
+    const treatments = [treatment({ cost: 6_130_000, materialCost: 20_000, commissionPercentage: 40 })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1', patientId: 'patient-1', date: '2026-07-01',
+      commissionableAmount: 3_130_000, treatmentIds: ['treatment-1']
+    }]);
+
+    expect(allocations).toEqual([expect.objectContaining({ amount: 3_130_000 })]);
+    expect(calculateCommissionLedgerEntries(treatments, allocations)[0]).toMatchObject({
+      materialDeduction: 20_000, commissionBase: 3_110_000, commissionRate: 40, earnings: 1_244_000
+    });
+  });
+
   it('earns 20,000 Ks from a 200,000 Ks partial payment at 10%', () => {
     const treatments = [treatment()];
     const allocations = allocateCommissionablePayments(treatments, [{

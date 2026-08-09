@@ -79,7 +79,7 @@ describe('material cost calculations', () => {
       .toEqual({ 'treatment-1': 60_000 });
   });
 
-  it('counts only the treatment share of a partially paid mixed receipt', () => {
+  it('deducts service fee and medicine before mixed receipt treatment collection', () => {
     const receiptSnapshot = {
       receiptNumber: 'REC-MIXED',
       payment: { serviceFeeAmount: 10_000 },
@@ -90,7 +90,7 @@ describe('material cost calculations', () => {
     expect(calculateCollectedByTreatmentId(
       [treatment()],
       [payment({ amount: 50_000, clearedAmount: 50_000, receiptSnapshot })]
-    )).toEqual({ 'treatment-1': 30_000 });
+    )).toEqual({ 'treatment-1': 10_000 });
   });
 
   it('does not reassign an explicitly linked payment outside the loaded scope', () => {
