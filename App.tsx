@@ -4292,6 +4292,37 @@ const App: React.FC = () => {
                 totalAppointments={appointmentPageTotal}
                 onQueryChange={loadAppointmentPage}
                 onRefresh={() => setAppointmentPageRefreshKey((key) => key + 1)}
+                canCorrectDoctor={isAdmin}
+                onPreviewDoctorCorrection={async (appointmentId) => {
+                  const session = auth.getSession();
+                  if (session?.role !== 'admin' || !session.staffAuthToken) {
+                    throw new Error('A valid administrator session is required. Sign in again and retry.');
+                  }
+                  return api.appointments.getDoctorCorrectionPreview(appointmentId, {
+                    userId: session.userId,
+                    authToken: session.staffAuthToken
+                  });
+                }}
+                onCorrectDoctor={async (input) => {
+                  const session = auth.getSession();
+                  if (session?.role !== 'admin' || !session.staffAuthToken) {
+                    throw new Error('A valid administrator session is required. Sign in again and retry.');
+                  }
+                  const result = await api.appointments.correctDoctor({
+                    ...input,
+                    actor: { userId: session.userId, authToken: session.staffAuthToken }
+                  });
+                  setAppointmentPageRefreshKey((key) => key + 1);
+                  setToast({
+                    message: `Doctor corrected successfully. ${result.updated_treatment_count} treatment record${result.updated_treatment_count === 1 ? '' : 's'} updated.`,
+                    type: 'success',
+                    show: true
+                  });
+                  void fetchInitialData(currentLocationId || undefined).catch((refreshError) => {
+                    console.warn('Doctor correction succeeded, but background data refresh failed:', refreshError);
+                  });
+                  return result;
+                }}
                 onAddAppointment={() => {setEditingAppointment(null); resetAppointmentForm(); setShowAppointmentModal(true)}} 
                 onEditAppointment={(apt) => {
                   const clinicalPlan = parseAppointmentClinicalFocus(apt.notes);

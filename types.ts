@@ -379,6 +379,38 @@ export interface Appointment {
   clinical_fee_applied_at?: string | null;
 }
 
+export interface DoctorCorrectionTreatmentCandidate {
+  id: string;
+  description: string;
+  date: string;
+  doctor_id?: string | null;
+  linked_to_appointment: boolean;
+  has_financial_history: boolean;
+}
+
+export interface DoctorCorrectionPreview {
+  appointment_id: string;
+  patient_id: string;
+  patient_name: string;
+  location_id: string;
+  visit_date: string;
+  visit_time: string;
+  status: Appointment['status'];
+  old_doctor_id?: string | null;
+  old_doctor_name?: string | null;
+  treatments: DoctorCorrectionTreatmentCandidate[];
+}
+
+export interface DoctorCorrectionResult {
+  status: 'success';
+  correction_id: string;
+  appointment_id: string;
+  old_doctor_id?: string | null;
+  new_doctor_id: string;
+  updated_treatment_count: number;
+  updated_audit_count: number;
+}
+
 export type CancellationOutcome = 'NO_SHOW' | 'RESCHEDULED' | 'COMPLETED_LATER';
 
 export interface AppointmentRescheduleLog {

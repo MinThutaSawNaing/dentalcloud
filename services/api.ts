@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -2301,6 +2301,56 @@ export const api = {
   },
 
   appointments: {
+    getDoctorCorrectionPreview: async (
+      appointmentId: string,
+      actor: { userId: string; authToken: string }
+    ): Promise<DoctorCorrectionPreview> => {
+      const { data, error } = await supabase.rpc('preview_visit_doctor_correction', {
+        p_appointment_id: trimRequired(appointmentId, 'Appointment'),
+        p_admin_user_id: trimRequired(actor.userId, 'Administrator'),
+        p_session_token: trimRequired(actor.authToken, 'Administrator session')
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'preview_visit_doctor_correction')) {
+          throw new Error('Doctor correction is not installed. Apply the visit doctor correction migration first.');
+        }
+        throw new Error(error.message);
+      }
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.appointment_id) throw new Error('Doctor correction preview returned no appointment.');
+      return result as DoctorCorrectionPreview;
+    },
+    correctDoctor: async (input: {
+      appointmentId: string;
+      expectedOldDoctorId?: string | null;
+      newDoctorId: string;
+      treatmentIds: string[];
+      reason: string;
+      actor: { userId: string; authToken: string };
+      requestToken?: string;
+    }): Promise<DoctorCorrectionResult> => {
+      const reason = trimRequired(input.reason, 'Correction reason', { maxLength: 1000 });
+      if (reason.length < 10) throw new Error('Correction reason must contain at least 10 characters.');
+      const { data, error } = await supabase.rpc('correct_visit_doctor_atomic', {
+        p_appointment_id: trimRequired(input.appointmentId, 'Appointment'),
+        p_expected_old_doctor_id: input.expectedOldDoctorId || null,
+        p_new_doctor_id: trimRequired(input.newDoctorId, 'Correct doctor'),
+        p_treatment_ids: Array.from(new Set(input.treatmentIds.filter(Boolean))),
+        p_reason: reason,
+        p_admin_user_id: trimRequired(input.actor.userId, 'Administrator'),
+        p_session_token: trimRequired(input.actor.authToken, 'Administrator session'),
+        p_request_token: input.requestToken || generateRequestUuid()
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'correct_visit_doctor_atomic')) {
+          throw new Error('Doctor correction is not installed. Apply the visit doctor correction migration first.');
+        }
+        throw new Error(error.message);
+      }
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.correction_id) throw new Error('Doctor correction returned no result.');
+      return result as DoctorCorrectionResult;
+    },
     list: async (
       locationId: string | undefined,
       options: {
