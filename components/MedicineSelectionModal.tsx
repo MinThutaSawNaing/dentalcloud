@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
-import { Gift, Minus, Package, Plus, RotateCcw } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Gift, Minus, Package, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { Medicine } from '../types';
 import { Modal } from './Shared';
 import { formatCurrency, Currency } from '../utils/currency';
+import {
+  filterMedicinesForSelection,
+  getAvailableMedicines,
+  getMedicineFilterOptions
+} from '../utils/medicineSelectionFilters';
 
 export interface SelectedMedicineCharge {
   medicine: Medicine;
@@ -26,7 +31,29 @@ const formatQuantity = (value: number | undefined) => {
 const MedicineSelectionModal: React.FC<MedicineSelectionModalProps> = ({ medicines, currency, onConfirm, onClose }) => {
   const [quantities, setQuantities] = useState<Map<string, number>>(new Map());
   const [finalTotals, setFinalTotals] = useState<Map<string, string>>(new Map());
-  const availableMedicines = medicines.filter((medicine) => medicine.stock > 0);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [itemType, setItemType] = useState('');
+  const [category, setCategory] = useState('');
+  const [selectedOnly, setSelectedOnly] = useState(false);
+  const availableMedicines = useMemo(() => getAvailableMedicines(medicines), [medicines]);
+  const filterOptions = useMemo(() => getMedicineFilterOptions(availableMedicines), [availableMedicines]);
+  const selectedIds = useMemo(
+    () => new Set(Array.from(quantities.entries()).filter(([, quantity]) => quantity > 0).map(([id]) => id)),
+    [quantities]
+  );
+  const filteredMedicines = useMemo(() => filterMedicinesForSelection(
+    availableMedicines,
+    { searchTerm, itemType, category, selectedOnly },
+    selectedIds
+  ), [availableMedicines, category, itemType, searchTerm, selectedIds, selectedOnly]);
+  const hasActiveFilters = Boolean(searchTerm.trim() || itemType || category || selectedOnly);
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setItemType('');
+    setCategory('');
+    setSelectedOnly(false);
+  };
 
   const standardTotal = (medicine: Medicine, quantity: number) => roundMoney(Math.max(0, Number(medicine.price || 0)) * quantity);
   const getFinalTotal = (medicine: Medicine, quantity: number) => {
@@ -72,8 +99,84 @@ const MedicineSelectionModal: React.FC<MedicineSelectionModalProps> = ({ medicin
         {availableMedicines.length === 0 ? (
           <div className="py-8 text-center text-gray-500"><Package className="mx-auto mb-3 h-12 w-12 text-gray-300" /><p>No inventory items available in stock.</p></div>
         ) : <>
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+            <div className="relative">
+              <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search name, description, category, type, or unit..."
+                aria-label="Search inventory items"
+                autoFocus
+                className="w-full rounded-xl border border-indigo-200 bg-white py-2.5 pl-10 pr-10 text-sm outline-none transition focus:border-transparent focus:ring-2 focus:ring-indigo-500"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  aria-label="Clear inventory search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="sr-only" htmlFor="medicine-item-type-filter">Filter by item type</label>
+              <select
+                id="medicine-item-type-filter"
+                value={itemType}
+                onChange={(event) => setItemType(event.target.value)}
+                className="min-w-0 rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-transparent focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">All item types</option>
+                {filterOptions.itemTypes.map((type) => <option key={type} value={type}>{type === 'Retail' ? 'Retail Item' : type}</option>)}
+              </select>
+              <label className="sr-only" htmlFor="medicine-category-filter">Filter by category</label>
+              <select
+                id="medicine-category-filter"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+                className="min-w-0 rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-transparent focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">All categories</option>
+                {filterOptions.categories.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold transition ${selectedOnly ? 'border-indigo-300 bg-indigo-100 text-indigo-800' : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-200'}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedOnly}
+                  onChange={(event) => setSelectedOnly(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                Selected only ({selectedIds.size})
+              </label>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="font-semibold text-gray-500" aria-live="polite">
+                  {filteredMedicines.length} of {availableMedicines.length} items
+                </span>
+                {hasActiveFilters && (
+                  <button type="button" onClick={clearFilters} className="font-bold text-indigo-700 hover:text-indigo-900">
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
           <div className="max-h-[32rem] space-y-2 overflow-y-auto rounded-xl border border-gray-200 p-4">
-            {availableMedicines.map((medicine) => {
+            {filteredMedicines.length === 0 ? (
+              <div className="py-10 text-center text-gray-500">
+                <Search className="mx-auto mb-3 h-10 w-10 text-gray-300" />
+                <p className="font-bold text-gray-700">No matching items</p>
+                <p className="mt-1 text-sm">Try another search or clear the filters.</p>
+                <button type="button" onClick={clearFilters} className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-100">
+                  Show all in-stock items
+                </button>
+              </div>
+            ) : filteredMedicines.map((medicine) => {
               const quantity = quantities.get(medicine.id) || 0;
               const step = Number(medicine.quantity_step || 1);
               const standard = standardTotal(medicine, quantity);
