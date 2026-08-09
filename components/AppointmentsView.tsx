@@ -11,6 +11,7 @@ import Pagination from './Pagination';
 import { ConfirmDialog, Modal } from './Shared';
 import ExportMenu from './ExportMenu';
 import PatientQRScanButton from './PatientQRScanButton';
+import { SearchableSelect } from './SearchableSelect';
 
 interface AppointmentsViewProps {
   appointments: Appointment[];
@@ -1284,11 +1285,16 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
                 <div><span className="font-semibold text-gray-500">Status:</span> <span className="font-bold text-gray-900">{doctorCorrectionPreview.status}</span></div>
               </div>
               <div>
-                <label htmlFor="correct-visit-doctor" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Correct doctor</label>
-                <select id="correct-visit-doctor" value={correctDoctorId} onChange={(event) => setCorrectDoctorId(event.target.value)} disabled={doctorCorrectionSubmitting} className="w-full rounded-xl border border-gray-200 bg-white p-3 text-sm font-semibold text-gray-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60">
-                  <option value="">Select the correct doctor</option>
-                  {doctors.filter((doctor) => doctor.id !== doctorCorrectionPreview.old_doctor_id).map((doctor) => <option key={doctor.id} value={doctor.id}>{formatDoctorDisplayName(doctor.name)}</option>)}
-                </select>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Correct doctor</label>
+                <SearchableSelect
+                  value={correctDoctorId}
+                  onChange={setCorrectDoctorId}
+                  options={doctors
+                    .filter((doctor) => doctor.id !== doctorCorrectionPreview.old_doctor_id)
+                    .map((doctor) => ({ value: doctor.id, label: formatDoctorDisplayName(doctor.name) }))}
+                  placeholder="Search and select the correct doctor"
+                  emptyMessage="No matching doctors found"
+                />
               </div>
               {doctorCorrectionPreview.treatments.length > 0 && (
                 <div>
