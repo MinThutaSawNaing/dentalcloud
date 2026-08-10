@@ -5698,6 +5698,35 @@ export const api = {
         updated_at: data.updated_at
       };
     },
+    getByDoctorId: async (doctorId: string): Promise<User | null> => {
+      if (!doctorId) return null;
+
+      const supportsAllowedTabs = await detectUsersAllowedTabsSupport();
+      const supportsDoctorId = await detectUsersDoctorIdSupport();
+      if (!supportsDoctorId) return null;
+
+      const { data, error } = await supabase
+        .from('users')
+        .select(supportsAllowedTabs
+          ? 'id, location_id, username, role, allowed_tabs, created_at, updated_at, doctor_id'
+          : 'id, location_id, username, role, created_at, updated_at, doctor_id')
+        .eq('doctor_id', doctorId)
+        .maybeSingle() as { data: User | null, error: any };
+
+      if (error) throw new Error(error.message);
+      if (!data) return null;
+
+      return {
+        id: data.id,
+        location_id: data.location_id,
+        doctor_id: data.doctor_id || null,
+        username: data.username,
+        role: data.role,
+        allowed_tabs: resolveAllowedTabs(data.role, supportsAllowedTabs ? data.allowed_tabs : undefined),
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
+    },
     getAll: async (locationId?: string): Promise<User[]> => {
       try {
         const supportsAllowedTabs = await detectUsersAllowedTabsSupport();
@@ -5803,14 +5832,7 @@ export const api = {
 
             if (linkedUserError) {
               console.warn('Doctor email matched, but linked staff user lookup failed:', linkedUserError.message);
-              return {
-                id: doctor.id,
-                location_id: doctor.location_id || null,
-                doctor_id: doctor.id,
-                username: doctor.email,
-                role: 'normal',
-                allowed_tabs: DOCTOR_DASHBOARD_TABS
-              };
+              throw new Error('Unable to verify the linked doctor login account. Please try again.');
             }
 
             if (linkedUser) {
@@ -5823,21 +5845,14 @@ export const api = {
             }
 
             console.log('Authentication successful for doctor email without linked staff user:', trimmedUsername);
-            return {
-              id: doctor.id,
-              location_id: doctor.location_id || null,
-              doctor_id: doctor.id,
-              username: doctor.email,
-              role: 'normal',
-              allowed_tabs: DOCTOR_DASHBOARD_TABS
-            };
+            throw new Error('This doctor login account is incomplete. Please ask an administrator to update the doctor account.');
           }
         }
 
         return null;
       } catch (err) {
         console.error("Error authenticating user:", err);
-        return null;
+        throw err;
       }
     },
     create: async (data: Partial<User>): Promise<User> => {

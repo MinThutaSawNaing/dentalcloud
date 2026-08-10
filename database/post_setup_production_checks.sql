@@ -280,6 +280,20 @@ SELECT 'summary_counts', 'payments', COUNT(*)::TEXT FROM public.payments
 UNION ALL
 SELECT 'summary_counts', 'appointments', COUNT(*)::TEXT FROM public.appointments;
 
+-- Doctor login integrity: both counts must be zero after the doctor login
+-- repair migration. No credential values are returned.
+SELECT
+  'doctor_login_integrity' AS check_group,
+  COUNT(*) FILTER (WHERE u.id IS NULL)::TEXT AS login_doctors_without_linked_user,
+  COUNT(*) FILTER (
+    WHERE u.id IS NOT NULL
+      AND lower(btrim(u.username)) <> lower(btrim(d.email))
+  )::TEXT AS linked_username_mismatches
+FROM public.doctors d
+LEFT JOIN public.users u ON u.doctor_id = d.id
+WHERE NULLIF(btrim(d.email), '') IS NOT NULL
+  AND NULLIF(btrim(d.password), '') IS NOT NULL;
+
 -- ----------------------------------------------------------------------------
 -- 12. Human-readable completion marker
 -- ----------------------------------------------------------------------------
