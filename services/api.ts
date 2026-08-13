@@ -4507,27 +4507,7 @@ export const api = {
         : rpcPayload);
 
       if (error && submissionKey && isMissingFunctionError(error, 'process_patient_payment')) {
-        const retry = await supabase.rpc('process_patient_payment', rpcPayload);
-        if (retry.error) {
-          if (isMissingFunctionError(retry.error, 'process_patient_payment')) {
-            throw new Error('Payment receipt storage is not installed. Run database/payment_receipt_snapshot_migration.sql in Supabase.');
-          }
-          throw new Error(retry.error.message);
-        }
-
-        const retryRow = Array.isArray(retry.data) ? retry.data[0] : retry.data;
-        if (!retryRow) throw new Error('Payment was not recorded.');
-
-        const payment: PaymentRecord = mapPaymentRow(retryRow);
-        await recalculateDoctorEarningsForTreatments(await resolvePaymentCommissionTreatmentIds(payment));
-
-        return {
-          status: 'success',
-          new_balance: payment.remainingBalance,
-          amount_collected: payment.amount,
-          cleared_amount: payment.clearedAmount ?? payment.amount,
-          payment
-        };
+        throw new Error('Idempotent payment storage is not installed. Apply the payment submission idempotency migration before collecting payments.');
       }
 
       if (error) {

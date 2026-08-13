@@ -31,6 +31,11 @@ export const removePatientTreatmentRecords = (
   patientId: string
 ): ClinicalRecord[] => records.filter((record) => record.patient_id !== patientId);
 
+export const removeTreatmentRecordById = (
+  records: ClinicalRecord[],
+  treatmentId: string
+): ClinicalRecord[] => records.filter((record) => record.id !== treatmentId);
+
 export const getUncapturedMedicineSalesForReceipt = (
   medicineSales: MedicineSale[],
   paymentRecords: PaymentRecord[],

@@ -80,9 +80,10 @@ import { buildAppointmentClinicalFocusNotes, parseAppointmentClinicalFocus } fro
 import { dataCache } from './utils/dataCache';
 import type { SelectedMedicineCharge } from './components/MedicineSelectionModal';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
-import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords } from './utils/paymentReceipt';
+import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords, removeTreatmentRecordById } from './utils/paymentReceipt';
 import { hasRecordedServiceFeeForVisit } from './utils/serviceFee';
 import { getPaymentDedupeKey } from './utils/paymentTreatmentAllocation';
+import { validateAuthoritativePaymentTreatments } from './utils/paymentTreatmentValidation';
 import { toLocalDateInputValue } from './utils/patientCreationDate';
 import type { AuditFilter } from './utils/auditLogExport';
 
@@ -1883,6 +1884,8 @@ const App: React.FC = () => {
     const session = auth.getSession();
     treatmentHistoryRequestRef.current += 1;
     medicineHistoryRequestRef.current += 1;
+    setLatestTreatmentBatch([]);
+    setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
     setSelectedPatient(null);
     setPatientMedicineSales([]);
     setPatientMedicineHistoryLoading(false);
@@ -2122,6 +2125,8 @@ const App: React.FC = () => {
     const requestId = ++treatmentHistoryRequestRef.current;
     const medicineRequestId = ++medicineHistoryRequestRef.current;
     setSelectedPatient(patient);
+    setLatestTreatmentBatch([]);
+    setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
     setSelectedDoctorId('');
     setSelectedTeeth([]);
     setCurrentView('finance');
@@ -3346,7 +3351,13 @@ const App: React.FC = () => {
         balance: Number(res.new_balance),
         loyalty_points: Number(res.new_points)
       });
-      setTreatmentHistory(treatmentHistory.filter(t => t.id !== record.id));
+      setTreatmentHistory((current) => removeTreatmentRecordById(current, record.id));
+      setLatestTreatmentBatch((current) => removeTreatmentRecordById(current, record.id));
+      setPaymentDraft((current) => ({
+        ...current,
+        treatments: current.treatments.filter((treatment) => treatment.id !== record.id)
+      }));
+      setSelectedTreatmentsForReceipt((current) => removeTreatmentRecordById(current, record.id));
 
       const reversedSaleIds = new Set<string>(res.reversed_medicine_sale_ids || []);
       if (reversedSaleIds.size > 0) {
@@ -3555,6 +3566,15 @@ const App: React.FC = () => {
         selectedPaymentTreatments,
         paymentDate
       );
+      const authoritativeTreatmentHistory = selectedPaymentTreatments.length > 0
+        ? await api.treatments.getHistory(selectedPatient.id)
+        : [];
+      const authoritativePaymentTreatments = validateAuthoritativePaymentTreatments(
+        selectedPaymentTreatments,
+        authoritativeTreatmentHistory,
+        selectedPatient.id,
+        selectedPatient.location_id || currentLocationId
+      );
       const provisionalReceiptSnapshot = buildPaymentReceiptSnapshot({
         patient: selectedPatient,
         amountPaid: paymentAmountTendered,
@@ -3568,7 +3588,7 @@ const App: React.FC = () => {
         recordedByUserName: currentUser || session?.username || null,
         serviceFeeAmount: paymentServiceFeeAmount,
         serviceFeeCategory: paymentDraft.serviceFeeCategory,
-        treatments: selectedPaymentTreatments,
+        treatments: authoritativePaymentTreatments,
         medicines: matchedMedicineSales,
         clinic: { appName, receiptHeaderTitle, receiptInfo, currency }
       });
@@ -3577,7 +3597,7 @@ const App: React.FC = () => {
         amount: paymentAmountTendered,
         paymentMethod: getPaymentHeaderMethod(effectivePaymentAllocations),
         allocations: effectivePaymentAllocations,
-        treatmentIds: selectedPaymentTreatments.map((treatment) => treatment.id),
+        treatmentIds: authoritativePaymentTreatments.map((treatment) => treatment.id),
         paymentDate,
         submissionKey,
         receiptSnapshot: provisionalReceiptSnapshot,
@@ -3602,7 +3622,7 @@ const App: React.FC = () => {
         recordedByUserName: paymentRecord.createdByUserName || currentUser || session?.username || null,
         serviceFeeAmount: paymentServiceFeeAmount,
         serviceFeeCategory: paymentDraft.serviceFeeCategory,
-        treatments: selectedPaymentTreatments,
+        treatments: authoritativePaymentTreatments,
         medicines: matchedMedicineSales,
         clinic: {
           appName,
@@ -3852,6 +3872,8 @@ const App: React.FC = () => {
   const handleClosePatient = () => {
     treatmentHistoryRequestRef.current += 1;
     medicineHistoryRequestRef.current += 1;
+    setLatestTreatmentBatch([]);
+    setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
     setSelectedPatient(null);
     setPatientMedicineSales([]);
     setPatientMedicineHistoryLoading(false);

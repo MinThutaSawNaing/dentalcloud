@@ -7,7 +7,8 @@ import {
   getUncapturedMedicineSalesForReceipt,
   mergeTreatmentRecordsById,
   normalizePaymentReceiptSnapshot,
-  removePatientTreatmentRecords
+  removePatientTreatmentRecords,
+  removeTreatmentRecordById
 } from './paymentReceipt';
 
 describe('paymentReceipt', () => {
@@ -144,6 +145,15 @@ describe('paymentReceipt', () => {
       { id: 'treatment-a', cost: 110_000 },
       { id: 'treatment-b', cost: 200_000 }
     ]);
+  });
+
+  it('removes an undone treatment from the pending payment batch', () => {
+    const records = [
+      { id: 'undone', location_id: 'branch-1', patient_id: 'patient-a', teeth: [], description: 'Old crown', cost: 100, date: '2026-08-13' },
+      { id: 'replacement', location_id: 'branch-1', patient_id: 'patient-a', teeth: [], description: 'New crown', cost: 100, date: '2026-08-13' }
+    ] as ClinicalRecord[];
+
+    expect(removeTreatmentRecordById(records, 'undone').map((record) => record.id)).toEqual(['replacement']);
   });
 
   it('clears only the patient whose payment succeeded', () => {
