@@ -12,6 +12,7 @@ export interface MonthlyReportSourceRecord extends ClinicalRecord {
   patient_age?: number | null;
   patient_phone?: string | null;
   patient_city?: string | null;
+  patient_township?: string | null;
 }
 
 export interface MonthlyReportData {
@@ -29,6 +30,7 @@ export interface MonthlyReportRow {
   age: number | null;
   phone: string;
   city: string;
+  township: string;
   patientType: string;
   treatment: string;
   doctor: string;
@@ -267,6 +269,7 @@ export const buildMonthlyReport = (data: MonthlyReportData): MonthlyReport => {
         : null,
       phone: record.patient_phone?.trim() || 'Not recorded',
       city: record.patient_city?.trim() || 'Not recorded',
+      township: record.patient_township?.trim() || 'Not recorded',
       patientType: record.patient_type?.trim() || 'Not assigned',
       treatment: record.description?.trim() || 'Treatment',
       doctor: record.doctor_name?.trim() || 'Unassigned',

@@ -3441,11 +3441,11 @@ export const api = {
       const loadPages = async (fromDate?: string, patientIds?: string[]): Promise<MonthlyReportSourceRecord[]> => {
         const records: MonthlyReportSourceRecord[] = [];
         for (let offset = 0; ; offset += pageSize) {
-          const buildQuery = (withRelations: boolean) => {
+          const buildQuery = (withRelations: boolean, regionColumn: 'township' | 'state_region' = 'township') => {
             let query = supabase
               .from('treatments')
               .select(withRelations
-                ? 'id, location_id, patient_id, doctor_id, treatment_type_id, teeth, description, cost, standard_cost, discount_amount, pricing_note, doctor_earnings, date, patients(name, age, phone, city, patient_type), doctors(name)'
+                ? `id, location_id, patient_id, doctor_id, treatment_type_id, teeth, description, cost, standard_cost, discount_amount, pricing_note, doctor_earnings, date, patients(name, age, phone, city, ${regionColumn}, patient_type), doctors(name)`
                 : 'id, location_id, patient_id, doctor_id, treatment_type_id, teeth, description, cost, standard_cost, discount_amount, pricing_note, doctor_earnings, date')
               .lte('date', dateTo)
               .order('date', { ascending: true })
@@ -3458,6 +3458,13 @@ export const api = {
           };
 
           let { data, error }: { data: any[] | null; error: any } = await buildQuery(true);
+          let patientRegionColumn: 'township' | 'state_region' = 'township';
+          if (error && isMissingColumnError(error, 'township')) {
+            patientRegionColumn = 'state_region';
+            const legacyRegionFallback = await buildQuery(true, patientRegionColumn);
+            data = legacyRegionFallback.data;
+            error = legacyRegionFallback.error;
+          }
           if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
             const fallback = await buildQuery(false);
             data = fallback.data;
@@ -3475,6 +3482,7 @@ export const api = {
             patient_age: record.patients?.age ?? null,
             patient_phone: record.patients?.phone || null,
             patient_city: record.patients?.city || null,
+            patient_township: record.patients?.[patientRegionColumn] || null,
             patient_type: record.patients?.patient_type || null,
             doctor_name: record.doctors?.name || undefined
           })));
