@@ -86,6 +86,7 @@ import { getPaymentDedupeKey } from './utils/paymentTreatmentAllocation';
 import { validateAuthoritativePaymentTreatments } from './utils/paymentTreatmentValidation';
 import { toLocalDateInputValue } from './utils/patientCreationDate';
 import type { AuditFilter } from './utils/auditLogExport';
+import { filterAppointmentsForDoctor, resolveAppointmentQueryDoctorIds } from './utils/appointmentQueryScope';
 
 // Lazy Load Views
 const DashboardView = React.lazy(() => import('./components/DashboardView'));
@@ -1568,6 +1569,7 @@ const App: React.FC = () => {
   }) => {
     const locationId = currentLocationId || undefined;
     if (!locationId) return;
+    const session = auth.getSession();
 
     const now = new Date();
     const toLocalISODate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -1581,10 +1583,15 @@ const App: React.FC = () => {
           ? query.date
           : undefined;
     const doctorTerm = query.doctor.trim().toLowerCase();
-    const doctorIds = doctorTerm
+    const requestedDoctorIds = doctorTerm
       ? doctors.filter((doctor) => doctor.id === query.doctor || doctor.name.toLowerCase().includes(doctorTerm)).map((doctor) => doctor.id)
       : undefined;
-    if (doctorTerm && !doctorIds?.length) {
+    const doctorIds = resolveAppointmentQueryDoctorIds({
+      role: session?.role,
+      doctorId: session?.doctor_id,
+      requestedDoctorIds
+    });
+    if ((session?.role === 'doctor' && !doctorIds?.length) || (doctorTerm && !requestedDoctorIds?.length)) {
       setAppointmentPageAppointments([]);
       setAppointmentPageTotal(0);
       setAppointmentPageLoading(false);
@@ -1602,7 +1609,7 @@ const App: React.FC = () => {
         treatment: query.treatment
       });
       if (requestId !== appointmentPageRequestRef.current) return;
-      setAppointmentPageAppointments(result.appointments);
+      setAppointmentPageAppointments(filterAppointmentsForDoctor(result.appointments, session?.role, session?.doctor_id));
       setAppointmentPageTotal(result.total);
     } catch (err) {
       if (requestId !== appointmentPageRequestRef.current) return;
