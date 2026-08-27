@@ -37,6 +37,7 @@ interface PatientsViewProps {
   onExportPDF?: () => Promise<void>;
   onExportExcel?: () => Promise<void>;
   onRefresh?: () => void | Promise<void>;
+  backgroundLoading?: boolean;
   patientToEdit?: Patient | null;
   onPatientEditHandled?: () => void;
   loyaltyEnabled: boolean;
@@ -62,6 +63,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   onExportPDF,
   onExportExcel,
   onRefresh,
+  backgroundLoading = false,
   patientToEdit,
   onPatientEditHandled,
   loyaltyEnabled, 
@@ -467,10 +469,10 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     return filteredPatients.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredPatients, currentPage, showAll]);
 
-  // Reset to first page when patients change
+  // Background batches append patients; do not interrupt someone browsing a later page.
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [patients, dateQuickFilter, dateFilter, endDateFilter, visitDateQuickFilter, visitDateFilter, visitEndDateFilter, doctorFilter, treatmentFilter]);
+  }, [searchTerm, dateQuickFilter, dateFilter, endDateFilter, visitDateQuickFilter, visitDateFilter, visitEndDateFilter, doctorFilter, treatmentFilter]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -580,7 +582,10 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white sticky top-0 z-30">
       <div>
         <h2 className="text-xl font-bold text-gray-800">Patient Directory</h2>
-        <p className="text-sm text-gray-500">Manage all registered clinical patients</p>
+        <p className="text-sm text-gray-500">
+          Manage all registered clinical patients
+          {backgroundLoading && ` · Loaded ${patients.length}, loading older patients…`}
+        </p>
       </div>
       <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
         <div className="relative flex-1 sm:flex-initial">

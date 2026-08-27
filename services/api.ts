@@ -869,6 +869,44 @@ const mapPatient = (row: any): Patient => ({
   username: Array.isArray(row?.patient_auth) ? (row.patient_auth[0]?.username ?? null) : (row?.patient_auth?.username ?? null)
 });
 
+const fetchPatientPage = async (
+  locationId: string | undefined,
+  offset: number,
+  limit: number
+): Promise<Patient[]> => {
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(1, Math.min(SUPABASE_PAGE_SIZE, Math.floor(limit)));
+  const basePatientColumns = 'id, patient_unique_id, location_id, name, email, phone, age, address, city, patient_type, balance, loyalty_points, medical_history, created_at';
+  const baseColumns = `${basePatientColumns}, patient_auth(id, username)`;
+
+  const buildQuery = (regionColumn: 'township' | 'state_region', includePatientAuth: boolean) => {
+    let query = supabase
+      .from('patients')
+      .select(`${includePatientAuth ? baseColumns : basePatientColumns}, ${regionColumn}`)
+      .order('created_at', { ascending: false })
+      .order('id')
+      .range(safeOffset, safeOffset + safeLimit - 1);
+
+    if (locationId) query = query.eq('location_id', locationId);
+    return query;
+  };
+
+  let result = await buildQuery('township', true);
+  if (result.error && isMissingColumnError(result.error, 'township')) {
+    result = await buildQuery('state_region', true);
+  }
+
+  if (result.error && isOptionalRelationAccessError(result.error, ['patient_auth'])) {
+    result = await buildQuery('township', false);
+    if (result.error && isMissingColumnError(result.error, 'township')) {
+      result = await buildQuery('state_region', false);
+    }
+  }
+
+  if (result.error) throw result.error;
+  return (result.data || []).map(mapPatient);
+};
+
 const getTrimmedDoctorName = (value?: string | null): string | undefined => {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || undefined;
@@ -1512,72 +1550,28 @@ export const api = {
           : null
       };
     },
+    getPage: async (locationId?: string, offset = 0, limit = 100): Promise<Patient[]> => {
+      try {
+        if (offset === 0) {
+          await applyAutoOnpPatientTypeIfEnabled(locationId);
+        }
+        return await fetchPatientPage(locationId, offset, limit);
+      } catch (err) {
+        console.warn('Error fetching patient page:', err);
+        throw err;
+      }
+    },
     getAll: async (locationId?: string): Promise<Patient[]> => {
       try {
         await applyAutoOnpPatientTypeIfEnabled(locationId);
 
-        const basePatientColumns = 'id, patient_unique_id, location_id, name, email, phone, age, address, city, patient_type, balance, loyalty_points, medical_history, created_at';
-        const baseColumns = `${basePatientColumns}, patient_auth(id, username)`;
-        const buildQuery = (regionColumn: 'township' | 'state_region', offset: number) => {
-          let query = supabase
-            .from('patients')
-            .select(`${baseColumns}, ${regionColumn}`)
-            .order('created_at', { ascending: false })
-            .order('id')
-            .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
-
-          if (locationId) {
-            query = query.eq('location_id', locationId);
-          }
-
-          return query;
-        };
-
-        const patients: any[] = [];
+        const patients: Patient[] = [];
         for (let offset = 0; ; offset += SUPABASE_PAGE_SIZE) {
-          const initialResult = await buildQuery('township', offset);
-          let data: any[] | null = initialResult.data;
-          let error: any = initialResult.error;
-
-          if (error && isMissingColumnError(error, 'township')) {
-            const fallbackResult = await buildQuery('state_region', offset);
-            data = fallbackResult.data;
-            error = fallbackResult.error;
-          }
-
-          if (error && isOptionalRelationAccessError(error, ['patient_auth'])) {
-            const buildPatientOnlyQuery = (regionColumn: 'township' | 'state_region', pageOffset: number) => {
-              let query = supabase
-                .from('patients')
-                .select(`${basePatientColumns}, ${regionColumn}`)
-                .order('created_at', { ascending: false })
-                .order('id')
-                .range(pageOffset, pageOffset + SUPABASE_PAGE_SIZE - 1);
-
-              if (locationId) {
-                query = query.eq('location_id', locationId);
-              }
-
-              return query;
-            };
-
-            const fallbackResult = await buildPatientOnlyQuery('township', offset);
-            data = fallbackResult.data;
-            error = fallbackResult.error;
-
-            if (error && isMissingColumnError(error, 'township')) {
-              const legacyFallbackResult = await buildPatientOnlyQuery('state_region', offset);
-              data = legacyFallbackResult.data;
-              error = legacyFallbackResult.error;
-            }
-          }
-
-          if (error) throw error;
-          const page = data || [];
+          const page = await fetchPatientPage(locationId, offset, SUPABASE_PAGE_SIZE);
           patients.push(...page);
           if (page.length < SUPABASE_PAGE_SIZE) break;
         }
-        return patients.map(mapPatient);
+        return patients;
       } catch (err) {
         console.warn("Error fetching patients:", err);
         return []; // Return empty array instead of crashing

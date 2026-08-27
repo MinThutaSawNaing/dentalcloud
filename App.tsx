@@ -78,6 +78,7 @@ import { canManageMaterialCosts, resolveAllowedTabs } from './utils/permissions'
 import { loadEmailSettingsAsync } from './utils/emailSettings';
 import { buildAppointmentClinicalFocusNotes, parseAppointmentClinicalFocus } from './utils/appointmentClinicalFocus';
 import { dataCache } from './utils/dataCache';
+import { mergePatientsById } from './utils/patientMerge';
 import type { SelectedMedicineCharge } from './components/MedicineSelectionModal';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
 import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords, removeTreatmentRecordById } from './utils/paymentReceipt';
@@ -117,6 +118,10 @@ const ALL_BRANCHES_VALUE = '__all_branches__';
 const PAYMENT_RECORDS_STORAGE_KEY = 'dentalcloud_payment_records_v1';
 const THEME_STORAGE_KEY = 'dentalcloud_hover_theme_v1';
 const ACTIVE_BRANCH_STORAGE_KEY = 'dentalcloud_active_branch_id_v1';
+
+// Patients: show the newest 100 immediately, then finish loading the rest in the background.
+const PATIENTS_INITIAL_LOAD_SIZE = 100;
+const SUPABASE_PAGE_SIZE_BATCH = 1000;
 
 type PaymentDraft = {
   treatments: ClinicalRecord[];
@@ -415,6 +420,7 @@ const App: React.FC = () => {
   
   // -- Data State --
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientsBackgroundLoading, setPatientsBackgroundLoading] = useState(false);
   const [patientTypes, setPatientTypes] = useState<PatientType[]>(buildDefaultPatientTypeRecords());
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -1416,6 +1422,7 @@ const App: React.FC = () => {
     localStorage.removeItem('currentView');
     // Reset all data state
     setPatients([]);
+    setPatientsBackgroundLoading(false);
     setAppointments([]);
     setAppointmentRescheduleLogs([]);
     setDoctors([]);
@@ -1789,7 +1796,7 @@ const App: React.FC = () => {
         const [patData, docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await Promise.all([
           isDoctorMultiBranchSession
             ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Patients for doctor branch ${locationId}`, api.patients.getAll(locationId), []))).then((groups) => groups.flat())
-            : api.patients.getAll(locId),
+            : api.patients.getPage(locId, 0, PATIENTS_INITIAL_LOAD_SIZE),
           activeSessionDoctor ? Promise.resolve([activeSessionDoctor]) : safeLoad('Doctors', api.doctors.getAll(locId), []),
           safeLoad('Treatment types', api.treatments.getTypes(locId), []),
           isDoctorMultiBranchSession
@@ -1834,6 +1841,31 @@ const App: React.FC = () => {
         // Unhide the main UI as soon as the critical data is in state.
         if (requestId === initialDataFetchRequestRef.current) {
           setLoading(false);
+        }
+
+        // Load the remaining patients in the background after the first batch.
+        // Doctor sessions keep their scoped full load so ownership filtering stays intact.
+        if (!isDoctorSession) {
+          setPatientsBackgroundLoading(true);
+          void (async () => {
+            try {
+              for (let offset = PATIENTS_INITIAL_LOAD_SIZE; ; offset += SUPABASE_PAGE_SIZE_BATCH) {
+                if (requestId !== initialDataFetchRequestRef.current) return;
+                const batch = await api.patients.getPage(locId, offset, SUPABASE_PAGE_SIZE_BATCH);
+                if (requestId !== initialDataFetchRequestRef.current) return;
+                const done = batch.length < SUPABASE_PAGE_SIZE_BATCH;
+                setPatients((previous) => mergePatientsById(previous, batch));
+                setDashboardPatients((previous) => mergePatientsById(previous, batch));
+                if (done) break;
+              }
+            } catch (backgroundErr) {
+              console.warn('Background patient loading failed:', backgroundErr);
+            } finally {
+              if (requestId === initialDataFetchRequestRef.current) {
+                setPatientsBackgroundLoading(false);
+              }
+            }
+          })();
         }
 
         void doctorAppointmentsPromise.then((doctorAppointments) => {
@@ -4243,6 +4275,7 @@ const App: React.FC = () => {
                 locations={locations}
                 appointments={appointments}
                 loading={loading} 
+                backgroundLoading={patientsBackgroundLoading}
                 currency={currency} 
                 onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }}
                 loyaltyEnabled={loyaltyEnabled} 
