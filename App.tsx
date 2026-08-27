@@ -421,6 +421,10 @@ const App: React.FC = () => {
   // -- Data State --
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientsBackgroundLoading, setPatientsBackgroundLoading] = useState(false);
+  const [patientSearchResults, setPatientSearchResults] = useState<Patient[] | null>(null);
+  const [patientSearching, setPatientSearching] = useState(false);
+  const patientSearchRequestRef = useRef(0);
+  const patientSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [patientTypes, setPatientTypes] = useState<PatientType[]>(buildDefaultPatientTypeRecords());
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -1423,6 +1427,10 @@ const App: React.FC = () => {
     // Reset all data state
     setPatients([]);
     setPatientsBackgroundLoading(false);
+    setPatientSearchResults(null);
+    setPatientSearching(false);
+    if (patientSearchDebounceRef.current) clearTimeout(patientSearchDebounceRef.current);
+    patientSearchRequestRef.current += 1;
     setAppointments([]);
     setAppointmentRescheduleLogs([]);
     setDoctors([]);
@@ -1990,6 +1998,46 @@ const App: React.FC = () => {
       await fetchUsers();
     }
   };
+
+  const handlePatientSearch = useCallback((term: string) => {
+    if (patientSearchDebounceRef.current) clearTimeout(patientSearchDebounceRef.current);
+    setPatientSearching(true);
+    patientSearchDebounceRef.current = setTimeout(() => {
+      patientSearchRequestRef.current += 1;
+      const requestId = patientSearchRequestRef.current;
+      const searchLocationId = currentLocationId;
+
+      if (!term.trim()) {
+        setPatientSearchResults(null);
+        setPatientSearching(false);
+        return;
+      }
+
+      api.patients.search(searchLocationId, term)
+        .then((matches) => {
+          if (requestId !== patientSearchRequestRef.current) return;
+          setPatientSearchResults(matches);
+          if (matches.length > 0) {
+            setPatients((previous) => mergePatientsById(previous, matches));
+          }
+        })
+        .catch((err: any) => {
+          if (requestId !== patientSearchRequestRef.current) return;
+          console.warn('Patient search failed:', err);
+          setPatientSearchResults(null);
+        })
+        .finally(() => {
+          if (requestId === patientSearchRequestRef.current) {
+            setPatientSearching(false);
+          }
+        });
+    }, 300);
+  }, [currentLocationId]);
+
+  useEffect(() => {
+    setPatientSearchResults(null);
+    setPatientSearching(false);
+  }, [currentLocationId]);
 
   const buildDailyReportEmailBody = async (task: ScheduledTask) => {
     const locationId = task.location_id || currentLocationId || undefined;
@@ -4276,6 +4324,9 @@ const App: React.FC = () => {
                 appointments={appointments}
                 loading={loading} 
                 backgroundLoading={patientsBackgroundLoading}
+                searchResults={patientSearchResults}
+                searching={patientSearching}
+                onSearchChange={handlePatientSearch}
                 currency={currency} 
                 onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }}
                 loyaltyEnabled={loyaltyEnabled} 

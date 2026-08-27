@@ -38,6 +38,9 @@ interface PatientsViewProps {
   onExportExcel?: () => Promise<void>;
   onRefresh?: () => void | Promise<void>;
   backgroundLoading?: boolean;
+  searchResults?: Patient[] | null;
+  searching?: boolean;
+  onSearchChange?: (term: string) => void;
   patientToEdit?: Patient | null;
   onPatientEditHandled?: () => void;
   loyaltyEnabled: boolean;
@@ -64,6 +67,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   onExportExcel,
   onRefresh,
   backgroundLoading = false,
+  searchResults = null,
+  searching = false,
+  onSearchChange,
   patientToEdit,
   onPatientEditHandled,
   loyaltyEnabled, 
@@ -323,6 +329,10 @@ const PatientsView: React.FC<PatientsViewProps> = ({
 
   // Filtered data based on selected scope and search term
   const filteredPatients = useMemo(() => {
+    // Server-side search results (whole dataset, not just what's loaded yet).
+    if (searchTerm.trim() && searchResults) {
+      return searchResults;
+    }
     let scopedPatients = patients;
 
     // Apply date quick filter
@@ -584,7 +594,8 @@ const PatientsView: React.FC<PatientsViewProps> = ({
         <h2 className="text-xl font-bold text-gray-800">Patient Directory</h2>
         <p className="text-sm text-gray-500">
           Manage all registered clinical patients
-          {backgroundLoading && ` · Loaded ${patients.length}, loading older patients…`}
+          {searching && ` · Searching patients…`}
+          {!searching && backgroundLoading && ` · Loaded ${patients.length}, loading older patients…`}
         </p>
       </div>
       <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -595,8 +606,10 @@ const PatientsView: React.FC<PatientsViewProps> = ({
             placeholder="Search patients..." 
             value={searchTerm}
             onChange={(e) => {
-              setSearchTerm(e.target.value);
+              const nextTerm = e.target.value;
+              setSearchTerm(nextTerm);
               setCurrentPage(1); // Reset to first page when searching
+              onSearchChange?.(nextTerm);
             }}
             className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-64"/>
         </div>

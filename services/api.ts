@@ -869,15 +869,21 @@ const mapPatient = (row: any): Patient => ({
   username: Array.isArray(row?.patient_auth) ? (row.patient_auth[0]?.username ?? null) : (row?.patient_auth?.username ?? null)
 });
 
+const escapeLikePattern = (term: string): string =>
+  term.replace(/[\\%_]/g, (character) => `\\${character}`);
+
 const fetchPatientPage = async (
   locationId: string | undefined,
   offset: number,
-  limit: number
+  limit: number,
+  searchTerm?: string
 ): Promise<Patient[]> => {
   const safeOffset = Math.max(0, Math.floor(offset));
   const safeLimit = Math.max(1, Math.min(SUPABASE_PAGE_SIZE, Math.floor(limit)));
   const basePatientColumns = 'id, patient_unique_id, location_id, name, email, phone, age, address, city, patient_type, balance, loyalty_points, medical_history, created_at';
   const baseColumns = `${basePatientColumns}, patient_auth(id, username)`;
+  const trimmedSearch = searchTerm?.trim() || '';
+  const searchPattern = trimmedSearch ? `%${escapeLikePattern(trimmedSearch)}%` : '';
 
   const buildQuery = (regionColumn: 'township' | 'state_region', includePatientAuth: boolean) => {
     let query = supabase
@@ -888,6 +894,10 @@ const fetchPatientPage = async (
       .range(safeOffset, safeOffset + safeLimit - 1);
 
     if (locationId) query = query.eq('location_id', locationId);
+    if (searchPattern) {
+      const searchOr = `name.ilike.${searchPattern},phone.ilike.${searchPattern},email.ilike.${searchPattern},patient_unique_id.ilike.${searchPattern}`;
+      query = locationId ? query.or(searchOr, { foreignTable: 'patients' }) : query.or(searchOr);
+    }
     return query;
   };
 
@@ -1550,14 +1560,23 @@ export const api = {
           : null
       };
     },
-    getPage: async (locationId?: string, offset = 0, limit = 100): Promise<Patient[]> => {
+    getPage: async (locationId?: string, offset = 0, limit = 100, searchTerm?: string): Promise<Patient[]> => {
       try {
-        if (offset === 0) {
+        if (offset === 0 && !searchTerm) {
           await applyAutoOnpPatientTypeIfEnabled(locationId);
         }
-        return await fetchPatientPage(locationId, offset, limit);
+        return await fetchPatientPage(locationId, offset, limit, searchTerm);
       } catch (err) {
         console.warn('Error fetching patient page:', err);
+        throw err;
+      }
+    },
+    search: async (locationId: string | undefined, term: string, limit = 100): Promise<Patient[]> => {
+      try {
+        if (!term?.trim()) return [];
+        return await fetchPatientPage(locationId, 0, limit, term);
+      } catch (err) {
+        console.warn('Error searching patients:', err);
         throw err;
       }
     },
