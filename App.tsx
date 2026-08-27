@@ -1801,10 +1801,11 @@ const App: React.FC = () => {
         const appointmentsPromise = isDoctorMultiBranchSession
           ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Appointments for doctor branch ${locationId}`, api.appointments.getAll(locationId), []))).then((groups) => groups.flat())
           : api.appointments.getAll(locId);
-        const [patData, docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await Promise.all([
-          isDoctorMultiBranchSession
-            ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Patients for doctor branch ${locationId}`, api.patients.getAll(locationId), []))).then((groups) => groups.flat())
-            : api.patients.getPage(locId, 0, PATIENTS_INITIAL_LOAD_SIZE),
+        const isDoctorSession = session?.role === 'doctor' && !!session?.doctor_id;
+        const patientInitialPromise = isDoctorMultiBranchSession
+          ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Patients for doctor branch ${locationId}`, api.patients.getAll(locationId), []))).then((groups) => groups.flat())
+          : api.patients.getPage(locId, 0, PATIENTS_INITIAL_LOAD_SIZE);
+        const supportingDataPromise = Promise.all([
           activeSessionDoctor ? Promise.resolve([activeSessionDoctor]) : safeLoad('Doctors', api.doctors.getAll(locId), []),
           safeLoad('Treatment types', api.treatments.getTypes(locId), []),
           isDoctorMultiBranchSession
@@ -1814,46 +1815,18 @@ const App: React.FC = () => {
           safeLoad('Payments', api.finance.getPayments(locId), []),
           safeLoad('Appointment reschedule logs', api.appointmentRescheduleLogs.getAll(locId), [])
         ]);
+
+        // Staff/admin sessions can use the first patient page immediately. Do not
+        // hold the directory behind treatments, payments, medicines, or other
+        // independent startup data. Doctor sessions retain the existing full-load
+        // path because their patient visibility depends on ownership records.
+        const patData = await patientInitialPromise;
         if (requestId !== initialDataFetchRequestRef.current) return;
 
-        const isDoctorSession = session?.role === 'doctor' && !!session?.doctor_id;
-        const doctorAppointmentsPromise = appointmentsPromise.then((aptData) => isDoctorSession
-          ? aptData.filter((appointment) => appointment.doctor_id === session.doctor_id)
-          : aptData);
-        const doctorRecords = isDoctorSession
-          ? recordsData.filter((record) => record.doctor_id === session.doctor_id)
-          : recordsData;
-        const doctorPatientIds = new Set<string>([
-          ...doctorRecords.map((record) => record.patient_id)
-        ]);
-        const scopedPatients = isDoctorSession
-          ? patData.filter((patient) => doctorPatientIds.has(patient.id))
-          : patData;
-
-        const scopedDoctors = isDoctorSession
-          ? docData.filter((doctor) => doctor.id === session?.doctor_id)
-          : docData;
-
-        setPatients(scopedPatients);
-        setAppointments([]);
-        setDoctors(scopedDoctors);
-        setTreatmentTypes(typeData);
-        setGlobalRecords(doctorRecords);
-        setPaymentRecords(isDoctorSession ? [] : mergeLegacyPaymentRecords(paymentsData, locId));
-        setAppointmentRescheduleLogs(isDoctorSession ? [] : rescheduleLogsData);
-        setMedicines(medData);
-        setLoyaltyRules([]);
-        setExpenses([]);
-            setMedicineSales([]);
-
-        // Unhide the main UI as soon as the critical data is in state.
-        if (requestId === initialDataFetchRequestRef.current) {
-          setLoading(false);
-        }
-
-        // Load the remaining patients in the background after the first batch.
-        // Doctor sessions keep their scoped full load so ownership filtering stays intact.
         if (!isDoctorSession) {
+          setPatients(patData);
+          setDashboardPatients(patData);
+          setLoading(false);
           setPatientsBackgroundLoading(true);
           void (async () => {
             try {
@@ -1874,6 +1847,45 @@ const App: React.FC = () => {
               }
             }
           })();
+        }
+
+        const [docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await supportingDataPromise;
+        if (requestId !== initialDataFetchRequestRef.current) return;
+
+        const doctorAppointmentsPromise = appointmentsPromise.then((aptData) => isDoctorSession
+          ? aptData.filter((appointment) => appointment.doctor_id === session.doctor_id)
+          : aptData);
+        const doctorRecords = isDoctorSession
+          ? recordsData.filter((record) => record.doctor_id === session.doctor_id)
+          : recordsData;
+        const doctorPatientIds = new Set<string>([
+          ...doctorRecords.map((record) => record.patient_id)
+        ]);
+        const scopedPatients = isDoctorSession
+          ? patData.filter((patient) => doctorPatientIds.has(patient.id))
+          : patData;
+
+        const scopedDoctors = isDoctorSession
+          ? docData.filter((doctor) => doctor.id === session?.doctor_id)
+          : docData;
+
+        if (isDoctorSession) {
+          setPatients(scopedPatients);
+        }
+        setAppointments([]);
+        setDoctors(scopedDoctors);
+        setTreatmentTypes(typeData);
+        setGlobalRecords(doctorRecords);
+        setPaymentRecords(isDoctorSession ? [] : mergeLegacyPaymentRecords(paymentsData, locId));
+        setAppointmentRescheduleLogs(isDoctorSession ? [] : rescheduleLogsData);
+        setMedicines(medData);
+        setLoyaltyRules([]);
+        setExpenses([]);
+            setMedicineSales([]);
+
+        // Doctors still need the ownership-scoped data before their directory can render.
+        if (isDoctorSession && requestId === initialDataFetchRequestRef.current) {
+          setLoading(false);
         }
 
         void doctorAppointmentsPromise.then((doctorAppointments) => {
