@@ -180,30 +180,68 @@ describe('doctor commission ledger', () => {
     expect(afterRateChange[0].earnings).toBe(15_000);
   });
 
-  it('deducts material cost once and distributes the base across partial payments', () => {
-    const treatments = [treatment({ cost: 300_000, materialCost: 50_000 })];
+  it('recovers material cost from partial payments in FIFO order', () => {
+    const treatments = [treatment({ cost: 300_000, materialCost: 10_000 })];
     const allocations = allocateCommissionablePayments(treatments, [
-      { id: 'p1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 30_000, treatmentIds: ['treatment-1'] },
-      { id: 'p2', patientId: 'patient-1', date: '2026-07-02', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] }
+      { id: 'p1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] },
+      { id: 'p2', patientId: 'patient-1', date: '2026-07-02', commissionableAmount: 100_000, treatmentIds: [] },
+      { id: 'p3', patientId: 'patient-1', date: '2026-07-03', commissionableAmount: 100_000, treatmentIds: [] }
     ]);
     const entries = calculateCommissionLedgerEntries(treatments, allocations);
 
     expect(entries).toEqual([
       expect.objectContaining({
         paymentId: 'p1',
-        materialDeduction: 11_538.46,
-        commissionBase: 18_461.54,
-        earnings: 1_846.15
+        materialDeduction: 10_000,
+        commissionBase: 90_000,
+        earnings: 9_000
       }),
       expect.objectContaining({
         paymentId: 'p2',
-        materialDeduction: 38_461.54,
-        commissionBase: 61_538.46,
-        earnings: 6_153.85
+        materialDeduction: 0,
+        commissionBase: 100_000,
+        earnings: 10_000
+      }),
+      expect.objectContaining({
+        paymentId: 'p3',
+        materialDeduction: 0,
+        commissionBase: 100_000,
+        earnings: 10_000
       })
     ]);
-    expect(entries.reduce((sum, entry) => sum + entry.materialDeduction, 0)).toBe(50_000);
-    expect(entries.reduce((sum, entry) => sum + entry.earnings, 0)).toBe(8_000);
+    expect(entries.reduce((sum, entry) => sum + entry.earnings, 0)).toBe(29_000);
+  });
+
+  it('continues recovering material cost from later payments when the first is too small', () => {
+    const treatments = [treatment({ cost: 300_000, materialCost: 150_000 })];
+    const allocations = allocateCommissionablePayments(treatments, [
+      { id: 'p1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] },
+      { id: 'p2', patientId: 'patient-1', date: '2026-07-02', commissionableAmount: 100_000, treatmentIds: [] },
+      { id: 'p3', patientId: 'patient-1', date: '2026-07-03', commissionableAmount: 100_000, treatmentIds: [] }
+    ]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations).map((entry) => ({
+      paymentId: entry.paymentId,
+      materialDeduction: entry.materialDeduction,
+      earnings: entry.earnings
+    }))).toEqual([
+      { paymentId: 'p1', materialDeduction: 100_000, earnings: 0 },
+      { paymentId: 'p2', materialDeduction: 50_000, earnings: 5_000 },
+      { paymentId: 'p3', materialDeduction: 0, earnings: 10_000 }
+    ]);
+  });
+
+  it('uses created time before payment id for same-day FIFO recovery', () => {
+    const treatments = [treatment({ cost: 200_000, materialCost: 50_000 })];
+    const allocations = allocateCommissionablePayments(treatments, [
+      { id: 'a-later-id', patientId: 'patient-1', date: '2026-07-01', createdAt: '2026-07-01T08:00:00Z', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] },
+      { id: 'z-earlier-id', patientId: 'patient-1', date: '2026-07-01', createdAt: '2026-07-01T07:00:00Z', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] }
+    ]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations).map((entry) => [entry.paymentId, entry.earnings])).toEqual([
+      ['z-earlier-id', 5_000],
+      ['a-later-id', 10_000]
+    ]);
   });
 
   it('falls back to zero instead of producing non-finite commission values', () => {

@@ -473,6 +473,45 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[]) => 
   return entriesByTreatment;
 };
 
+const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[]) => {
+  const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
+  const entriesByPayment = new Map<string, any[]>();
+  for (let index = 0; index < uniqueIds.length; index += 50) {
+    try {
+      const { data, error } = await supabase
+        .from('doctor_commission_entries')
+        .select('id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings')
+        .in('payment_id', uniqueIds.slice(index, index + 50));
+      if (error) {
+        if (!isMissingRelationError(error, 'doctor_commission_entries')) {
+          console.warn('Unable to load payment commission entries.', String(error.message || error).slice(0, 240));
+        }
+        return entriesByPayment;
+      }
+      (data || []).forEach((row: any) => {
+        const entries = entriesByPayment.get(row.payment_id) || [];
+        entries.push({
+          id: row.id,
+          paymentId: row.payment_id,
+          treatmentId: row.treatment_id,
+          doctorId: row.doctor_id,
+          paymentDate: row.payment_date,
+          treatmentDate: row.treatment_date,
+          calculationMode: row.calculation_mode,
+          allocatedPayment: Number(row.allocated_payment || 0),
+          commissionRate: Number(row.commission_rate || 0),
+          earnings: Number(row.earnings || 0)
+        });
+        entriesByPayment.set(row.payment_id, entries);
+      });
+    } catch (error) {
+      console.warn('Unable to load payment commission entries.', String((error as any)?.message || error).slice(0, 240));
+      return entriesByPayment;
+    }
+  }
+  return entriesByPayment;
+};
+
 const isMissingFunctionError = (error: any, functionName: string): boolean => {
   const code = String(error?.code || '').toUpperCase();
   const message = String(error?.message || '').toLowerCase();
@@ -4452,7 +4491,12 @@ export const api = {
         throw new Error(error.message);
       }
 
-      return (data || []).map(mapPaymentRow);
+      const payments = (data || []).map(mapPaymentRow);
+      const entriesByPayment = await getDoctorEarningEntriesByPaymentIds(payments.map((payment) => payment.id));
+      return payments.map((payment) => ({
+        ...payment,
+        doctorEarningEntries: entriesByPayment.get(payment.id) || []
+      }));
     },
     processPayment: async (input: {
       patientId: string;

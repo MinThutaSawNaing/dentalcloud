@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Appointment, AppointmentRescheduleLog, ClinicalRecord, PaymentRecord } from '../types';
-import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, formatAuditPatientBalance } from './auditLogExport';
+import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, formatAuditPatientBalance, getPaymentDoctorEarnings } from './auditLogExport';
 
 describe('audit log export rows', () => {
   const records: ClinicalRecord[] = [
@@ -425,6 +425,31 @@ describe('audit log export rows', () => {
     });
     expect(tableRow.activity).toContain('Patient paid 10,000Ks');
     expect(tableRow.activity).toContain('REC-20260530-000001');
+  });
+
+  it('exports doctor earnings only from ledger entries matching the payment id', () => {
+    const payment: PaymentRecord = {
+      ...payments[0],
+      doctorEarningEntries: [
+        {
+          paymentId: 'pay-1', treatmentId: 'tr-1', doctorId: 'doctor-1',
+          paymentDate: '2026-05-30', treatmentDate: '2026-05-30', calculationMode: 'percentage',
+          allocatedPayment: 60_000, commissionRate: 10, earnings: 6_000
+        },
+        {
+          paymentId: 'another-payment', treatmentId: 'tr-2', doctorId: 'doctor-1',
+          paymentDate: '2026-05-31', treatmentDate: '2026-05-30', calculationMode: 'percentage',
+          allocatedPayment: 100_000, commissionRate: 10, earnings: 10_000
+        }
+      ]
+    };
+    const paymentRow = buildAuditLogRows(records, [], true, [payment]).find((row) => row.kind === 'payment');
+
+    expect(getPaymentDoctorEarnings(payment)).toBe(6_000);
+    expect(paymentRow?.kind).toBe('payment');
+    if (paymentRow?.kind === 'payment') {
+      expect(buildAuditLogExportTableRows([paymentRow], 'MMK')[0].doctorEarned).toBe(6_000);
+    }
   });
 
   it('includes rescheduled appointments only in the reschedule filter and export rows', () => {

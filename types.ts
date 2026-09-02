@@ -189,6 +189,7 @@ export interface PaymentRecord {
   createdAt?: string;
   createdByUserId?: string | null;
   createdByUserName?: string | null;
+  doctorEarningEntries?: DoctorEarningEntry[];
   corrections?: PaymentCorrection[];
 }
 
