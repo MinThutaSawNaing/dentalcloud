@@ -4,7 +4,7 @@ import PatientQRCode from './PatientQRCode';
 import { auth } from '../services/auth';
 import { api } from '../services/api';
 import { otpService } from '../services/otp';
-import { Patient, Appointment, ClinicalRecord, Doctor, PatientFile, ReceiptSize } from '../types';
+import { BranchReceiptIdentity, Patient, Appointment, ClinicalRecord, Doctor, PatientFile, ReceiptSize } from '../types';
 import { Modal, Input, TimeInput } from './Shared';
 import { SearchableSelect } from './SearchableSelect';
 import Receipt from './Receipt';
@@ -85,6 +85,9 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
   const [showReceipt, setShowReceipt] = useState(false);
   const [selectedTreatment, setSelectedTreatment] = useState<ClinicalRecord | null>(null);
   const [receiptSize, setReceiptSize] = useState<ReceiptSize>('A4');
+  const [currency, setCurrency] = useState<'USD' | 'MMK'>('USD');
+  const [appName, setAppName] = useState('DentalCloud Pro');
+  const [receiptIdentity, setReceiptIdentity] = useState<BranchReceiptIdentity | null>(null);
   const sortedAppointments = appointments.slice().sort((a, b) =>
     compareAppointmentStatus(a, b) || a.date.localeCompare(b.date) || a.time.localeCompare(b.time)
   );
@@ -123,13 +126,24 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
       }
       setPatient(patientData);
 
-      api.appSettings.getReceiptPreferences()
-        .then((preferences) => {
-          if (preferences) setReceiptSize(preferences.receiptSize);
-        })
-        .catch((settingsError) => {
-          console.warn('Failed to load receipt preferences:', settingsError);
-        });
+      // Receipt configuration is supplementary. Migration/network failures must
+      // never prevent the patient's clinical data from loading.
+      const receiptConfigurationResults = await Promise.allSettled([
+        api.appSettings.getReceiptPreferences().then((preferences) => {
+          if (!preferences) return;
+          setReceiptSize(preferences.receiptSize);
+          setCurrency(preferences.currency);
+        }),
+        api.appSettings.getAppName().then((name) => {
+          if (name?.trim()) setAppName(name.trim());
+        }),
+        api.branchReceiptIdentity.get(patientData.location_id).then(setReceiptIdentity)
+      ]);
+      receiptConfigurationResults.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.warn(['receipt preferences', 'application name', 'branch receipt identity'][index] + ' unavailable in patient portal:', result.reason);
+        }
+      });
       
       // Initialize profile changes with current values
       setProfileChanges({
@@ -1329,7 +1343,9 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
         <Receipt
           patient={patient}
           treatments={[selectedTreatment]}
-          currency={'MMK'}
+          currency={currency}
+          appName={appName}
+          receiptIdentity={receiptIdentity}
           receiptSize={receiptSize}
           onClose={() => setShowReceipt(false)}
         />
