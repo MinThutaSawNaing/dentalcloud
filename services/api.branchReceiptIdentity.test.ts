@@ -78,7 +78,7 @@ describe('branchReceiptIdentity API', () => {
 
     await api.branchReceiptIdentity.save(
       'branch-1',
-      { headerTitle: ' Official Receipt ', email: ' Downtown@Example.com ' },
+      { headerTitle: ' Official Receipt ', email: ' Downtown@Example.com ', address: ' 10 Main Road ', phone: ' 09-111 ' },
       { userId: 'admin-1', authToken: 'session-token' },
       '2026-09-04T00:00:00Z'
     );
@@ -87,6 +87,8 @@ describe('branchReceiptIdentity API', () => {
       p_location_id: 'branch-1',
       p_receipt_header_title: 'Official Receipt',
       p_receipt_email: 'downtown@example.com',
+      p_location_address: '10 Main Road',
+      p_location_phone: '09-111',
       p_session_token: 'session-token',
       p_expected_updated_at: '2026-09-04T00:00:00Z'
     });
@@ -97,7 +99,7 @@ describe('branchReceiptIdentity API', () => {
 
     await api.branchReceiptIdentity.save(
       'branch-1',
-      { headerTitle: 'Official Receipt', email: '' },
+      { headerTitle: 'Official Receipt', email: '', address: '', phone: '' },
       { userId: 'admin-1', authToken: 'session-token' },
       null
     );
@@ -110,7 +112,7 @@ describe('branchReceiptIdentity API', () => {
   it('fails before making a request when the administrator session is missing', async () => {
     await expect(api.branchReceiptIdentity.save(
       'branch-1',
-      { headerTitle: '', email: '' },
+      { headerTitle: '', email: '', address: '', phone: '' },
       { userId: 'admin-1', authToken: '' }
     )).rejects.toThrow(/administrator session/i);
     expect(supabaseMock.rpc).not.toHaveBeenCalled();
@@ -147,7 +149,7 @@ describe('branchReceiptIdentity API', () => {
 
     await expect(api.branchReceiptIdentity.save(
       'branch-1',
-      { headerTitle: 'Official Receipt', email: '' },
+      { headerTitle: 'Official Receipt', email: '', address: '', phone: '' },
       { userId: 'admin-1', authToken: 'session-token' }
     )).rejects.toThrow(/migration/i);
     expect(supabaseMock.from).not.toHaveBeenCalled();

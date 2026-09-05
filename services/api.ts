@@ -1408,7 +1408,7 @@ export const api = {
     },
     save: async (
       locationId: string,
-      identity: { headerTitle: string; email: string },
+      identity: { headerTitle: string; email: string; address: string; phone: string },
       actor: { userId: string; authToken: string },
       expectedUpdatedAt?: string | null
     ): Promise<BranchReceiptIdentity> => {
@@ -1420,6 +1420,8 @@ export const api = {
         p_location_id: normalizedLocationId,
         p_receipt_header_title: identity.headerTitle?.trim() || null,
         p_receipt_email: identity.email?.trim().toLowerCase() || null,
+        p_location_address: identity.address?.trim() || null,
+        p_location_phone: identity.phone?.trim() || null,
         p_session_token: actor.authToken.trim(),
         p_expected_updated_at: expectedUpdatedAt?.trim() || null
       });

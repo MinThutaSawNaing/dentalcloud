@@ -48,7 +48,7 @@ interface SettingsViewProps {
   branchReceiptIdentity: BranchReceiptIdentity | null;
   branchReceiptIdentityLoading: boolean;
   onReceiptIdentityBranchChange: (locationId: string) => void | Promise<void>;
-  onSaveBranchReceiptIdentity: (identity: { headerTitle: string; email: string }) => Promise<void>;
+  onSaveBranchReceiptIdentity: (identity: { headerTitle: string; email: string; address: string; phone: string }) => Promise<void>;
   receiptSize: ReceiptSize;
   onReceiptSizeChange: (size: ReceiptSize) => Promise<void>;
   hoverTheme: 'blue' | 'green' | 'yellow' | 'brown' | 'dark';
@@ -149,6 +149,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   const [isDeletingLogo, setIsDeletingLogo] = useState(false);
   const [receiptEmailInput, setReceiptEmailInput] = useState<string>(branchReceiptIdentity?.customEmail || '');
   const [receiptHeaderTitleInput, setReceiptHeaderTitleInput] = useState<string>(branchReceiptIdentity?.customHeaderTitle || '');
+  const [receiptAddressInput, setReceiptAddressInput] = useState<string>(branchReceiptIdentity?.address || '');
+  const [receiptPhoneInput, setReceiptPhoneInput] = useState<string>(branchReceiptIdentity?.phone || '');
   const [receiptIdentityBranchId, setReceiptIdentityBranchId] = useState<string>(branchReceiptIdentity?.locationId || currentLocationId);
   const [receiptInfoMessage, setReceiptInfoMessage] = useState<string | null>(null);
   const [currencyMessage, setCurrencyMessage] = useState<string | null>(null);
@@ -182,6 +184,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     setReceiptIdentityBranchId(branchReceiptIdentity.locationId);
     setReceiptEmailInput(branchReceiptIdentity.customEmail || '');
     setReceiptHeaderTitleInput(branchReceiptIdentity.customHeaderTitle || '');
+    setReceiptAddressInput(branchReceiptIdentity.address || '');
+    setReceiptPhoneInput(branchReceiptIdentity.phone || '');
   }, [branchReceiptIdentity]);
 
   useEffect(() => {
@@ -2033,6 +2037,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <Input label="Custom Receipt Email" type="email" value={receiptEmailInput} onChange={(e: any) => { setReceiptEmailInput(e.target.value); setReceiptInfoMessage(null); }} placeholder={branchReceiptIdentity.email || 'No inherited email'} />
                 <p className="mt-1 text-xs text-gray-500">{receiptEmailInput.trim() ? <>Effective email: <strong>{receiptEmailInput.trim()}</strong>. Clear it to inherit the global receipt email.</> : <>Using inherited email: <strong>{branchReceiptIdentity.usesGlobalEmail ? (branchReceiptIdentity.email || 'Not set') : 'the global email after save'}</strong>.</>}</p>
               </div>
+              <div>
+                <Input label="Receipt Address" value={receiptAddressInput} onChange={(e: any) => { setReceiptAddressInput(e.target.value); setReceiptInfoMessage(null); }} placeholder="Branch address" />
+                <p className="mt-1 text-xs text-gray-500">Saved as this branch's canonical address and used on new receipts only.</p>
+              </div>
+              <div>
+                <Input label="Receipt Phone" type="tel" value={receiptPhoneInput} onChange={(e: any) => { setReceiptPhoneInput(e.target.value); setReceiptInfoMessage(null); }} placeholder="Branch phone number" />
+                <p className="mt-1 text-xs text-gray-500">Saved as this branch's canonical phone number and used on new receipts only.</p>
+              </div>
             </div>
 
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2045,7 +2057,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 setIsSavingReceiptHeader(true);
                 setReceiptInfoMessage(null);
                 try {
-                  await onSaveBranchReceiptIdentity({ headerTitle: receiptHeaderTitleInput.trim(), email: normalizedEmail });
+                  await onSaveBranchReceiptIdentity({
+                    headerTitle: receiptHeaderTitleInput.trim(),
+                    email: normalizedEmail,
+                    address: receiptAddressInput.trim(),
+                    phone: receiptPhoneInput.trim()
+                  });
                   setReceiptInfoMessage('Branch receipt identity saved.');
                 } catch (err: any) {
                   setReceiptInfoMessage('Failed to save branch receipt identity: ' + (err?.message || 'Unknown error'));
