@@ -237,6 +237,9 @@ PAYMENT TYPES (required):
 - Credit Card
 - AYA Pay
 - UAB Pay
+- AYA Banking
+- KBZ Banking
+- CB Banking
 
 PAYMENT RECEIPT BEHAVIOR:
 - Payments receive a stable receipt number.

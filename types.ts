@@ -301,6 +301,9 @@ export type PaymentMethod =
   | 'CREDIT_CARD'
   | 'AYA_PAY'
   | 'UAB_PAY'
+  | 'AYA_BANKING'
+  | 'KBZ_BANKING'
+  | 'CB_BANKING'
   | 'MIXED'
   | 'UNKNOWN';
 

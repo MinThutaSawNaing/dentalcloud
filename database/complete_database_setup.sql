@@ -310,7 +310,7 @@ CREATE TABLE payments (
   balance_before DECIMAL(12,2) NOT NULL CHECK (balance_before >= 0),
   remaining_balance DECIMAL(12,2) NOT NULL CHECK (remaining_balance >= 0),
   payment_method VARCHAR(30) NOT NULL CHECK (
-    payment_method IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY')
+    payment_method IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY', 'AYA_BANKING', 'KBZ_BANKING', 'CB_BANKING')
   ),
   payment_status VARCHAR(10) NOT NULL CHECK (payment_status IN ('FULL', 'PARTIAL')),
   treatment_ids UUID[] NOT NULL DEFAULT '{}',
@@ -1324,7 +1324,7 @@ DECLARE
 BEGIN
   IF v_amount <= 0 THEN RAISE EXCEPTION 'Payment amount must be greater than 0'; END IF;
   IF v_service_fee_amount < 0 THEN RAISE EXCEPTION 'Service fee amount cannot be negative'; END IF;
-  IF v_method NOT IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY') THEN
+  IF v_method NOT IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY', 'AYA_BANKING', 'KBZ_BANKING', 'CB_BANKING') THEN
     RAISE EXCEPTION 'Invalid payment method';
   END IF;
 

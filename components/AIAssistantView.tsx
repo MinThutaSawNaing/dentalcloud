@@ -2636,7 +2636,7 @@ TREATMENT RECORDS:
 - treatment_type_delete(id): Delete treatment type.
 
 FINANCIAL OPERATIONS:
-- fin_pay(pid, amt, method): Process payment. method must be KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, or UAB Pay.
+- fin_pay(pid, amt, method): Process payment. method must be KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, UAB Pay, AYA Banking, KBZ Banking, or CB Banking.
 - A payment type is mandatory. If it is missing, ask the user which supported type to use instead of guessing.
 - Payment receipts have stable receipt numbers and may contain immutable snapshots for accurate historical reprints. Treatment and medicine receipt lines are selected/captured by the payment workflow; do not claim unspecified items were included.
 - fin_report(period): Get financial report. period='daily'|'weekly'|'monthly'.
@@ -5061,7 +5061,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
 
                 const paymentMethod = normalizePaymentMethod(params.method || params.payment_type || params.type);
                 if (!isSelectablePaymentMethod(paymentMethod)) {
-                  throw new Error('Payment type is required: KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, or UAB Pay.');
+                  throw new Error('Payment type is required: KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, UAB Pay, AYA Banking, KBZ Banking, or CB Banking.');
                 }
                 result = await api.finance.processPayment({
                   patientId,

@@ -11,7 +11,7 @@ export const ASSISTANT_PRODUCT_KNOWLEDGE = `
 CURRENT DENTAL CLOUD WORKFLOW KNOWLEDGE (verified ${ASSISTANT_PRODUCT_KNOWLEDGE_VERSION}):
 
 PAYMENTS AND RECEIPTS:
-- Every payment requires one supported payment type: KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, or UAB Pay. Never invent or silently default a payment type.
+- Every payment requires one supported payment type: KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, UAB Pay, AYA Banking, KBZ Banking, or CB Banking. Never invent or silently default a payment type.
 - A payment can be split across multiple distinct supported payment types. Each type can appear only once, every allocation must be greater than zero, and the allocations must exactly equal the amount received. "Mixed" is the saved/display header for a split payment, not a payment type staff can select.
 - Split payments are posted atomically with their allocations and receipt snapshot. Receipts, payment history, and Audit Log exports can show the tender breakdown. Admin corrections can change a single payment to split or split to single, but still require a correction reason and must preserve the financial audit trail.
 - Payment submission is protected against duplicate posting with an in-flight guard and submission key. If staff reports a double-click, retry, or slow connection during payment, do not assume a second real payment was created; ask them to verify the payment record/receipt before taking corrective action.
