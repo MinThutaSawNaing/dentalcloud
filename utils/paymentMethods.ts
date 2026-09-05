@@ -8,7 +8,10 @@ export const PAYMENT_METHOD_OPTIONS: ReadonlyArray<{ value: PaymentMethod; label
   { value: 'DEBIT_CARD', label: 'Debit Card' },
   { value: 'CREDIT_CARD', label: 'Credit Card' },
   { value: 'AYA_PAY', label: 'AYA Pay' },
-  { value: 'UAB_PAY', label: 'UAB Pay' }
+  { value: 'UAB_PAY', label: 'UAB Pay' },
+  { value: 'AYA_BANKING', label: 'AYA Banking' },
+  { value: 'KBZ_BANKING', label: 'KBZ Banking' },
+  { value: 'CB_BANKING', label: 'CB Banking' }
 ];
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
@@ -20,6 +23,9 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   CREDIT_CARD: 'Credit Card',
   AYA_PAY: 'AYA Pay',
   UAB_PAY: 'UAB Pay',
+  AYA_BANKING: 'AYA Banking',
+  KBZ_BANKING: 'KBZ Banking',
+  CB_BANKING: 'CB Banking',
   MIXED: 'Mixed Payment',
   UNKNOWN: 'Unknown'
 };
@@ -41,6 +47,12 @@ const PAYMENT_METHOD_ALIASES: Record<string, PaymentMethod> = {
   AYA_PAY: 'AYA_PAY',
   UABPAY: 'UAB_PAY',
   UAB_PAY: 'UAB_PAY',
+  AYABANKING: 'AYA_BANKING',
+  AYA_BANKING: 'AYA_BANKING',
+  KBZBANKING: 'KBZ_BANKING',
+  KBZ_BANKING: 'KBZ_BANKING',
+  CBBANKING: 'CB_BANKING',
+  CB_BANKING: 'CB_BANKING',
   MIXED: 'MIXED',
   UNKNOWN: 'UNKNOWN'
 };

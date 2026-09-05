@@ -37,6 +37,7 @@ export interface TreatmentPaymentAllocation {
   paymentId: string;
   treatmentId: string;
   paymentDate: string;
+  paymentCreatedAt?: string | null;
   amount: number;
 }
 
@@ -149,6 +150,7 @@ export const allocateCommissionablePayments = (
           paymentId: payment.id,
           treatmentId: treatment.id,
           paymentDate: payment.date,
+          paymentCreatedAt: payment.createdAt,
           amount: roundMoney(share)
         });
       });
@@ -172,6 +174,7 @@ export const allocateCommissionablePayments = (
         paymentId: payment.id,
         treatmentId: treatment.id,
         paymentDate: payment.date,
+        paymentCreatedAt: payment.createdAt,
         amount: roundMoney(share)
       });
     }
@@ -220,7 +223,12 @@ export const calculateCommissionLedgerEntries = (
   const flatCandidates = new Map<string, Array<TreatmentPaymentAllocation & { treatment: CommissionTreatmentInput }>>();
 
   [...allocations]
-    .sort((a, b) => a.paymentDate.localeCompare(b.paymentDate) || a.paymentId.localeCompare(b.paymentId))
+    .sort((a, b) => (
+      a.paymentDate.localeCompare(b.paymentDate) ||
+      String(a.paymentCreatedAt || '').localeCompare(String(b.paymentCreatedAt || '')) ||
+      a.paymentId.localeCompare(b.paymentId) ||
+      a.treatmentId.localeCompare(b.treatmentId)
+    ))
     .forEach((allocation) => {
       const treatment = treatmentById.get(allocation.treatmentId);
       if (!treatment?.doctorId || allocation.amount <= 0) return;
@@ -276,39 +284,54 @@ export const calculateCommissionLedgerEntries = (
           ? sum + toNonNegativeFiniteNumber(treatment.materialCost)
           : sum;
       }, 0);
-      const visitCollected = roundMoney(visitCandidates.reduce(
-        (sum, candidate) => sum + toNonNegativeFiniteNumber(candidate.amount),
-        0
-      ));
-      const visitCommissionBase = roundMoney(Math.max(0, visitCollected - visitMaterialCost));
-      const visitEarnings = roundMoney(visitCommissionBase * (rate / 100));
-      let distributedBase = 0;
-      let distributedEarnings = 0;
+      let remainingVisitCost = roundMoney(visitMaterialCost);
+      const candidatesByPayment = new Map<string, typeof visitCandidates>();
+      visitCandidates.forEach((candidate) => {
+        const rows = candidatesByPayment.get(candidate.paymentId) || [];
+        rows.push(candidate);
+        candidatesByPayment.set(candidate.paymentId, rows);
+      });
 
-      visitCandidates.forEach((candidate, index) => {
-        const { treatment, rate: _candidateRate, visitKey, ...allocation } = candidate;
-        const isLast = index === visitCandidates.length - 1;
-        const share = visitCollected > 0 ? candidate.amount / visitCollected : 0;
-        const commissionBase = isLast
-          ? roundMoney(visitCommissionBase - distributedBase)
-          : roundMoney(visitCommissionBase * share);
-        const earnings = isLast
-          ? roundMoney(visitEarnings - distributedEarnings)
-          : roundMoney(visitEarnings * share);
-        distributedBase = roundMoney(distributedBase + commissionBase);
-        distributedEarnings = roundMoney(distributedEarnings + earnings);
+      candidatesByPayment.forEach((paymentCandidates) => {
+        const sortedCandidates = [...paymentCandidates].sort((a, b) => a.treatment.id.localeCompare(b.treatment.id));
+        const paymentCollected = roundMoney(sortedCandidates.reduce(
+          (sum, candidate) => sum + toNonNegativeFiniteNumber(candidate.amount),
+          0
+        ));
+        const { materialDeduction, commissionBase: paymentCommissionBase } = calculatePercentageCommissionBase(
+          paymentCollected,
+          remainingVisitCost
+        );
+        remainingVisitCost = roundMoney(remainingVisitCost - materialDeduction);
+        const paymentEarnings = roundMoney(paymentCommissionBase * (rate / 100));
+        let distributedBase = 0;
+        let distributedEarnings = 0;
 
-        percentageRows.push({
-          ...allocation,
-          doctorId: treatment.doctorId as string,
-          patientId: treatment.patientId,
-          treatmentDate: treatment.date,
-          visitKey,
-          calculationMode: 'percentage',
-          commissionRate: rate,
-          materialDeduction: roundMoney(Math.max(0, candidate.amount - commissionBase)),
-          commissionBase,
-          earnings
+        sortedCandidates.forEach((candidate, index) => {
+          const { treatment, rate: _candidateRate, visitKey, ...allocation } = candidate;
+          const isLast = index === sortedCandidates.length - 1;
+          const share = paymentCollected > 0 ? candidate.amount / paymentCollected : 0;
+          const commissionBase = isLast
+            ? roundMoney(paymentCommissionBase - distributedBase)
+            : roundMoney(paymentCommissionBase * share);
+          const earnings = isLast
+            ? roundMoney(paymentEarnings - distributedEarnings)
+            : roundMoney(paymentEarnings * share);
+          distributedBase = roundMoney(distributedBase + commissionBase);
+          distributedEarnings = roundMoney(distributedEarnings + earnings);
+
+          percentageRows.push({
+            ...allocation,
+            doctorId: treatment.doctorId as string,
+            patientId: treatment.patientId,
+            treatmentDate: treatment.date,
+            visitKey,
+            calculationMode: 'percentage',
+            commissionRate: rate,
+            materialDeduction: roundMoney(Math.max(0, candidate.amount - commissionBase)),
+            commissionBase,
+            earnings
+          });
         });
       });
       return;
@@ -389,6 +412,7 @@ export const calculateCommissionLedgerEntries = (
 
   return [...percentageRows, ...flatRows].sort((a, b) => (
     a.paymentDate.localeCompare(b.paymentDate) ||
+    String(a.paymentCreatedAt || '').localeCompare(String(b.paymentCreatedAt || '')) ||
     a.paymentId.localeCompare(b.paymentId) ||
     a.treatmentId.localeCompare(b.treatmentId)
   ));

@@ -54,7 +54,8 @@ import {
   PatientType,
   AppointmentType,
   TreatmentChargeLine,
-  PaymentReceiptSnapshot
+  PaymentReceiptSnapshot,
+  BranchReceiptIdentity
 } from './types';
 import {
   DEFAULT_PATIENT_TYPE_NAME,
@@ -530,6 +531,11 @@ const App: React.FC = () => {
   const [lastPaymentRecord, setLastPaymentRecord] = useState<PaymentRecord | null>(null);
   const [receiptViewerPatient, setReceiptViewerPatient] = useState<Patient | null>(null);
   const [activePaymentReceiptSnapshot, setActivePaymentReceiptSnapshot] = useState<PaymentReceiptSnapshot | null>(null);
+  const [receiptViewerIdentity, setReceiptViewerIdentity] = useState<BranchReceiptIdentity | null>(null);
+  const [settingsReceiptIdentity, setSettingsReceiptIdentity] = useState<BranchReceiptIdentity | null>(null);
+  const [settingsReceiptIdentityLocationId, setSettingsReceiptIdentityLocationId] = useState<string>('');
+  const [settingsReceiptIdentityLoading, setSettingsReceiptIdentityLoading] = useState(false);
+  const receiptIdentityRequestRef = useRef(0);
   const [selectedTreatmentsForReceipt, setSelectedTreatmentsForReceipt] = useState<ClinicalRecord[]>([]);
   const [selectedMedicineSalesForReceipt, setSelectedMedicineSalesForReceipt] = useState<MedicineSale[]>([]);
   const [currency, setCurrency] = useState<'USD' | 'MMK'>('USD');
@@ -683,15 +689,57 @@ const App: React.FC = () => {
     setAppLogoUrl('');
   };
 
-  const handleSaveReceiptInfo = async (info: { email: string; phone: string }) => {
-    await api.appSettings.saveReceiptInfo(info);
-    setReceiptInfo(info);
+  const getReceiptIdentityForLocation = async (locationId: string): Promise<BranchReceiptIdentity> => {
+    if (!locationId) throw new Error('A branch is required to generate a receipt.');
+    return api.branchReceiptIdentity.get(locationId);
   };
 
-  const handleSaveReceiptHeaderTitle = async (title: string) => {
-    const normalizedTitle = title.trim();
-    await api.appSettings.saveReceiptPreferences({ headerTitle: normalizedTitle });
-    setReceiptHeaderTitle(normalizedTitle);
+  const handleReceiptIdentityBranchChange = async (locationId: string) => {
+    const session = auth.getSession();
+    if (session?.location_id && session.location_id !== locationId) {
+      throw new Error('You can only manage receipt identity for your assigned branch.');
+    }
+    const requestId = ++receiptIdentityRequestRef.current;
+    setSettingsReceiptIdentityLocationId(locationId);
+    setSettingsReceiptIdentityLoading(true);
+    try {
+      const identity = await api.branchReceiptIdentity.getForAdmin(locationId, {
+        authToken: session?.staffAuthToken || ''
+      });
+      if (requestId === receiptIdentityRequestRef.current) setSettingsReceiptIdentity(identity);
+    } catch (error) {
+      if (requestId === receiptIdentityRequestRef.current) setSettingsReceiptIdentity(null);
+      throw error;
+    } finally {
+      if (requestId === receiptIdentityRequestRef.current) setSettingsReceiptIdentityLoading(false);
+    }
+  };
+
+  const handleSaveBranchReceiptIdentity = async (identity: { headerTitle: string; email: string }) => {
+    const session = auth.getSession();
+    const locationId = settingsReceiptIdentityLocationId || settingsReceiptIdentity?.locationId;
+    if (session?.role !== 'admin' || !session.staffAuthToken || !locationId) {
+      throw new Error('A valid administrator session and receipt branch are required. Sign in again and retry.');
+    }
+    try {
+      const saved = await api.branchReceiptIdentity.save(
+        locationId,
+        identity,
+        {
+          userId: session.userId,
+          authToken: session.staffAuthToken
+        },
+        settingsReceiptIdentity?.settingsUpdatedAt || null
+      );
+      setSettingsReceiptIdentity(saved);
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (/another administrator/i.test(message)) {
+        void handleReceiptIdentityBranchChange(locationId).catch(() => {});
+        throw new Error('Another administrator saved this branch recently. The panel has reloaded the latest values. Review them and save again.');
+      }
+      throw error;
+    }
   };
 
   const handleHoverThemeChange = async (theme: HoverTheme) => {
@@ -1021,6 +1069,11 @@ const App: React.FC = () => {
     setIsDoctor(false);
     setAllowedViews([]);
     setCurrentUser('');
+    receiptIdentityRequestRef.current += 1;
+    setSettingsReceiptIdentity(null);
+    setSettingsReceiptIdentityLocationId('');
+    setSettingsReceiptIdentityLoading(false);
+    setReceiptViewerIdentity(null);
   };
 
   const canAccessView = (view: ViewState): boolean => {
@@ -1379,6 +1432,16 @@ const App: React.FC = () => {
       supabase.removeChannel(settingsChannel);
     };
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isAdmin || currentView !== 'settings' || locations.length === 0) return;
+    const session = auth.getSession();
+    const locationId = session?.location_id || currentLocationId || locations[0]?.id || '';
+    if (!locationId || settingsReceiptIdentityLocationId) return;
+    void handleReceiptIdentityBranchChange(locationId).catch((error) => {
+      console.warn('Failed to load branch receipt identity for Settings:', error);
+    });
+  }, [isAuthenticated, isAdmin, currentView, currentLocationId, locations, settingsReceiptIdentityLocationId]);
 
   const handleLoginSuccess = () => {
     const session = auth.getSession();
@@ -1968,6 +2031,7 @@ const App: React.FC = () => {
     setShowAppointmentModal(false);
     setShowPaymentModal(false);
     setShowReceipt(false);
+    setReceiptViewerIdentity(null);
     setShowTreatmentSelection(false);
     setShowReceiptPrompt(false);
     setShowTreatmentTypeModal(false);
@@ -2538,21 +2602,35 @@ const App: React.FC = () => {
     setShowReceipt(false);
     setReceiptViewerPatient(null);
     setActivePaymentReceiptSnapshot(null);
+    setReceiptViewerIdentity(null);
     setSelectedTreatmentsForReceipt([]);
     setSelectedMedicineSalesForReceipt([]);
   };
 
-  const resolvePaymentReceiptSnapshotForViewer = (payment: PaymentRecord): PaymentReceiptSnapshot => (
-    payment.receiptSnapshot || buildLegacyPaymentReceiptSnapshot(payment, {
-      appName,
-      receiptHeaderTitle,
-      receiptInfo,
-      currency
-    })
-  );
+  const buildReceiptClinicContext = (identity: BranchReceiptIdentity) => ({
+    appName,
+    receiptHeaderTitle: identity.headerTitle,
+    receiptInfo: { email: identity.email, phone: identity.phone },
+    locationId: identity.locationId,
+    branchName: identity.branchName,
+    address: identity.address,
+    currency
+  });
 
-  const handleOpenStoredPaymentReceipt = (payment: PaymentRecord) => {
-    const snapshot = resolvePaymentReceiptSnapshotForViewer(payment);
+  const resolvePaymentReceiptSnapshotForViewer = async (payment: PaymentRecord): Promise<PaymentReceiptSnapshot> => {
+    if (payment.receiptSnapshot) return payment.receiptSnapshot;
+    const identity = await getReceiptIdentityForLocation(payment.location_id || '');
+    return buildLegacyPaymentReceiptSnapshot(payment, buildReceiptClinicContext(identity));
+  };
+
+  const handleOpenStoredPaymentReceipt = async (payment: PaymentRecord) => {
+    let snapshot: PaymentReceiptSnapshot;
+    try {
+      snapshot = await resolvePaymentReceiptSnapshotForViewer(payment);
+    } catch (error: any) {
+      setToast({ message: error?.message || 'Receipt identity could not be loaded.', type: 'error', show: true });
+      return;
+    }
     const matchedPatient = patients.find((patient) => patient.id === payment.patientId);
 
     setReceiptViewerPatient(
@@ -2568,6 +2646,7 @@ const App: React.FC = () => {
       }
     );
     setActivePaymentReceiptSnapshot(snapshot);
+    setReceiptViewerIdentity(null);
     setSelectedTreatmentsForReceipt([]);
     setSelectedMedicineSalesForReceipt([]);
     setLastPaymentAmount(payment.amount);
@@ -3716,6 +3795,7 @@ const App: React.FC = () => {
         selectedPatient.id,
         selectedPatient.location_id || currentLocationId
       );
+      const paymentReceiptIdentity = await getReceiptIdentityForLocation(selectedPatient.location_id || currentLocationId);
       const provisionalReceiptSnapshot = buildPaymentReceiptSnapshot({
         patient: selectedPatient,
         amountPaid: paymentAmountTendered,
@@ -3731,7 +3811,7 @@ const App: React.FC = () => {
         serviceFeeCategory: paymentDraft.serviceFeeCategory,
         treatments: authoritativePaymentTreatments,
         medicines: matchedMedicineSales,
-        clinic: { appName, receiptHeaderTitle, receiptInfo, currency }
+        clinic: buildReceiptClinicContext(paymentReceiptIdentity)
       });
       const res = await api.finance.processPayment({
         patientId: selectedPatient.id,
@@ -3765,12 +3845,7 @@ const App: React.FC = () => {
         serviceFeeCategory: paymentDraft.serviceFeeCategory,
         treatments: authoritativePaymentTreatments,
         medicines: matchedMedicineSales,
-        clinic: {
-          appName,
-          receiptHeaderTitle,
-          receiptInfo,
-          currency
-        }
+        clinic: buildReceiptClinicContext(paymentReceiptIdentity)
       });
 
       try {
@@ -3821,24 +3896,28 @@ const App: React.FC = () => {
 
   const handleReceiptPromptYes = () => {
     if (!lastPaymentRecord) return;
-    const snapshot = resolvePaymentReceiptSnapshotForViewer(lastPaymentRecord);
-    setShowReceiptPrompt(false);
-    setReceiptViewerPatient(
-      selectedPatient || {
-        id: lastPaymentRecord.patientId,
-        patient_unique_id: snapshot.patient.patientUniqueId || '',
-        location_id: lastPaymentRecord.location_id || '',
-        name: snapshot.patient.name || lastPaymentRecord.patient_name || 'Unknown Patient',
-        email: snapshot.patient.email || '',
-        phone: snapshot.patient.phone || '',
-        balance: lastPaymentRecord.remainingBalance,
-        loyalty_points: 0
-      }
-    );
-    setActivePaymentReceiptSnapshot(snapshot);
-    setSelectedTreatmentsForReceipt([]);
-    setSelectedMedicineSalesForReceipt([]);
-    setShowReceipt(true);
+    void resolvePaymentReceiptSnapshotForViewer(lastPaymentRecord).then((snapshot) => {
+      setShowReceiptPrompt(false);
+      setReceiptViewerPatient(
+        selectedPatient || {
+          id: lastPaymentRecord.patientId,
+          patient_unique_id: snapshot.patient.patientUniqueId || '',
+          location_id: lastPaymentRecord.location_id || '',
+          name: snapshot.patient.name || lastPaymentRecord.patient_name || 'Unknown Patient',
+          email: snapshot.patient.email || '',
+          phone: snapshot.patient.phone || '',
+          balance: lastPaymentRecord.remainingBalance,
+          loyalty_points: 0
+        }
+      );
+      setActivePaymentReceiptSnapshot(snapshot);
+      setReceiptViewerIdentity(null);
+      setSelectedTreatmentsForReceipt([]);
+      setSelectedMedicineSalesForReceipt([]);
+      setShowReceipt(true);
+    }).catch((error: any) => {
+      setToast({ message: error?.message || 'Receipt identity could not be loaded.', type: 'error', show: true });
+    });
   };
 
   const handleReceiptPromptNo = () => {
@@ -3922,13 +4001,20 @@ const App: React.FC = () => {
     setShowPatientModal(true);
   };
 
-  const handleTreatmentSelectionConfirm = (selectedTreatments: ClinicalRecord[], selectedMedicines: MedicineSale[]) => {
-    setSelectedTreatmentsForReceipt(selectedTreatments);
-    setSelectedMedicineSalesForReceipt(selectedMedicines);
-    setReceiptViewerPatient(selectedPatient);
-    setActivePaymentReceiptSnapshot(null);
-    setShowTreatmentSelection(false);
-    setShowReceipt(true);
+  const handleTreatmentSelectionConfirm = async (selectedTreatments: ClinicalRecord[], selectedMedicines: MedicineSale[]) => {
+    if (!selectedPatient) return;
+    try {
+      const identity = await getReceiptIdentityForLocation(selectedPatient.location_id || currentLocationId);
+      setSelectedTreatmentsForReceipt(selectedTreatments);
+      setSelectedMedicineSalesForReceipt(selectedMedicines);
+      setReceiptViewerPatient(selectedPatient);
+      setActivePaymentReceiptSnapshot(null);
+      setReceiptViewerIdentity(identity);
+      setShowTreatmentSelection(false);
+      setShowReceipt(true);
+    } catch (error: any) {
+      setToast({ message: error?.message || 'Receipt identity could not be loaded.', type: 'error', show: true });
+    }
   };
 
   const handleUploadFiles = async (files: FileList | File[]) => {
@@ -4589,7 +4675,9 @@ const App: React.FC = () => {
                 <SettingsView
                     currency={currency}
                     onCurrencyChange={handleCurrencyChange}
-                    locations={locations}
+                    locations={auth.getSession()?.location_id
+                      ? locations.filter((location) => location.id === auth.getSession()?.location_id)
+                      : locations}
                     currentLocationId={currentLocationId}
                     onLocationChange={handleLocationChange}
                     onAddLocation={handleCreateLocation}
@@ -4644,10 +4732,10 @@ const App: React.FC = () => {
                     onSaveAppName={handleSaveAppName}
                     onUploadAppLogo={handleUploadAppLogo}
                     onDeleteAppLogo={handleDeleteAppLogo}
-                    receiptInfo={receiptInfo}
-                    onSaveReceiptInfo={handleSaveReceiptInfo}
-                    receiptHeaderTitle={receiptHeaderTitle}
-                    onSaveReceiptHeaderTitle={handleSaveReceiptHeaderTitle}
+                    branchReceiptIdentity={settingsReceiptIdentity}
+                    branchReceiptIdentityLoading={settingsReceiptIdentityLoading}
+                    onReceiptIdentityBranchChange={handleReceiptIdentityBranchChange}
+                    onSaveBranchReceiptIdentity={handleSaveBranchReceiptIdentity}
                     receiptSize={receiptSize}
                     onReceiptSizeChange={handleReceiptSizeChange}
                     hoverTheme={hoverTheme}
@@ -6405,6 +6493,7 @@ const App: React.FC = () => {
             appName={appName}
             receiptHeaderTitle={receiptHeaderTitle}
             receiptInfo={receiptInfo}
+            receiptIdentity={receiptViewerIdentity}
             receiptSize={receiptSize}
             onClose={closeReceiptViewer}
           />

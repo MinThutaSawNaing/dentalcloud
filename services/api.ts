@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -20,6 +20,7 @@ import { buildPatientProfileUpdatePayload } from '../utils/patientProfileUpdate'
 import { chunkMonthlyReportPatientIds, type MonthlyReportSourceRecord } from '../utils/monthlyReport';
 import { chunkUniqueIds, mapWithConcurrency, REPORT_REQUEST_CONCURRENCY } from '../utils/reportBatching';
 import { normalizeMaterialCostPresetInputs, sortMaterialCostPresets } from '../utils/materialCostPresets';
+import { normalizeBranchReceiptIdentity } from '../utils/branchReceiptIdentity';
 
 let usersAllowedTabsSupport: boolean | null = null;
 let usersDoctorIdSupport: boolean | null = null;
@@ -471,6 +472,45 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[]) => 
     entriesByTreatment.set(row.treatment_id, entries);
   });
   return entriesByTreatment;
+};
+
+const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[]) => {
+  const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
+  const entriesByPayment = new Map<string, any[]>();
+  for (let index = 0; index < uniqueIds.length; index += 50) {
+    try {
+      const { data, error } = await supabase
+        .from('doctor_commission_entries')
+        .select('id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings')
+        .in('payment_id', uniqueIds.slice(index, index + 50));
+      if (error) {
+        if (!isMissingRelationError(error, 'doctor_commission_entries')) {
+          console.warn('Unable to load payment commission entries.', String(error.message || error).slice(0, 240));
+        }
+        return entriesByPayment;
+      }
+      (data || []).forEach((row: any) => {
+        const entries = entriesByPayment.get(row.payment_id) || [];
+        entries.push({
+          id: row.id,
+          paymentId: row.payment_id,
+          treatmentId: row.treatment_id,
+          doctorId: row.doctor_id,
+          paymentDate: row.payment_date,
+          treatmentDate: row.treatment_date,
+          calculationMode: row.calculation_mode,
+          allocatedPayment: Number(row.allocated_payment || 0),
+          commissionRate: Number(row.commission_rate || 0),
+          earnings: Number(row.earnings || 0)
+        });
+        entriesByPayment.set(row.payment_id, entries);
+      });
+    } catch (error) {
+      console.warn('Unable to load payment commission entries.', String((error as any)?.message || error).slice(0, 240));
+      return entriesByPayment;
+    }
+  }
+  return entriesByPayment;
 };
 
 const isMissingFunctionError = (error: any, functionName: string): boolean => {
@@ -1294,7 +1334,105 @@ const resolveActiveSupabaseStorage = async (): Promise<import('../types').Supaba
   }
 };
 
+// Rolling-deployment safety net for reads only: if the branch receipt identity
+// RPC is not yet installed, resolve the identity from canonical locations plus
+// the legacy global receipt settings. Writes never fall back and fail closed.
+const fallbackBranchReceiptIdentity = async (locationId: string): Promise<BranchReceiptIdentity> => {
+  const [locationResult, settingsResult] = await Promise.all([
+    supabase.from('locations').select('id, name, address, phone').eq('id', locationId).maybeSingle(),
+    supabase.from('app_settings').select('app_name, receipt_header_title, receipt_email').eq('id', APP_SETTINGS_SINGLETON_ID).maybeSingle()
+  ]);
+  if (locationResult.error) throw new Error(locationResult.error.message);
+  const location = locationResult.data as { id?: string; name?: string; address?: string; phone?: string } | null;
+  if (!location?.id || !location?.name) {
+    throw new Error('Receipt identity branch was not found.');
+  }
+  const settings = settingsResult.error
+    ? null
+    : settingsResult.data as { app_name?: string; receipt_header_title?: string; receipt_email?: string } | null;
+  const globalTitle = typeof settings?.receipt_header_title === 'string' ? settings.receipt_header_title.trim() : '';
+  const globalEmail = typeof settings?.receipt_email === 'string' ? settings.receipt_email.trim() : '';
+  const appName = typeof settings?.app_name === 'string' ? settings.app_name.trim() : '';
+  const branchName = String(location.name).trim();
+  return {
+    locationId: String(location.id),
+    branchName,
+    address: typeof location.address === 'string' ? location.address.trim() : '',
+    phone: typeof location.phone === 'string' ? location.phone.trim() : '',
+    headerTitle: globalTitle || appName || branchName || 'DentalCloud Pro',
+    email: globalEmail,
+    customHeaderTitle: '',
+    customEmail: '',
+    usesGlobalTitle: true,
+    usesGlobalEmail: true,
+    settingsUpdatedAt: null
+  };
+};
+
 export const api = {
+  branchReceiptIdentity: {
+    get: async (locationId: string): Promise<BranchReceiptIdentity> => {
+      const normalizedLocationId = trimRequired(locationId, 'Receipt branch');
+      const { data, error } = await supabase.rpc('get_branch_receipt_identity', {
+        p_location_id: normalizedLocationId
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'get_branch_receipt_identity')) {
+          return fallbackBranchReceiptIdentity(normalizedLocationId);
+        }
+        throw new Error(error.message);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      return normalizeBranchReceiptIdentity(row);
+    },
+    getForAdmin: async (
+      locationId: string,
+      actor: { authToken: string }
+    ): Promise<BranchReceiptIdentity> => {
+      const normalizedLocationId = trimRequired(locationId, 'Receipt branch');
+      if (!actor.authToken?.trim()) {
+        throw new Error('A valid administrator session is required. Sign in again and retry.');
+      }
+      const { data, error } = await supabase.rpc('get_branch_receipt_identity_for_admin', {
+        p_location_id: normalizedLocationId,
+        p_session_token: actor.authToken.trim()
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'get_branch_receipt_identity_for_admin')) {
+          throw new Error('Branch receipt identity migration is not installed.');
+        }
+        throw new Error(error.message);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      return normalizeBranchReceiptIdentity(row);
+    },
+    save: async (
+      locationId: string,
+      identity: { headerTitle: string; email: string },
+      actor: { userId: string; authToken: string },
+      expectedUpdatedAt?: string | null
+    ): Promise<BranchReceiptIdentity> => {
+      const normalizedLocationId = trimRequired(locationId, 'Receipt branch');
+      if (!actor.userId?.trim() || !actor.authToken?.trim()) {
+        throw new Error('A valid administrator session is required. Sign in again and retry.');
+      }
+      const { data, error } = await supabase.rpc('save_branch_receipt_identity', {
+        p_location_id: normalizedLocationId,
+        p_receipt_header_title: identity.headerTitle?.trim() || null,
+        p_receipt_email: identity.email?.trim().toLowerCase() || null,
+        p_session_token: actor.authToken.trim(),
+        p_expected_updated_at: expectedUpdatedAt?.trim() || null
+      });
+      if (error) {
+        if (isMissingFunctionError(error, 'save_branch_receipt_identity')) {
+          throw new Error('Branch receipt identity migration is not installed.');
+        }
+        throw new Error(error.message);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      return normalizeBranchReceiptIdentity(row);
+    }
+  },
   locations: {
     getAll: async (): Promise<Location[]> => {
       try {
@@ -4454,7 +4592,12 @@ export const api = {
         throw new Error(error.message);
       }
 
-      return (data || []).map(mapPaymentRow);
+      const payments = (data || []).map(mapPaymentRow);
+      const entriesByPayment = await getDoctorEarningEntriesByPaymentIds(payments.map((payment) => payment.id));
+      return payments.map((payment) => ({
+        ...payment,
+        doctorEarningEntries: entriesByPayment.get(payment.id) || []
+      }));
     },
     processPayment: async (input: {
       patientId: string;

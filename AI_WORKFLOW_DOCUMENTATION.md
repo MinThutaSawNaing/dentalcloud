@@ -222,12 +222,12 @@ The main component responsible for AI interactions, featuring:
 - Payment plan recommendations
 
 **Current Payment and Receipt Rules:**
-- Supported payment types are KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, and UAB Pay. A payment type is required.
+- Supported payment types are KPay, WavePay, Cash, MMQR, Debit Card, Credit Card, AYA Pay, UAB Pay, AYA Banking, KBZ Banking, and CB Banking. A payment type is required.
 - Saved payment receipts preserve a historical snapshot containing clinic/patient details, amount paid, payment type, full/partial status, balances, collector, and captured treatment and medicine lines.
 - Reprints use the stored snapshot so later profile, settings, treatment, medicine, or balance edits do not alter the original receipt.
 - Receipt selection supports treatments and standalone medicine sales.
 - A receipt item's **Recent / NEW** marker applies only when its item date is today in the clinic's local calendar.
-- Receipt header title, currency, and A4/55 mm/80 mm thermal format are shared clinic settings across devices. New receipts use the current settings; old saved snapshots retain their original values.
+- Receipt identity is branch-specific for new receipts: custom title, canonical branch name/address/phone, and optional branch email. Currency and A4/55 mm/80 mm thermal format remain shared across devices. Old saved snapshots retain their original values.
 
 ## Data Models & Relationships
 

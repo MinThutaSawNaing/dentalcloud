@@ -237,12 +237,15 @@ PAYMENT TYPES (required):
 - Credit Card
 - AYA Pay
 - UAB Pay
+- AYA Banking
+- KBZ Banking
+- CB Banking
 
 PAYMENT RECEIPT BEHAVIOR:
 - Payments receive a stable receipt number.
 - Saved payment receipts use an immutable snapshot for accurate reprints.
 - The snapshot can preserve the patient/clinic details, payment type and balances, collector, and captured treatment and medicine lines.
-- Receipt header title, currency, and A4/55mm/80mm thermal format are shared across devices for new receipts.
+- New receipts use the issuing branch's receipt title, name, address, phone, and optional email. Currency and A4/55mm/80mm thermal format remain shared across devices.
 - Old saved receipts keep their original snapshot even when settings or patient data later change.
 - The receipt picker can include treatments and standalone medicine sales.
 - "Recent" / "NEW" means the treatment or medicine date is today, not merely within the last few days.

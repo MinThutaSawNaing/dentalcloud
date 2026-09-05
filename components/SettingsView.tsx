@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, DollarSign, MapPin, Award, Plus, Trash2, RotateCcw, Printer, Image as ImageIcon, Upload, Tags, CalendarRange, Activity, MessageCircle, Mail, HardDrive, Palette, Shield, Info, Users, RefreshCw, Clock } from 'lucide-react';
-import { Location, LoyaltyRule, S3Settings, SupabaseStorageSettings, ReceiptSize, PatientType, AppointmentType, ActiveStaffMonitorEntry } from '../types';
+import { BranchReceiptIdentity, Location, LoyaltyRule, S3Settings, SupabaseStorageSettings, ReceiptSize, PatientType, AppointmentType, ActiveStaffMonitorEntry } from '../types';
 import { Modal, Input } from './Shared';
 import { api } from '../services/api';
 import { supabase } from '../services/supabase';
@@ -45,10 +45,10 @@ interface SettingsViewProps {
   onSaveAppName: (name: string) => Promise<void>;
   onUploadAppLogo: (file: File) => Promise<void>;
   onDeleteAppLogo: () => Promise<void>;
-  receiptInfo: { email: string; phone: string };
-  onSaveReceiptInfo: (info: { email: string; phone: string }) => Promise<void>;
-  receiptHeaderTitle: string;
-  onSaveReceiptHeaderTitle: (title: string) => Promise<void>;
+  branchReceiptIdentity: BranchReceiptIdentity | null;
+  branchReceiptIdentityLoading: boolean;
+  onReceiptIdentityBranchChange: (locationId: string) => void | Promise<void>;
+  onSaveBranchReceiptIdentity: (identity: { headerTitle: string; email: string }) => Promise<void>;
   receiptSize: ReceiptSize;
   onReceiptSizeChange: (size: ReceiptSize) => Promise<void>;
   hoverTheme: 'blue' | 'green' | 'yellow' | 'brown' | 'dark';
@@ -111,10 +111,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   onSaveAppName,
   onUploadAppLogo,
   onDeleteAppLogo,
-  receiptInfo,
-  onSaveReceiptInfo,
-  receiptHeaderTitle,
-  onSaveReceiptHeaderTitle,
+  branchReceiptIdentity,
+  branchReceiptIdentityLoading,
+  onReceiptIdentityBranchChange,
+  onSaveBranchReceiptIdentity,
   receiptSize,
   onReceiptSizeChange,
   hoverTheme,
@@ -147,9 +147,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   const [isSavingAppName, setIsSavingAppName] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [isDeletingLogo, setIsDeletingLogo] = useState(false);
-  const [receiptEmailInput, setReceiptEmailInput] = useState<string>(receiptInfo.email);
-  const [receiptPhoneInput, setReceiptPhoneInput] = useState<string>(receiptInfo.phone);
-  const [receiptHeaderTitleInput, setReceiptHeaderTitleInput] = useState<string>(receiptHeaderTitle);
+  const [receiptEmailInput, setReceiptEmailInput] = useState<string>(branchReceiptIdentity?.customEmail || '');
+  const [receiptHeaderTitleInput, setReceiptHeaderTitleInput] = useState<string>(branchReceiptIdentity?.customHeaderTitle || '');
+  const [receiptIdentityBranchId, setReceiptIdentityBranchId] = useState<string>(branchReceiptIdentity?.locationId || currentLocationId);
   const [receiptInfoMessage, setReceiptInfoMessage] = useState<string | null>(null);
   const [currencyMessage, setCurrencyMessage] = useState<string | null>(null);
   const [receiptFormatMessage, setReceiptFormatMessage] = useState<string | null>(null);
@@ -178,17 +178,15 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   const [isSwitchingBranch, setIsSwitchingBranch] = useState(false);
 
   useEffect(() => {
-    setReceiptEmailInput(receiptInfo.email);
-    setReceiptPhoneInput(receiptInfo.phone);
-  }, [receiptInfo.email, receiptInfo.phone]);
+    if (!branchReceiptIdentity) return;
+    setReceiptIdentityBranchId(branchReceiptIdentity.locationId);
+    setReceiptEmailInput(branchReceiptIdentity.customEmail || '');
+    setReceiptHeaderTitleInput(branchReceiptIdentity.customHeaderTitle || '');
+  }, [branchReceiptIdentity]);
 
   useEffect(() => {
     setAppNameInput(appName);
   }, [appName]);
-
-  useEffect(() => {
-    setReceiptHeaderTitleInput(receiptHeaderTitle);
-  }, [receiptHeaderTitle]);
 
   useEffect(() => {
     setSelectedBranchId(currentLocationId);
@@ -1986,92 +1984,82 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      <div className="border border-gray-200 rounded-xl p-6">
+      {isAdmin && <div className="border border-gray-200 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
           <Info className="w-5 h-5 text-indigo-600" />
-          <h3 className="text-lg font-semibold text-gray-800">Receipt Header and Contact Info</h3>
+          <h3 className="text-lg font-semibold text-gray-800">Branch Receipt Identity</h3>
         </div>
-        
         <p className="text-sm text-gray-600 mb-4">
-          Customize the title and contact information displayed on both A4 and thermal receipts.
+          Choose the branch whose receipt identity you want to edit. This selection is independent from the operational branch above.
         </p>
 
-        <div className="mb-4">
-          <Input
-            label="Receipt Header Title"
-            value={receiptHeaderTitleInput}
-            onChange={(e: any) => {
-              setReceiptHeaderTitleInput(e.target.value);
+        <label className="block max-w-xl text-sm font-semibold text-gray-700">
+          Receipt branch
+          <select
+            value={receiptIdentityBranchId}
+            onChange={(event) => {
+              const locationId = event.target.value;
+              const previousLocationId = branchReceiptIdentity?.locationId || receiptIdentityBranchId;
+              setReceiptIdentityBranchId(locationId);
               setReceiptInfoMessage(null);
+              Promise.resolve(onReceiptIdentityBranchChange(locationId)).catch((err: any) => {
+                setReceiptIdentityBranchId(previousLocationId);
+                setReceiptInfoMessage('Failed to load branch receipt identity: ' + (err?.message || 'Unknown error'));
+              });
             }}
-            placeholder={appName || 'Dental Clinic'}
-            maxLength={120}
-          />
-          <p className="mt-1 text-xs text-gray-500">
-            Leave blank to use the application name.
-          </p>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Input
-            label="Receipt Email"
-            type="email"
-            value={receiptEmailInput}
-            onChange={(e: any) => {
-              setReceiptEmailInput(e.target.value);
-              setReceiptInfoMessage(null);
-            }}
-            placeholder="info@dentflowpro.com"
-          />
-          <Input
-            label="Receipt Phone"
-            value={receiptPhoneInput}
-            onChange={(e: any) => {
-              setReceiptPhoneInput(e.target.value);
-              setReceiptInfoMessage(null);
-            }}
-            placeholder="(555) 123-4567"
-          />
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <button
-            type="button"
-            onClick={async () => {
-              setIsSavingReceiptHeader(true);
-              try {
-                await Promise.all([
-                  onSaveReceiptHeaderTitle(receiptHeaderTitleInput),
-                  onSaveReceiptInfo({
-                    email: receiptEmailInput,
-                    phone: receiptPhoneInput
-                  })
-                ]);
-                setReceiptInfoMessage('Receipt header and contact info saved for all devices.');
-              } catch (err: any) {
-                setReceiptInfoMessage('Failed to save receipt settings: ' + (err?.message || 'Unknown error'));
-              } finally {
-                setIsSavingReceiptHeader(false);
-              }
-            }}
-            disabled={isSavingReceiptHeader}
-            className="w-full md:w-auto rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700"
+            disabled={branchReceiptIdentityLoading || isSavingReceiptHeader}
+            className="mt-1.5 w-full rounded-xl border border-gray-300 bg-white px-3 py-3 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-100"
           >
-            {isSavingReceiptHeader ? 'Saving...' : 'Save Receipt Header'}
-          </button>
-          {receiptInfoMessage && (
-            <p className={`text-xs ${receiptInfoMessage.toLowerCase().includes('failed') ? 'text-red-600' : 'text-emerald-600'}`}>
-              {receiptInfoMessage}
-            </p>
-          )}
-        </div>
+            {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+          </select>
+        </label>
 
-        <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
-          <p className="text-xs text-indigo-700">
-            <strong>Note:</strong> Changes are stored centrally and applied to new A4 and thermal receipts on every device.
-          </p>
-        </div>
-      </div>
+        {branchReceiptIdentityLoading ? (
+          <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-700">Loading branch receipt identity...</div>
+        ) : branchReceiptIdentity ? (
+          <div className="mt-5 space-y-5">
+            <div className="grid grid-cols-1 gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 md:grid-cols-3">
+              <div><p className="text-xs font-bold uppercase text-gray-500">Canonical branch</p><p className="mt-1 text-sm font-semibold text-gray-900">{branchReceiptIdentity.branchName || 'Not set'}</p></div>
+              <div><p className="text-xs font-bold uppercase text-gray-500">Address</p><p className="mt-1 whitespace-pre-line text-sm text-gray-700">{branchReceiptIdentity.address || 'Not set'}</p></div>
+              <div><p className="text-xs font-bold uppercase text-gray-500">Phone</p><p className="mt-1 text-sm text-gray-700">{branchReceiptIdentity.phone || 'Not set'}</p></div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <Input label="Custom Receipt Title" value={receiptHeaderTitleInput} onChange={(e: any) => { setReceiptHeaderTitleInput(e.target.value); setReceiptInfoMessage(null); }} placeholder={branchReceiptIdentity.headerTitle || appName} maxLength={120} />
+                <p className="mt-1 text-xs text-gray-500">{receiptHeaderTitleInput.trim() ? <>Effective title: <strong>{receiptHeaderTitleInput.trim()}</strong>. Clear it to inherit the global receipt title.</> : <>Using inherited title: <strong>{branchReceiptIdentity.usesGlobalTitle ? branchReceiptIdentity.headerTitle : 'the global title after save'}</strong>.</>}</p>
+              </div>
+              <div>
+                <Input label="Custom Receipt Email" type="email" value={receiptEmailInput} onChange={(e: any) => { setReceiptEmailInput(e.target.value); setReceiptInfoMessage(null); }} placeholder={branchReceiptIdentity.email || 'No inherited email'} />
+                <p className="mt-1 text-xs text-gray-500">{receiptEmailInput.trim() ? <>Effective email: <strong>{receiptEmailInput.trim()}</strong>. Clear it to inherit the global receipt email.</> : <>Using inherited email: <strong>{branchReceiptIdentity.usesGlobalEmail ? (branchReceiptIdentity.email || 'Not set') : 'the global email after save'}</strong>.</>}</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <button type="button" onClick={async () => {
+                const normalizedEmail = receiptEmailInput.trim();
+                if (normalizedEmail && !isValidEmail(normalizedEmail)) {
+                  setReceiptInfoMessage('Failed to save: enter a valid receipt email or leave it blank to inherit.');
+                  return;
+                }
+                setIsSavingReceiptHeader(true);
+                setReceiptInfoMessage(null);
+                try {
+                  await onSaveBranchReceiptIdentity({ headerTitle: receiptHeaderTitleInput.trim(), email: normalizedEmail });
+                  setReceiptInfoMessage('Branch receipt identity saved.');
+                } catch (err: any) {
+                  setReceiptInfoMessage('Failed to save branch receipt identity: ' + (err?.message || 'Unknown error'));
+                } finally { setIsSavingReceiptHeader(false); }
+              }} disabled={isSavingReceiptHeader} className="w-full md:w-auto rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-70">
+                {isSavingReceiptHeader ? 'Saving...' : 'Save Branch Receipt Identity'}
+              </button>
+              {receiptInfoMessage && <p className={`text-xs ${receiptInfoMessage.toLowerCase().includes('failed') ? 'text-red-600' : 'text-emerald-600'}`}>{receiptInfoMessage}</p>}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Branch receipt identity is unavailable. Patient and operational data are unaffected; retry by selecting the branch again.</div>
+        )}
+      </div>}
 
       <div className="border border-gray-200 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">

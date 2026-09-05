@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { X, Printer } from 'lucide-react';
-import { Patient, ClinicalRecord, MedicineSale, PaymentAllocation, PaymentMethod, PaymentReceiptSnapshot, ReceiptSize, TreatmentType } from '../types';
+import { BranchReceiptIdentity, Patient, ClinicalRecord, MedicineSale, PaymentAllocation, PaymentMethod, PaymentReceiptSnapshot, ReceiptSize, TreatmentType } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
 import { formatPaymentMethod } from '../utils/paymentMethods';
 import { normalizePaymentAllocations } from '../utils/paymentMethods';
@@ -25,6 +25,7 @@ interface ReceiptProps {
   appName?: string;
   receiptHeaderTitle?: string;
   receiptInfo?: { email: string; phone: string };
+  receiptIdentity?: BranchReceiptIdentity | null;
   receiptSize?: ReceiptSize;
   onClose: () => void;
 }
@@ -43,14 +44,19 @@ const Receipt: React.FC<ReceiptProps> = ({
   appName = 'DentalCloud Pro',
   receiptHeaderTitle,
   receiptInfo,
+  receiptIdentity,
   receiptSize = 'A4',
   onClose
 }) => {
   const paymentSnapshot = paymentReceiptSnapshot || null;
-  const effectiveAppName = paymentSnapshot?.clinic.appName || appName;
-  const receiptEmail = paymentSnapshot?.clinic.email || receiptInfo?.email || 'info@dentflowpro.com';
-  const receiptPhone = paymentSnapshot?.clinic.phone || receiptInfo?.phone || '(555) 123-4567';
-  const displayHeaderTitle = paymentSnapshot?.clinic.headerTitle || resolveReceiptHeaderTitle(receiptHeaderTitle, effectiveAppName);
+  // Persisted snapshots are immutable historical facts and always take priority,
+  // including intentionally blank optional fields.
+  const effectiveAppName = paymentSnapshot ? paymentSnapshot.clinic.appName : appName;
+  const receiptEmail = paymentSnapshot ? paymentSnapshot.clinic.email : (receiptIdentity?.email || receiptInfo?.email || '');
+  const receiptPhone = paymentSnapshot ? paymentSnapshot.clinic.phone : (receiptIdentity?.phone || receiptInfo?.phone || '');
+  const receiptBranchName = paymentSnapshot ? (paymentSnapshot.clinic.branchName || '') : (receiptIdentity?.branchName || '');
+  const receiptAddress = paymentSnapshot ? (paymentSnapshot.clinic.address || '') : (receiptIdentity?.address || '');
+  const displayHeaderTitle = paymentSnapshot ? paymentSnapshot.clinic.headerTitle : (receiptIdentity?.headerTitle || resolveReceiptHeaderTitle(receiptHeaderTitle, effectiveAppName));
   const receiptNumber = paymentSnapshot?.receiptNumber || persistedReceiptNumber || `REC-${Date.now().toString().slice(-8)}`;
   const effectiveCurrency = paymentSnapshot?.currency || currency;
   const formatLongDate = (value: string | Date) => {
@@ -174,6 +180,32 @@ const Receipt: React.FC<ReceiptProps> = ({
   const thermalSmallFontSize = `${thermalTypography.small}px`;
   const thermalHeaderFontSize = `${thermalTypography.header}px`;
   const thermalAmountFontSize = `${thermalTypography.amount}px`;
+  const renderA4ClinicIdentity = (subtitle: string) => (
+    <>
+      <h1 className="text-2xl font-black text-gray-900 mb-1">{displayHeaderTitle}</h1>
+      {receiptBranchName && receiptBranchName !== displayHeaderTitle ? (
+        <p className="text-sm font-bold text-gray-700">{receiptBranchName}</p>
+      ) : null}
+      {receiptAddress ? <p className="mt-1 text-sm text-gray-600 whitespace-pre-line">{receiptAddress}</p> : null}
+      <p className="mt-1 text-sm text-gray-600">{subtitle}</p>
+      {(receiptPhone || receiptEmail) ? (
+        <div className="mt-2 space-y-0.5 text-xs text-gray-500">
+          {receiptPhone ? <p>Phone: {receiptPhone}</p> : null}
+          {receiptEmail ? <p>Email: {receiptEmail}</p> : null}
+        </div>
+      ) : null}
+    </>
+  );
+  const renderThermalClinicIdentity = (subtitle: string) => (
+    <>
+      <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px', overflowWrap: 'anywhere' }}>{displayHeaderTitle}</div>
+      {receiptBranchName && receiptBranchName !== displayHeaderTitle ? <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, overflowWrap: 'anywhere' }}>{receiptBranchName}</div> : null}
+      {receiptAddress ? <div style={{ fontSize: thermalSmallFontSize, color: '#555', whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{receiptAddress}</div> : null}
+      <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{subtitle}</div>
+      {receiptPhone ? <div style={{ fontSize: thermalSmallFontSize, color: '#777', overflowWrap: 'anywhere' }}>Phone: {receiptPhone}</div> : null}
+      {receiptEmail ? <div style={{ fontSize: thermalSmallFontSize, color: '#777', overflowWrap: 'anywhere' }}>Email: {receiptEmail}</div> : null}
+    </>
+  );
   const thermalPrintContentRef = React.useRef<HTMLDivElement>(null);
   const [thermalPageHeightMm, setThermalPageHeightMm] = React.useState(20);
 
@@ -431,18 +463,16 @@ const Receipt: React.FC<ReceiptProps> = ({
         }}>
           {/* Clinic Header */}
           <div className="text-center mb-8 border-b-2 border-gray-800 pb-6">
-            <h1 className="text-2xl font-black text-gray-900 mb-2">{displayHeaderTitle}</h1>
-            <p className="text-sm text-gray-600">Professional Dental Care Services</p>
-            <p className="text-xs text-gray-500 mt-2">Email: {receiptEmail} | Phone: {receiptPhone}</p>
+            {renderA4ClinicIdentity('Professional Dental Care Services')}
           </div>
 
           {/* Receipt Info */}
           <div className="flex justify-between items-start mb-8">
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-2">BILL TO:</p>
-              <p className="text-base font-bold text-gray-900">{patient.name}</p>
-              <p className="text-sm text-gray-600">{patient.email}</p>
-              <p className="text-sm text-gray-600">{patient.phone}</p>
+              <p className="text-base font-bold text-gray-900">{patientDisplay.name}</p>
+              {patientDisplay.email ? <p className="text-sm text-gray-600">{patientDisplay.email}</p> : null}
+              {patientDisplay.phone ? <p className="text-sm text-gray-600">{patientDisplay.phone}</p> : null}
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600 mb-1">Receipt #: <span className="font-semibold">{receiptNumber}</span></p>
@@ -460,14 +490,14 @@ const Receipt: React.FC<ReceiptProps> = ({
                 <div className="flex justify-between py-2 border-b border-gray-300">
                   <span className="text-sm font-semibold text-gray-700">Treatment Services:</span>
                   <span className="text-sm font-semibold text-gray-900">
-                    {formatCurrency(totalTreatmentStandardCost, currency)}
+                    {formatCurrency(totalTreatmentStandardCost, effectiveCurrency)}
                   </span>
                 </div>
                 {totalTreatmentDiscount > 0 && (
                   <div className="flex justify-between py-2 border-b border-gray-300">
                     <span className="text-sm font-semibold text-gray-700">Treatment Discount:</span>
                     <span className="text-sm font-semibold text-amber-700">
-                      -{formatCurrency(totalTreatmentDiscount, currency)}
+                      -{formatCurrency(totalTreatmentDiscount, effectiveCurrency)}
                     </span>
                   </div>
                 )}
@@ -486,21 +516,21 @@ const Receipt: React.FC<ReceiptProps> = ({
                 <div className="flex justify-between py-2 border-b border-gray-300">
                   <span className="text-sm font-semibold text-gray-700">Subtotal:</span>
                   <span className="text-sm font-semibold text-gray-900">
-                    {formatCurrency(grandTotal, currency)}
+                    {formatCurrency(grandTotal, effectiveCurrency)}
                   </span>
                 </div>
                 {totalPaid > 0 && (
                   <div className="flex justify-between py-2 border-b border-gray-300">
                     <span className="text-sm font-semibold text-gray-700">Payment Received:</span>
                     <span className="text-sm font-semibold text-green-600">
-                      -{formatCurrency(totalPaid, currency)}
+                      -{formatCurrency(totalPaid, effectiveCurrency)}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between py-3 mt-2 border-t-2 border-gray-800">
                   <span className="text-base font-bold text-gray-900">Balance Due:</span>
                   <span className={`text-base font-bold ${remainingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    {formatCurrency(remainingBalance, currency)}
+                    {formatCurrency(remainingBalance, effectiveCurrency)}
                   </span>
                 </div>
               </div>
@@ -513,7 +543,7 @@ const Receipt: React.FC<ReceiptProps> = ({
               <p className="text-sm font-semibold text-gray-900 mb-2">Payment Details:</p>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Payment Amount:</span>
-                <span className="font-semibold text-gray-900">{formatCurrency(totalPaid, currency)}</span>
+                <span className="font-semibold text-gray-900">{formatCurrency(totalPaid, effectiveCurrency)}</span>
               </div>
               <div className="flex justify-between text-sm mt-1">
                 <span className="text-gray-600">Payment Date:</span>
@@ -530,7 +560,7 @@ const Receipt: React.FC<ReceiptProps> = ({
           {/* Footer */}
           <div className="mt-12 pt-6 border-t-2 border-gray-800 text-center">
             <p className="text-xs text-gray-600 mb-2">
-              Thank you for choosing {appName} for your dental care needs.
+              Thank you for choosing {effectiveAppName} for your dental care needs.
             </p>
             <p className="text-xs text-gray-500">
               This is a computer-generated receipt. No signature required.
@@ -583,9 +613,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         }}>
           {/* Clinic Header */}
           <div style={{ textAlign: 'center', marginBottom: '6px' }}>
-            <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>Professional Dental Care Services</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
+            {renderThermalClinicIdentity('Professional Dental Care Services')}
           </div>
 
           {thermalThickDivider()}
@@ -602,9 +630,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Patient Info */}
           <div style={{ marginBottom: '6px' }}>
-            <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
+            <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patientDisplay.name}</div>
+            {patientDisplay.email ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.email}</div> : null}
+            {patientDisplay.phone ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.phone}</div> : null}
           </div>
 
           {thermalDivider()}
@@ -619,18 +647,18 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Summary */}
           <div style={{ marginBottom: '6px' }}>
-            {thermalLine('Treatment Services:', formatCurrency(totalTreatmentStandardCost, currency))}
+            {thermalLine('Treatment Services:', formatCurrency(totalTreatmentStandardCost, effectiveCurrency))}
             {totalTreatmentDiscount > 0 && thermalLine('Treatment Discount:', `-${formatCurrency(totalTreatmentDiscount, effectiveCurrency)}`, undefined, { color: '#b45309' })}
             {thermalLine('Medicines & Items:', formatCurrency(totalMedicineStandardCost, effectiveCurrency))}
             {totalMedicineDiscount > 0 && thermalLine('Item Discount:', `-${formatCurrency(totalMedicineDiscount, effectiveCurrency)}`, undefined, { color: '#15803d' })}
             {thermalDivider()}
-            {thermalLine('Subtotal:', formatCurrency(grandTotal, currency), undefined, { fontWeight: 700 })}
-            {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, currency)}`, undefined, { color: '#16a34a' })}
+            {thermalLine('Subtotal:', formatCurrency(grandTotal, effectiveCurrency), undefined, { fontWeight: 700 })}
+            {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, effectiveCurrency)}`, undefined, { color: '#16a34a' })}
             {thermalThickDivider()}
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalBaseFontSize, fontWeight: 700, marginTop: '2px' }}>
               <span>BALANCE DUE</span>
               <span style={{ color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
-                {formatCurrency(remainingBalance, currency)}
+                {formatCurrency(remainingBalance, effectiveCurrency)}
               </span>
             </div>
           </div>
@@ -641,7 +669,7 @@ const Receipt: React.FC<ReceiptProps> = ({
           {totalPaid > 0 && (
             <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
               <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
-              {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
+              {thermalLine('Amount Paid:', formatCurrency(totalPaid, effectiveCurrency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
               {thermalLine('Date:', today, { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
               {renderThermalPaymentAllocations()}
               {thermalLine('Status:', 'Paid', undefined, { color: '#16a34a' })}
@@ -650,7 +678,7 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Footer */}
           <div style={{ textAlign: 'center', marginTop: '8px', fontSize: thermalSmallFontSize, color: '#555' }}>
-            <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {appName}!</div>
+            <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {effectiveAppName}!</div>
             <div>This is a computer-generated receipt.</div>
             <div>No signature required.</div>
           </div>
@@ -679,18 +707,16 @@ const Receipt: React.FC<ReceiptProps> = ({
       }}>
         {/* Clinic Header */}
         <div className="text-center mb-8 border-b-2 border-gray-800 pb-6">
-          <h1 className="text-2xl font-black text-gray-900 mb-2">{displayHeaderTitle}</h1>
-          <p className="text-sm text-gray-600">Professional Dental Care Services</p>
-          <p className="text-xs text-gray-500 mt-2">Email: {receiptEmail} | Phone: {receiptPhone}</p>
+          {renderA4ClinicIdentity('Professional Dental Care Services')}
         </div>
 
         {/* Receipt Info */}
         <div className="flex justify-between items-start mb-8">
           <div>
             <p className="text-sm font-semibold text-gray-700 mb-2">BILL TO:</p>
-            <p className="text-base font-bold text-gray-900">{patient.name}</p>
-            <p className="text-sm text-gray-600">{patient.email}</p>
-            <p className="text-sm text-gray-600">{patient.phone}</p>
+            <p className="text-base font-bold text-gray-900">{patientDisplay.name}</p>
+            {patientDisplay.email ? <p className="text-sm text-gray-600">{patientDisplay.email}</p> : null}
+            {patientDisplay.phone ? <p className="text-sm text-gray-600">{patientDisplay.phone}</p> : null}
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-600 mb-1">Receipt #: <span className="font-semibold">{receiptNumber}</span></p>
@@ -708,14 +734,14 @@ const Receipt: React.FC<ReceiptProps> = ({
               <div className="flex justify-between py-2 border-b border-gray-300" style={{ borderBottom: '1px solid #d1d5db', padding: '8px 0' }}>
                 <span className="text-sm font-semibold text-gray-700">Treatment Services:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {formatCurrency(totalTreatmentStandardCost, currency)}
+                  {formatCurrency(totalTreatmentStandardCost, effectiveCurrency)}
                 </span>
               </div>
               {totalTreatmentDiscount > 0 && (
                 <div className="flex justify-between py-2 border-b border-gray-300" style={{ borderBottom: '1px solid #d1d5db', padding: '8px 0' }}>
                   <span className="text-sm font-semibold text-gray-700">Treatment Discount:</span>
                   <span className="text-sm font-semibold text-amber-700">
-                    -{formatCurrency(totalTreatmentDiscount, currency)}
+                    -{formatCurrency(totalTreatmentDiscount, effectiveCurrency)}
                   </span>
                 </div>
               )}
@@ -734,21 +760,21 @@ const Receipt: React.FC<ReceiptProps> = ({
               <div className="flex justify-between py-2 border-b border-gray-300" style={{ borderBottom: '1px solid #d1d5db', padding: '8px 0' }}>
                 <span className="text-sm font-semibold text-gray-700">Subtotal:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {formatCurrency(grandTotal, currency)}
+                  {formatCurrency(grandTotal, effectiveCurrency)}
                 </span>
               </div>
               {totalPaid > 0 && (
                 <div className="flex justify-between py-2 border-b border-gray-300" style={{ borderBottom: '1px solid #d1d5db', padding: '8px 0' }}>
                   <span className="text-sm font-semibold text-gray-700">Payment Received:</span>
                   <span className="text-sm font-semibold text-green-600">
-                    -{formatCurrency(totalPaid, currency)}
+                    -{formatCurrency(totalPaid, effectiveCurrency)}
                   </span>
                 </div>
               )}
               <div className="flex justify-between py-3 mt-2 border-t-2 border-gray-800" style={{ borderTop: '2px solid #1f2937', padding: '12px 0' }}>
                 <span className="text-base font-bold text-gray-900">Balance Due:</span>
                 <span className={`text-base font-bold ${remainingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  {formatCurrency(remainingBalance, currency)}
+                  {formatCurrency(remainingBalance, effectiveCurrency)}
                 </span>
               </div>
             </div>
@@ -761,7 +787,7 @@ const Receipt: React.FC<ReceiptProps> = ({
             <p className="text-sm font-semibold text-gray-900 mb-2">Payment Details:</p>
             <div className="flex justify-between text-sm">
               <span className="text-gray-600">Payment Amount:</span>
-              <span className="font-semibold text-gray-900">{formatCurrency(totalPaid, currency)}</span>
+              <span className="font-semibold text-gray-900">{formatCurrency(totalPaid, effectiveCurrency)}</span>
             </div>
             <div className="flex justify-between text-sm mt-1">
               <span className="text-gray-600">Payment Date:</span>
@@ -778,7 +804,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         {/* Footer */}
         <div className="mt-12 pt-6 border-t-2 border-gray-800 text-center" style={{ marginTop: '48px', paddingTop: '24px', borderTop: '2px solid #1f2937' }}>
           <p className="text-xs text-gray-600 mb-2">
-            Thank you for choosing {appName} for your dental care needs.
+            Thank you for choosing {effectiveAppName} for your dental care needs.
           </p>
           <p className="text-xs text-gray-500">
             This is a computer-generated receipt. No signature required.
@@ -809,9 +835,7 @@ const Receipt: React.FC<ReceiptProps> = ({
       }}>
         {/* Clinic Header */}
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
-          <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>Professional Dental Care Services</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
+          {renderThermalClinicIdentity('Professional Dental Care Services')}
         </div>
 
         <div style={{ borderTop: '2px solid #333', margin: '4px 0' }} />
@@ -828,9 +852,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Patient Info */}
         <div style={{ marginBottom: '6px' }}>
-          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
+          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patientDisplay.name}</div>
+          {patientDisplay.email ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.email}</div> : null}
+          {patientDisplay.phone ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.phone}</div> : null}
         </div>
 
         <div style={{ borderTop: '1px dashed #333', margin: '4px 0' }} />
@@ -845,18 +869,18 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Summary */}
         <div style={{ marginBottom: '6px' }}>
-          {thermalLine('Treatment Services:', formatCurrency(totalTreatmentStandardCost, currency))}
+          {thermalLine('Treatment Services:', formatCurrency(totalTreatmentStandardCost, effectiveCurrency))}
             {totalTreatmentDiscount > 0 && thermalLine('Treatment Discount:', `-${formatCurrency(totalTreatmentDiscount, effectiveCurrency)}`, undefined, { color: '#b45309' })}
             {thermalLine('Medicines & Items:', formatCurrency(totalMedicineStandardCost, effectiveCurrency))}
             {totalMedicineDiscount > 0 && thermalLine('Item Discount:', `-${formatCurrency(totalMedicineDiscount, effectiveCurrency)}`, undefined, { color: '#15803d' })}
           <div style={{ borderTop: '1px dashed #333', margin: '4px 0' }} />
-          {thermalLine('Subtotal:', formatCurrency(grandTotal, currency), undefined, { fontWeight: 700 })}
-          {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, currency)}`, undefined, { color: '#16a34a' })}
+          {thermalLine('Subtotal:', formatCurrency(grandTotal, effectiveCurrency), undefined, { fontWeight: 700 })}
+          {totalPaid > 0 && thermalLine('Payment Received:', `-${formatCurrency(totalPaid, effectiveCurrency)}`, undefined, { color: '#16a34a' })}
           <div style={{ borderTop: '2px solid #333', margin: '4px 0' }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalBaseFontSize, fontWeight: 700, marginTop: '2px' }}>
             <span>BALANCE DUE</span>
             <span style={{ color: remainingBalance > 0 ? '#dc2626' : '#16a34a' }}>
-              {formatCurrency(remainingBalance, currency)}
+              {formatCurrency(remainingBalance, effectiveCurrency)}
             </span>
           </div>
         </div>
@@ -867,7 +891,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         {totalPaid > 0 && (
           <div style={{ marginBottom: '6px', fontSize: thermalSmallFontSize, lineHeight: '1.35' }}>
             <div style={{ fontSize: thermalLineFontSize, fontWeight: 700, marginBottom: '3px', letterSpacing: '0.3px' }}>-- PAYMENT DETAILS --</div>
-            {thermalLine('Amount Paid:', formatCurrency(totalPaid, currency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
+            {thermalLine('Amount Paid:', formatCurrency(totalPaid, effectiveCurrency), { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize, fontWeight: 700 })}
             {thermalLine('Date:', today, { fontSize: thermalSmallFontSize }, { fontSize: thermalSmallFontSize })}
             {renderThermalPaymentAllocations()}
             {thermalLine('Status:', 'Paid', undefined, { color: '#16a34a' })}
@@ -876,7 +900,7 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Footer */}
         <div style={{ textAlign: 'center', marginTop: '8px', fontSize: thermalSmallFontSize, color: '#555' }}>
-          <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {appName}!</div>
+          <div style={{ fontWeight: 700, marginBottom: '2px' }}>Thank you for choosing {effectiveAppName}!</div>
           <div>This is a computer-generated receipt.</div>
           <div>No signature required.</div>
         </div>
@@ -906,9 +930,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         }}
       >
         <div className="text-center mb-8 border-b-2 border-gray-800 pb-6">
-          <h1 className="text-2xl font-black text-gray-900 mb-2">{displayHeaderTitle}</h1>
-          <p className="text-sm text-gray-600">Official Payment Receipt</p>
-          <p className="text-xs text-gray-500 mt-2">Email: {receiptEmail} | Phone: {receiptPhone}</p>
+          {renderA4ClinicIdentity('Official Payment Receipt')}
         </div>
 
         <div className="flex justify-between items-start mb-8">
@@ -1074,9 +1096,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
-          <div style={{ fontSize: thermalHeaderFontSize, fontWeight: 700, letterSpacing: '1px' }}>{displayHeaderTitle}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>PAYMENT RECEIPT</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#777', marginTop: '2px' }}>{receiptEmail} | {receiptPhone}</div>
+          {renderThermalClinicIdentity('PAYMENT RECEIPT')}
         </div>
 
         {thermalThickDivider()}

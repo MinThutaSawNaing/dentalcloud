@@ -387,4 +387,37 @@ describe('paymentReceipt', () => {
     expect(snapshot.payment.allocations).toEqual([{ method: 'CASH', amount: 4000 }, { method: 'KPAY', amount: 6000 }]);
     expect(normalizePaymentReceiptSnapshot(snapshot)).toEqual(snapshot);
   });
+
+  it('captures branch identity as immutable optional clinic facts', () => {
+    const patient: Patient = {
+      id: 'patient-branch', location_id: 'branch-2', name: 'Branch Patient', email: '', phone: '', balance: 0, loyalty_points: 0
+    };
+    const snapshot = buildPaymentReceiptSnapshot({
+      patient,
+      amountPaid: 1000,
+      paymentMethod: 'CASH',
+      paymentDate: '2026-09-04',
+      receiptNumber: 'REC-BRANCH-1',
+      balanceBefore: 1000,
+      balanceAfter: 0,
+      paymentStatus: 'FULL',
+      clinic: {
+        ...clinic,
+        locationId: 'branch-2',
+        branchName: 'North Clinic',
+        address: '20 North Road'
+      }
+    });
+
+    expect(snapshot.clinic).toEqual({
+      appName: 'My Dentist',
+      headerTitle: 'Official Payment Receipt',
+      email: 'clinic@example.com',
+      phone: '09-123456789',
+      locationId: 'branch-2',
+      branchName: 'North Clinic',
+      address: '20 North Road'
+    });
+    expect(normalizePaymentReceiptSnapshot(snapshot)).toEqual(snapshot);
+  });
 });

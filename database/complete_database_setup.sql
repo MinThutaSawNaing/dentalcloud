@@ -50,6 +50,7 @@ DROP TABLE IF EXISTS material_lab_cost_preset_settings CASCADE;
 DROP TABLE IF EXISTS patient_material_costs CASCADE;
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS expenses CASCADE;
+DROP TABLE IF EXISTS branch_receipt_settings CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS locations CASCADE;
 DROP TABLE IF EXISTS app_settings CASCADE;
@@ -122,6 +123,21 @@ CREATE TABLE users (
   allowed_tabs JSONB NOT NULL DEFAULT '["dashboard","patients","appointments","doctors","finance","ai-assistant"]'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Per-location receipt identity. Reads and writes are exposed only through the
+-- narrowly scoped RPCs defined below.
+CREATE TABLE branch_receipt_settings (
+  location_id UUID PRIMARY KEY REFERENCES locations(id) ON DELETE CASCADE,
+  receipt_header_title TEXT,
+  receipt_email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT branch_receipt_settings_header_length
+    CHECK (receipt_header_title IS NULL OR char_length(receipt_header_title) BETWEEN 1 AND 255),
+  CONSTRAINT branch_receipt_settings_email_length
+    CHECK (receipt_email IS NULL OR char_length(receipt_email) BETWEEN 3 AND 320)
 );
 
 -- Patients
@@ -294,7 +310,7 @@ CREATE TABLE payments (
   balance_before DECIMAL(12,2) NOT NULL CHECK (balance_before >= 0),
   remaining_balance DECIMAL(12,2) NOT NULL CHECK (remaining_balance >= 0),
   payment_method VARCHAR(30) NOT NULL CHECK (
-    payment_method IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY')
+    payment_method IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY', 'AYA_BANKING', 'KBZ_BANKING', 'CB_BANKING')
   ),
   payment_status VARCHAR(10) NOT NULL CHECK (payment_status IN ('FULL', 'PARTIAL')),
   treatment_ids UUID[] NOT NULL DEFAULT '{}',
@@ -1308,7 +1324,7 @@ DECLARE
 BEGIN
   IF v_amount <= 0 THEN RAISE EXCEPTION 'Payment amount must be greater than 0'; END IF;
   IF v_service_fee_amount < 0 THEN RAISE EXCEPTION 'Service fee amount cannot be negative'; END IF;
-  IF v_method NOT IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY') THEN
+  IF v_method NOT IN ('KPAY', 'WAVEPAY', 'CASH', 'MMQR', 'DEBIT_CARD', 'CREDIT_CARD', 'AYA_PAY', 'UAB_PAY', 'AYA_BANKING', 'KBZ_BANKING', 'CB_BANKING') THEN
     RAISE EXCEPTION 'Invalid payment method';
   END IF;
 
@@ -2165,6 +2181,9 @@ REVOKE ALL ON pending_commission_recalculations FROM anon, authenticated;
 ALTER TABLE staff_auth_sessions ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON staff_auth_sessions FROM anon, authenticated;
 
+ALTER TABLE branch_receipt_settings ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON branch_receipt_settings FROM PUBLIC, anon, authenticated;
+
 ALTER TABLE material_lab_cost_preset_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE material_lab_cost_presets ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON material_lab_cost_preset_settings FROM PUBLIC, anon, authenticated;
@@ -2212,6 +2231,122 @@ REVOKE ALL ON FUNCTION authenticate_staff_user_session(TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION authenticate_staff_user_session(TEXT, TEXT) TO anon, authenticated;
 REVOKE ALL ON FUNCTION revoke_staff_auth_session(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION revoke_staff_auth_session(TEXT) TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION require_branch_receipt_admin(p_location_id UUID, p_session_token TEXT)
+RETURNS UUID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_admin_user_id UUID;
+BEGIN
+  IF p_location_id IS NULL OR NOT EXISTS (SELECT 1 FROM locations WHERE id = p_location_id) THEN
+    RAISE EXCEPTION 'Location not found.' USING ERRCODE = '22023';
+  END IF;
+  SELECT staff_user.id INTO v_admin_user_id
+  FROM staff_auth_sessions AS session
+  JOIN users AS staff_user ON staff_user.id = session.user_id
+  WHERE session.session_token::TEXT = btrim(COALESCE(p_session_token, ''))
+    AND session.revoked_at IS NULL AND session.expires_at > NOW()
+    AND staff_user.role = 'admin'
+    AND (staff_user.location_id IS NULL OR staff_user.location_id = p_location_id)
+  ORDER BY session.created_at DESC LIMIT 1;
+  IF v_admin_user_id IS NULL THEN
+    RAISE EXCEPTION 'A valid administrator session for this location is required.' USING ERRCODE = '42501';
+  END IF;
+  RETURN v_admin_user_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION get_branch_receipt_identity(p_location_id UUID)
+RETURNS TABLE (
+  location_id UUID, location_name TEXT, location_address TEXT, location_phone TEXT,
+  receipt_header_title TEXT, receipt_email TEXT
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT location.id, location.name::TEXT, NULLIF(btrim(location.address), ''),
+    NULLIF(btrim(location.phone), ''),
+    COALESCE(NULLIF(btrim(branch_settings.receipt_header_title), ''),
+      NULLIF(btrim(global_settings.receipt_header_title), ''),
+      NULLIF(btrim(global_settings.app_name), ''), location.name::TEXT, 'DentalCloud Pro'),
+    COALESCE(NULLIF(btrim(branch_settings.receipt_email), ''),
+      NULLIF(btrim(global_settings.receipt_email), ''))
+  FROM locations AS location
+  LEFT JOIN branch_receipt_settings AS branch_settings ON branch_settings.location_id = location.id
+  LEFT JOIN app_settings AS global_settings ON global_settings.id = 1
+  WHERE location.id = p_location_id;
+$$;
+
+CREATE OR REPLACE FUNCTION get_branch_receipt_identity_for_admin(
+  p_location_id UUID, p_session_token TEXT
+)
+RETURNS TABLE (
+  location_id UUID, location_name TEXT, location_address TEXT, location_phone TEXT,
+  receipt_header_title TEXT, receipt_email TEXT, custom_receipt_header_title TEXT,
+  custom_receipt_email TEXT, settings_updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  PERFORM require_branch_receipt_admin(p_location_id, p_session_token);
+  RETURN QUERY SELECT resolved.*, NULLIF(btrim(settings.receipt_header_title), ''),
+    NULLIF(btrim(settings.receipt_email), ''), settings.updated_at
+  FROM get_branch_receipt_identity(p_location_id) AS resolved
+  LEFT JOIN branch_receipt_settings AS settings ON settings.location_id = resolved.location_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION save_branch_receipt_identity(
+  p_location_id UUID, p_receipt_header_title TEXT, p_receipt_email TEXT, p_session_token TEXT,
+  p_expected_updated_at TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS TABLE (
+  location_id UUID, location_name TEXT, location_address TEXT, location_phone TEXT,
+  receipt_header_title TEXT, receipt_email TEXT, custom_receipt_header_title TEXT,
+  custom_receipt_email TEXT, settings_updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_admin_user_id UUID;
+  v_header TEXT := NULLIF(btrim(p_receipt_header_title), '');
+  v_email TEXT := NULLIF(btrim(p_receipt_email), '');
+  v_saved_at TIMESTAMPTZ;
+BEGIN
+  v_admin_user_id := require_branch_receipt_admin(p_location_id, p_session_token);
+  IF v_header IS NOT NULL AND char_length(v_header) > 255 THEN
+    RAISE EXCEPTION 'Receipt header title must be 255 characters or fewer.' USING ERRCODE = '22023';
+  END IF;
+  IF v_email IS NOT NULL AND char_length(v_email) > 320 THEN
+    RAISE EXCEPTION 'Receipt email must be 320 characters or fewer.' USING ERRCODE = '22023';
+  END IF;
+  IF v_email IS NOT NULL AND v_email !~* '^[A-Z0-9.!#$%&''*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$' THEN
+    RAISE EXCEPTION 'Receipt email is invalid.' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_expected_updated_at IS NULL THEN
+    INSERT INTO branch_receipt_settings (location_id, receipt_header_title, receipt_email, updated_by)
+    VALUES (p_location_id, v_header, v_email, v_admin_user_id)
+    ON CONFLICT (location_id) DO NOTHING
+    RETURNING updated_at INTO v_saved_at;
+  ELSE
+    UPDATE branch_receipt_settings AS settings
+    SET receipt_header_title = v_header, receipt_email = v_email,
+        updated_at = clock_timestamp(), updated_by = v_admin_user_id
+    WHERE settings.location_id = p_location_id
+      AND settings.updated_at IS NOT DISTINCT FROM p_expected_updated_at
+    RETURNING settings.updated_at INTO v_saved_at;
+  END IF;
+  IF v_saved_at IS NULL THEN
+    RAISE EXCEPTION 'Branch receipt identity was changed by another administrator. Reload and retry.'
+      USING ERRCODE = '40001';
+  END IF;
+  RETURN QUERY SELECT * FROM get_branch_receipt_identity_for_admin(p_location_id, p_session_token);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION require_branch_receipt_admin(UUID, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION get_branch_receipt_identity(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION get_branch_receipt_identity(UUID) TO anon, authenticated;
+REVOKE ALL ON FUNCTION get_branch_receipt_identity_for_admin(UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION get_branch_receipt_identity_for_admin(UUID, TEXT) TO anon, authenticated;
+REVOKE ALL ON FUNCTION save_branch_receipt_identity(UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION save_branch_receipt_identity(UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO anon, authenticated;
+NOTIFY pgrst, 'reload schema';
 
 -- ============================================================================
 -- 7.1 STORAGE BUCKET POLICIES

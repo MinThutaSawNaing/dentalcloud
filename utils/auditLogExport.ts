@@ -67,6 +67,12 @@ export const getAuditPaymentDiscount = (
     : getPositiveNumber(payment._treatmentDiscountAmount);
 };
 
+export const getPaymentDoctorEarnings = (payment: PaymentRecord): number => {
+  return Math.round((payment.doctorEarningEntries || [])
+    .filter((entry) => entry.paymentId === payment.id)
+    .reduce((sum, entry) => sum + getPositiveNumber(entry.earnings), 0) * 100) / 100;
+};
+
 const getPaymentServiceFeeAmount = (payment: PaymentRecord): number => {
   const snapshotFee = getPositiveNumber(payment.receiptSnapshot?.payment?.serviceFeeAmount);
   if (snapshotFee > 0) return snapshotFee;
@@ -358,7 +364,7 @@ export const buildAuditLogExportTableRows = (rows: AuditExportRow[], currency: C
         amount: payment.amount,
         discount: getAuditPaymentDiscount(payment) || null,
         serviceCharges: null,
-        doctorEarned: null,
+        doctorEarned: getPaymentDoctorEarnings(payment),
         paymentMethod: payment.allocations?.length ? formatPaymentAllocations(payment.allocations) : formatPaymentMethod(payment.paymentMethod)
       };
     }
