@@ -5,7 +5,7 @@ import { join } from 'node:path';
 const migration = readFileSync(
   join(__dirname, '20260905000000_add_banking_payment_methods.sql'),
   'utf8'
-);
+).replace(/\r\n/g, '\n');
 
 const functions = [
   'CREATE OR REPLACE FUNCTION process_patient_payment(',
