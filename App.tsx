@@ -2792,7 +2792,8 @@ const App: React.FC = () => {
 
   const createEmptyDoctorCommissionRow = (): DoctorTreatmentCommission => ({
     treatment_id: '',
-    commission_rate: 0
+    commission_rate: 0,
+    fixed_amount: null
   });
 
   const resetDoctorCommissionEditor = () => {
@@ -3106,11 +3107,12 @@ const App: React.FC = () => {
       return;
     }
 
-    const normalizedCommissionRows = useFlatVisitCommission ? [] : doctorCommissionRows
-      .filter((row) => row.treatment_id)
+    const normalizedCommissionRows = doctorCommissionRows
+      .filter((row) => row.treatment_id && (!useFlatVisitCommission || row.fixed_amount != null))
       .map((row) => ({
         treatment_id: row.treatment_id,
-        commission_rate: Number(row.commission_rate)
+        commission_rate: Number(row.commission_rate),
+        fixed_amount: useFlatVisitCommission ? row.fixed_amount : null
       }));
 
     const uniqueTreatmentIds = new Set(normalizedCommissionRows.map((row) => row.treatment_id));
@@ -3120,9 +3122,11 @@ const App: React.FC = () => {
       return;
     }
 
-    const invalidCommissionRate = normalizedCommissionRows.find((row) => Number.isNaN(row.commission_rate) || row.commission_rate < 0 || row.commission_rate > 100);
+    const invalidCommissionRate = normalizedCommissionRows.find((row) => useFlatVisitCommission
+      ? !Number.isFinite(row.fixed_amount) || (row.fixed_amount as number) < 0
+      : Number.isNaN(row.commission_rate) || row.commission_rate < 0 || row.commission_rate > 100);
     if (invalidCommissionRate) {
-      alert('Custom commission rates must be between 0 and 100.');
+      alert(useFlatVisitCommission ? 'Custom fixed amounts must be valid non-negative amounts.' : 'Custom commission rates must be between 0 and 100.');
       setIsSubmitting(false);
       return;
     }
@@ -3145,9 +3149,7 @@ const App: React.FC = () => {
       }
 
       try {
-        if (!useFlatVisitCommission) {
-          await api.doctorTreatmentCommissions.replaceForDoctor(savedDoctor.id, normalizedCommissionRows);
-        }
+        await api.doctorTreatmentCommissions.replaceForDoctor(savedDoctor.id, normalizedCommissionRows);
       } catch (commissionErr: any) {
         if (!editingDoctor) {
           await api.doctors.delete(savedDoctor.id);
@@ -5530,38 +5532,36 @@ const App: React.FC = () => {
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? getCurrencySymbol(currency) : '%'}</span>
                 </div>
                 <p className="mt-1 text-xs text-gray-400">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? 'Fixed amount paid once per patient visit.' : 'Percentage of collected treatment fees after material and lab costs.'}</p>
-                {!usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDoctorCommissionAdvancedOpen((prev) => {
-                        const next = !prev;
-                        if (next && doctorCommissionRows.length === 0) {
-                          setDoctorCommissionRows([createEmptyDoctorCommissionRow()]);
-                        }
-                        return next;
-                      });
-                    }}
-                    className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
-                  >
-                    {doctorCommissionAdvancedOpen ? 'Hide advanced treatment commission setup' : 'Advanced: Set custom commission per treatment'}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDoctorCommissionAdvancedOpen((prev) => {
+                      const next = !prev;
+                      if (next && doctorCommissionRows.length === 0) {
+                        setDoctorCommissionRows([createEmptyDoctorCommissionRow()]);
+                      }
+                      return next;
+                    });
+                  }}
+                  className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                >
+                  {doctorCommissionAdvancedOpen ? 'Hide advanced treatment commission setup' : 'Advanced: Set custom commission per treatment'}
+                </button>
               </div>
             </div>
-            {doctorCommissionAdvancedOpen && !usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) && (
+            {doctorCommissionAdvancedOpen && (
               <div>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Custom Treatment Commissions</label>
-                    <p className="text-xs text-gray-500">Override the default commission percentage for specific treatments. If no custom rate exists, the percentage above is used.</p>
+                    <p className="text-xs text-gray-500">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? 'Override the default fixed amount for specific treatments. When multiple treatments are paid in one visit, the highest custom amount is paid once.' : 'Override the default commission percentage for specific treatments. If no custom rate exists, the percentage above is used.'}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setDoctorCommissionRows((prev) => [...prev, createEmptyDoctorCommissionRow()])}
                     className="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-50"
                   >
-                    + Add Treatment Rate
+                    {usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? '+ Add Treatment Amount' : '+ Add Treatment Rate'}
                   </button>
                 </div>
                 <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -5571,7 +5571,7 @@ const App: React.FC = () => {
                     </div>
                   ) : doctorCommissionRows.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-sm text-gray-500">
-                      No custom treatment rates yet.
+                      No custom treatment {usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? 'amounts' : 'rates'} yet.
                     </div>
                   ) : (
                     doctorCommissionRows.map((row, index) => (
@@ -5594,17 +5594,19 @@ const App: React.FC = () => {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-600 mb-1">Commission %</label>
+                          <label className="block text-xs text-gray-600 mb-1">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? `Fixed Amount (${getCurrencySymbol(currency)})` : 'Commission %'}</label>
                           <input
                             type="number"
                             min="0"
-                            max="100"
+                            {...(usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? {} : { max: 100 })}
                             step="0.01"
                             className="w-full border-gray-200 border rounded-lg p-2 text-sm"
-                            value={row.commission_rate}
+                            value={usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization }) ? (row.fixed_amount ?? '') : row.commission_rate}
                             onChange={(e: any) => {
                               const updated = [...doctorCommissionRows];
-                              updated[index] = { ...updated[index], commission_rate: parseFloat(e.target.value) || 0 };
+                              updated[index] = usesFlatVisitCommission({ commissionType: newDoctorData.commission_type, specialization: newDoctorData.specialization })
+                                ? { ...updated[index], fixed_amount: e.target.value === '' ? null : Number(e.target.value) }
+                                : { ...updated[index], commission_rate: parseFloat(e.target.value) || 0 };
                               setDoctorCommissionRows(updated);
                             }}
                           />

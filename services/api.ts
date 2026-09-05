@@ -167,7 +167,7 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
   if (doctorIds.length > 0) {
     const customResult = await supabase
       .from('doctor_treatment_commissions')
-      .select('doctor_id, treatment_id, commission_rate')
+      .select('doctor_id, treatment_id, commission_rate, fixed_amount')
       .in('doctor_id', doctorIds);
     if (customResult.error && !isMissingRelationError(customResult.error, 'doctor_treatment_commissions')) {
       throw new Error(customResult.error.message);
@@ -176,6 +176,9 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
   }
   const customRateByDoctorAndType = new Map(
     customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, Number(row.commission_rate || 0)])
+  );
+  const customFixedAmountByDoctorAndType = new Map(
+    customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, row.fixed_amount == null ? undefined : Number(row.fixed_amount)])
   );
 
   const existingResult = await supabase
@@ -204,6 +207,9 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     commissionPerVisit: Number(row.doctors?.commission_per_visit || 0),
     customCommissionPercentage: row.doctor_id && row.treatment_type_id
       ? customRateByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
+      : undefined,
+    customCommissionFixedAmount: row.doctor_id && row.treatment_type_id
+      ? customFixedAmountByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
       : undefined
   }));
   const payments = (paymentRows || []).map((row: any) => ({
@@ -4416,6 +4422,7 @@ export const api = {
           doctor_id,
           treatment_id,
           commission_rate,
+          fixed_amount,
           created_at,
           updated_at,
           treatment_types:treatment_id (
@@ -4432,6 +4439,7 @@ export const api = {
         doctor_id: row.doctor_id,
         treatment_id: row.treatment_id,
         commission_rate: Number(row.commission_rate ?? 0),
+        fixed_amount: row.fixed_amount == null ? null : Number(row.fixed_amount),
         created_at: row.created_at,
         updated_at: row.updated_at,
         treatment_name: row.treatment_types?.name || undefined
@@ -4443,7 +4451,8 @@ export const api = {
         .map((entry) => ({
           doctor_id: doctorId,
           treatment_id: entry.treatment_id,
-          commission_rate: Number(entry.commission_rate)
+          commission_rate: Number(entry.commission_rate),
+          fixed_amount: entry.fixed_amount == null ? null : Number(entry.fixed_amount)
         }));
 
       const { error: deleteError } = await supabase

@@ -13,6 +13,7 @@ export interface CommissionTreatmentInput {
   commissionPercentage?: number | null;
   commissionPerVisit?: number | null;
   customCommissionPercentage?: number | null;
+  customCommissionFixedAmount?: number | null;
 }
 
 export interface CommissionPaymentInput {
@@ -388,24 +389,31 @@ export const calculateCommissionLedgerEntries = (
       ? sorted.find((candidate) => candidate.paymentId === existing.paymentId && candidate.treatment.id === existing.treatmentId) || sorted[0]
       : sorted[0];
     if (!selected?.treatment.doctorId) return;
+    const paidCandidate = existing ? selected : [...sorted].sort((a, b) => (
+      Number(b.treatment.customCommissionFixedAmount != null) - Number(a.treatment.customCommissionFixedAmount != null)
+      || toNonNegativeFiniteNumber(b.treatment.customCommissionFixedAmount) - toNonNegativeFiniteNumber(a.treatment.customCommissionFixedAmount)
+      || a.paymentDate.localeCompare(b.paymentDate)
+      || a.paymentId.localeCompare(b.paymentId)
+      || a.treatment.id.localeCompare(b.treatment.id)
+    ))[0];
     const rawFlatAmount = existing
       ? Number(existing.commissionRate || 0)
-      : Math.max(0, Number(selected.treatment.commissionPerVisit || 0));
+      : paidCandidate.treatment.customCommissionFixedAmount ?? selected.treatment.commissionPerVisit;
     const flatAmount = toNonNegativeFiniteNumber(rawFlatAmount);
 
     flatRows.push({
-      paymentId: selected.paymentId,
-      treatmentId: selected.treatment.id,
-      paymentDate: selected.paymentDate,
-      amount: selected.amount,
-      doctorId: selected.treatment.doctorId,
-      patientId: selected.treatment.patientId,
-      treatmentDate: selected.treatment.date,
+      paymentId: paidCandidate.paymentId,
+      treatmentId: paidCandidate.treatment.id,
+      paymentDate: paidCandidate.paymentDate,
+      amount: paidCandidate.amount,
+      doctorId: paidCandidate.treatment.doctorId,
+      patientId: paidCandidate.treatment.patientId,
+      treatmentDate: paidCandidate.treatment.date,
       visitKey,
       calculationMode: 'flat_visit',
       commissionRate: flatAmount,
       materialDeduction: 0,
-      commissionBase: selected.amount,
+      commissionBase: paidCandidate.amount,
       earnings: roundMoney(flatAmount)
     });
   });

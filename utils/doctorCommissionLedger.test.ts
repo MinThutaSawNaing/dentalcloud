@@ -20,6 +20,28 @@ const treatment = (overrides: Partial<CommissionTreatmentInput> = {}): Commissio
 });
 
 describe('doctor commission ledger', () => {
+  it('pays the highest fixed treatment override once for a multi-treatment visit', () => {
+    const treatments = [
+      treatment({ id: 'filling', commissionType: 'flat_visit', commissionPerVisit: 20_000, customCommissionFixedAmount: 30_000 }),
+      treatment({ id: 'root-canal', commissionType: 'flat_visit', commissionPerVisit: 20_000, customCommissionFixedAmount: 80_000 })
+    ];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 1_000_000, treatmentIds: ['filling', 'root-canal']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)).toEqual([
+      expect.objectContaining({ treatmentId: 'root-canal', calculationMode: 'flat_visit', commissionRate: 80_000, earnings: 80_000 })
+    ]);
+  });
+
+  it('uses the default fixed visit amount when no fixed treatment override exists', () => {
+    const treatments = [treatment({ commissionType: 'flat_visit', commissionPerVisit: 25_000 })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1', patientId: 'patient-1', date: '2026-07-01', commissionableAmount: 100_000, treatmentIds: ['treatment-1']
+    }]);
+
+    expect(calculateCommissionLedgerEntries(treatments, allocations)[0]).toMatchObject({ commissionRate: 25_000, earnings: 25_000 });
+  });
   it('calculates the clinic-rule commission from a mixed partial payment', () => {
     const treatments = [treatment({ cost: 6_130_000, materialCost: 20_000, commissionPercentage: 40 })];
     const allocations = allocateCommissionablePayments(treatments, [{
