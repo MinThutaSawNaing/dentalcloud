@@ -18,6 +18,9 @@ type ReceiptClinicContext = {
   appName: string;
   receiptHeaderTitle?: string;
   receiptInfo?: { email: string; phone: string };
+  locationId?: string;
+  branchName?: string;
+  address?: string;
   currency: Currency;
 };
 
@@ -164,7 +167,10 @@ export const normalizePaymentReceiptSnapshot = (value: unknown): PaymentReceiptS
       appName: normalizeString(raw.clinic?.appName) || 'DentalCloud Pro',
       headerTitle: normalizeString(raw.clinic?.headerTitle) || 'DentalCloud Pro',
       email: normalizeString(raw.clinic?.email),
-      phone: normalizeString(raw.clinic?.phone)
+      phone: normalizeString(raw.clinic?.phone),
+      ...(normalizeString(raw.clinic?.locationId) ? { locationId: normalizeString(raw.clinic.locationId) } : {}),
+      ...(normalizeString(raw.clinic?.branchName) ? { branchName: normalizeString(raw.clinic.branchName) } : {}),
+      ...(normalizeString(raw.clinic?.address) ? { address: normalizeString(raw.clinic.address) } : {})
     },
     patient: {
       id: normalizeString(raw.patient?.id),
@@ -235,7 +241,10 @@ export const buildPaymentReceiptSnapshot = (params: {
       appName: normalizedAppName,
       headerTitle: resolveReceiptHeaderTitle(params.clinic.receiptHeaderTitle, normalizedAppName),
       email: clinicEmail,
-      phone: clinicPhone
+      phone: clinicPhone,
+      ...(normalizeString(params.clinic.locationId) ? { locationId: normalizeString(params.clinic.locationId) } : {}),
+      ...(normalizeString(params.clinic.branchName) ? { branchName: normalizeString(params.clinic.branchName) } : {}),
+      ...(normalizeString(params.clinic.address) ? { address: normalizeString(params.clinic.address) } : {})
     },
     patient: {
       id: params.patient.id,
@@ -296,7 +305,10 @@ export const buildLegacyPaymentReceiptSnapshot = (
       appName: normalizeString(clinic.appName) || 'DentalCloud Pro',
       headerTitle: resolveReceiptHeaderTitle(clinic.receiptHeaderTitle, clinic.appName || 'DentalCloud Pro'),
       email: normalizeString(clinic.receiptInfo?.email),
-      phone: normalizeString(clinic.receiptInfo?.phone)
+      phone: normalizeString(clinic.receiptInfo?.phone),
+      ...(normalizeString(clinic.locationId) ? { locationId: normalizeString(clinic.locationId) } : {}),
+      ...(normalizeString(clinic.branchName) ? { branchName: normalizeString(clinic.branchName) } : {}),
+      ...(normalizeString(clinic.address) ? { address: normalizeString(clinic.address) } : {})
     },
     patient: {
       id: payment.patientId,

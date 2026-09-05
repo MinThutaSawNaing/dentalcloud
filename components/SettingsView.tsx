@@ -1984,7 +1984,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      <div className="border border-gray-200 rounded-xl p-6">
+      {isAdmin && <div className="border border-gray-200 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
           <Info className="w-5 h-5 text-indigo-600" />
           <h3 className="text-lg font-semibold text-gray-800">Branch Receipt Identity</h3>
@@ -2059,7 +2059,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         ) : (
           <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Branch receipt identity is unavailable. Patient and operational data are unaffected; retry by selecting the branch again.</div>
         )}
-      </div>
+      </div>}
 
       <div className="border border-gray-200 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">

@@ -9,6 +9,20 @@ export interface Location {
   created_at?: string;
 }
 
+export interface BranchReceiptIdentity {
+  locationId: string;
+  branchName: string;
+  address: string;
+  phone: string;
+  email: string;
+  headerTitle: string;
+  customHeaderTitle: string;
+  customEmail: string;
+  usesGlobalTitle: boolean;
+  usesGlobalEmail: boolean;
+  settingsUpdatedAt?: string | null;
+}
+
 export interface Patient {
   id: string;
   patient_unique_id?: string;
@@ -252,6 +266,9 @@ export interface PaymentReceiptSnapshot {
     headerTitle: string;
     email: string;
     phone: string;
+    locationId?: string;
+    branchName?: string;
+    address?: string;
   };
   patient: {
     id: string;

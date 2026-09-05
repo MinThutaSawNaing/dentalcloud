@@ -470,9 +470,9 @@ const Receipt: React.FC<ReceiptProps> = ({
           <div className="flex justify-between items-start mb-8">
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-2">BILL TO:</p>
-              <p className="text-base font-bold text-gray-900">{patient.name}</p>
-              <p className="text-sm text-gray-600">{patient.email}</p>
-              <p className="text-sm text-gray-600">{patient.phone}</p>
+              <p className="text-base font-bold text-gray-900">{patientDisplay.name}</p>
+              {patientDisplay.email ? <p className="text-sm text-gray-600">{patientDisplay.email}</p> : null}
+              {patientDisplay.phone ? <p className="text-sm text-gray-600">{patientDisplay.phone}</p> : null}
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600 mb-1">Receipt #: <span className="font-semibold">{receiptNumber}</span></p>
@@ -630,9 +630,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
           {/* Patient Info */}
           <div style={{ marginBottom: '6px' }}>
-            <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
-            <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
+            <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patientDisplay.name}</div>
+            {patientDisplay.email ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.email}</div> : null}
+            {patientDisplay.phone ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.phone}</div> : null}
           </div>
 
           {thermalDivider()}
@@ -714,9 +714,9 @@ const Receipt: React.FC<ReceiptProps> = ({
         <div className="flex justify-between items-start mb-8">
           <div>
             <p className="text-sm font-semibold text-gray-700 mb-2">BILL TO:</p>
-            <p className="text-base font-bold text-gray-900">{patient.name}</p>
-            <p className="text-sm text-gray-600">{patient.email}</p>
-            <p className="text-sm text-gray-600">{patient.phone}</p>
+            <p className="text-base font-bold text-gray-900">{patientDisplay.name}</p>
+            {patientDisplay.email ? <p className="text-sm text-gray-600">{patientDisplay.email}</p> : null}
+            {patientDisplay.phone ? <p className="text-sm text-gray-600">{patientDisplay.phone}</p> : null}
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-600 mb-1">Receipt #: <span className="font-semibold">{receiptNumber}</span></p>
@@ -852,9 +852,9 @@ const Receipt: React.FC<ReceiptProps> = ({
 
         {/* Patient Info */}
         <div style={{ marginBottom: '6px' }}>
-          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patient.name}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.email}</div>
-          <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patient.phone}</div>
+          <div style={{ fontSize: thermalBaseFontSize, fontWeight: 700 }}>{patientDisplay.name}</div>
+          {patientDisplay.email ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.email}</div> : null}
+          {patientDisplay.phone ? <div style={{ fontSize: thermalSmallFontSize, color: '#555' }}>{patientDisplay.phone}</div> : null}
         </div>
 
         <div style={{ borderTop: '1px dashed #333', margin: '4px 0' }} />
