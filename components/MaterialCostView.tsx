@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeftRight, Beaker, Loader2, Package, Plus, RotateCw, Search, Stethoscope } from 'lucide-react';
+import { ArrowLeftRight, Beaker, Package, Plus, RotateCw, Search, Stethoscope } from 'lucide-react';
 import type { ClinicalRecord, PaymentRecord, TreatmentCostSummary } from '../types';
 import { api } from '../services/api';
 import { formatCurrency, type Currency } from '../utils/currency';
@@ -15,6 +15,7 @@ import {
 } from '../utils/materialCostCalculations';
 import Pagination from './Pagination';
 import MaterialCostModal from './MaterialCostModal';
+import ProgressBar from './ProgressBar';
 
 interface MaterialCostViewProps {
   records: ClinicalRecord[];
@@ -26,6 +27,8 @@ interface MaterialCostViewProps {
   // Optional fast path after a cost save: refresh only the affected patient's
   // rows instead of reloading every clinic record, payment, and dashboard metric.
   onCostsSaved?: (patientId?: string | null) => Promise<void> | void;
+  // Number (0-100) while the startup fetch is still bringing in clinic records.
+  syncProgress?: number | null;
 }
 
 type TreatmentAuditRow = Extract<AuditExportRow, { kind: 'treatment' }>;
@@ -36,7 +39,7 @@ const getTreatmentRecordIds = (record: ClinicalRecord & { _groupedRecords?: Clin
   return groupedRecords.map((item) => item.id).filter(Boolean);
 };
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null }) => {
   const summaryRequestVersion = React.useRef(0);
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -460,10 +463,9 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex flex-col items-center justify-center gap-3 p-12 text-slate-500">
-          <Loader2 className="animate-spin text-[var(--hover-600)]" />
-          <p className="text-sm font-medium">Loading treatment cost rows...</p>
+      {(loading || typeof syncProgress === 'number') ? (
+        <div className="px-4 py-10 sm:px-6">
+          <ProgressBar progress={typeof syncProgress === 'number' ? syncProgress : null} label={loading ? 'Refreshing treatment cost rows…' : 'Loading treatment cost rows…'} />
         </div>
       ) : (
         <>

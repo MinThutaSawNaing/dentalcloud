@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit2, Trash2, Package, AlertTriangle, Loader2, TrendingUp, BarChart3, RotateCw } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, AlertTriangle, TrendingUp, BarChart3, RotateCw } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { Medicine } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
@@ -8,6 +8,7 @@ import { exportInventoryToExcel } from '../utils/excelExport';
 import Pagination from './Pagination';
 import { ConfirmDialog } from './Shared';
 import ExportMenu from './ExportMenu';
+import ProgressBar from './ProgressBar';
 
 interface TopSellingItem {
   medicine_id: string;
@@ -20,6 +21,8 @@ interface InventoryViewProps {
   medicines: Medicine[];
   topSelling: TopSellingItem[];
   loading: boolean;
+  // Number (0-100) while the startup fetch is still bringing in the inventory.
+  syncProgress?: number | null;
   currency: Currency;
   onAdd: () => void;
   onEdit: (medicine: Medicine) => void;
@@ -31,6 +34,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({
   medicines,
   topSelling,
   loading,
+  syncProgress = null,
   currency,
   onAdd,
   onEdit,
@@ -275,9 +279,9 @@ const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       )}
 
-      {loading ? (
-        <div className="p-12 flex justify-center">
-          <Loader2 className="animate-spin text-[var(--hover-600)]" />
+      {(loading || typeof syncProgress === 'number') ? (
+        <div className="p-8 sm:p-12">
+          <ProgressBar progress={typeof syncProgress === 'number' ? syncProgress : null} label={loading ? 'Refreshing inventory…' : 'Loading inventory…'} />
         </div>
       ) : medicines.length === 0 ? (
         <div className="p-12 text-center text-gray-400 italic">

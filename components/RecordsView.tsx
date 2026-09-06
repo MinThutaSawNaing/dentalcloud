@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Beaker, Loader2, Download, CalendarDays, Stethoscope, ShieldCheck, Search, RotateCw, WalletCards, Printer, Pencil, Package } from 'lucide-react';
+import { Beaker, Download, CalendarDays, Stethoscope, ShieldCheck, Search, RotateCw, WalletCards, Printer, Pencil, Package } from 'lucide-react';
 import { Appointment, AppointmentRescheduleLog, ClinicalRecord, PaymentRecord, TreatmentCostSummary } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
 import { exportClinicalRecordsToPDF } from '../utils/pdfExport';
@@ -7,6 +7,7 @@ import { exportClinicalRecordsToExcel } from '../utils/excelExport';
 import { formatTeethWithPosition } from '../utils/toothNumbering';
 import Pagination from './Pagination';
 import ExportMenu from './ExportMenu';
+import ProgressBar from './ProgressBar';
 import { toLocalISODate } from '../utils/auditLogFilters';
 import { buildAuditLogRows, filterAuditLogRowsForExport, getAuditPaymentDiscount, getPaymentDoctorEarnings, type AuditExportRow, type AuditFilter } from '../utils/auditLogExport';
 import { buildRecordsViewFilterOptions } from '../utils/recordsViewFilterOptions';
@@ -410,9 +411,8 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
       </div>
 
       {loading ? (
-        <div className="p-12 flex flex-col items-center justify-center gap-3 text-slate-500">
-          <Loader2 className="animate-spin theme-accent-text" />
-          <p className="text-sm font-medium">{isDoctor ? 'Loading patient records...' : 'Loading audit records...'}</p>
+        <div className="px-4 py-10 sm:px-6">
+          <ProgressBar progress={null} label={isDoctor ? 'Loading patient records...' : 'Loading audit records...'} />
         </div>
       ) : (
         <>

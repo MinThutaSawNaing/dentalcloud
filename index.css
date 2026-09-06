@@ -939,3 +939,18 @@ input[type='week']::-webkit-date-and-time-value {
     object-fit: contain !important;
   }
 }
+
+/* Indeterminate stripe used by the ProgressBar when a load duration is unknown. */
+.progress-indeterminate-stripe {
+  animation: progress-stripe-slide 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+
+@keyframes progress-stripe-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}

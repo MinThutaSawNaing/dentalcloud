@@ -4,18 +4,22 @@ import { TreatmentType } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
 import { getColorForCategory } from '../utils/colorUtils';
 import Pagination from './Pagination';
+import ProgressBar from './ProgressBar';
 
 interface TreatmentConfigViewProps {
   treatmentTypes: TreatmentType[];
   currency: Currency;
   loading?: boolean;
+  // Number (0-100) while the app's startup fetch is still bringing in the
+  // treatment catalogue; null means the view can render normally.
+  syncProgress?: number | null;
   onAdd: () => void;
   onEdit: (t: TreatmentType) => void;
   onDelete: (id: string) => void;
   onRefresh?: () => void | Promise<void>;
 }
 
-const TreatmentConfigView: React.FC<TreatmentConfigViewProps> = ({ treatmentTypes, currency, loading = false, onAdd, onEdit, onDelete, onRefresh }) => {
+const TreatmentConfigView: React.FC<TreatmentConfigViewProps> = ({ treatmentTypes, currency, loading = false, syncProgress = null, onAdd, onEdit, onDelete, onRefresh }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,6 +95,12 @@ const TreatmentConfigView: React.FC<TreatmentConfigViewProps> = ({ treatmentType
         </div>
       </div>
     </div>
+      {(loading || typeof syncProgress === 'number') ? (
+        <div className="px-6 py-12">
+          <ProgressBar progress={typeof syncProgress === 'number' ? syncProgress : null} label={loading ? 'Refreshing service menu…' : 'Loading service menu…'} />
+        </div>
+      ) : (
+        <>
     {/* Desktop table */}
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full">
@@ -145,10 +155,12 @@ const TreatmentConfigView: React.FC<TreatmentConfigViewProps> = ({ treatmentType
         </div>);
       }))}
     </div>
-    {treatmentTypes.length > 0 && (
-      <Pagination totalItems={treatmentTypes.length} itemsPerPage={itemsPerPage} currentPage={currentPage}
-        onPageChange={setCurrentPage} showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} />
-    )}
+        {treatmentTypes.length > 0 && (
+          <Pagination totalItems={treatmentTypes.length} itemsPerPage={itemsPerPage} currentPage={currentPage}
+            onPageChange={setCurrentPage} showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} />
+        )}
+        </>
+      )}
   </div>
   );
 };
