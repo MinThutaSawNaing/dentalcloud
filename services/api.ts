@@ -140,13 +140,13 @@ const getPaymentReceiptTreatmentIds = (payment: any): string[] => {
 const recalculatePatientDoctorCommissions = async (patientId: string): Promise<void> => {
   let { data: treatmentRows, error: treatmentError } = await supabase
     .from('treatments')
-    .select('id, location_id, patient_id, doctor_id, treatment_type_id, date, cost, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
+    .select('id, location_id, patient_id, doctor_id, treatment_type_id, date, cost, commission_type_snapshot, commission_rate_snapshot, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
     .eq('patient_id', patientId);
 
   if (treatmentError && isMissingColumnError(treatmentError, 'treatment_type_id')) {
     const fallback = await supabase
       .from('treatments')
-      .select('id, location_id, patient_id, doctor_id, date, cost, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
+      .select('id, location_id, patient_id, doctor_id, date, cost, commission_type_snapshot, commission_rate_snapshot, doctors(specialization, commission_type, commission_percentage, commission_per_visit)')
       .eq('patient_id', patientId);
     treatmentRows = (fallback.data || []).map((row: any) => ({ ...row, treatment_type_id: null }));
     treatmentError = fallback.error;
@@ -192,7 +192,15 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     throw new Error(existingResult.error.message);
   }
 
-  const treatments = treatmentRows.map((row: any) => ({
+  const treatments = treatmentRows.map((row: any) => {
+    const snapshottedMode = row.commission_type_snapshot === 'flat_visit' || row.commission_type_snapshot === 'percentage'
+      ? row.commission_type_snapshot
+      : null;
+    const snapshottedRate = row.commission_rate_snapshot == null
+      ? null
+      : Number(row.commission_rate_snapshot);
+
+    return ({
     id: row.id,
     patientId: row.patient_id,
     doctorId: row.doctor_id,
@@ -201,19 +209,28 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     cost: Math.max(0, Number(row.cost || 0)),
     materialCost: materialByTreatment[row.id]?.totalAmount || 0,
     specialization: row.doctors?.specialization,
-    commissionType: resolveDoctorCommissionType({
+    commissionType: snapshottedMode || resolveDoctorCommissionType({
       commissionType: row.doctors?.commission_type,
       specialization: row.doctors?.specialization
     }),
-    commissionPercentage: Number(row.doctors?.commission_percentage || 0),
-    commissionPerVisit: Number(row.doctors?.commission_per_visit || 0),
-    customCommissionPercentage: row.doctor_id && row.treatment_type_id
-      ? customRateByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
-      : undefined,
-    customCommissionFixedAmount: row.doctor_id && row.treatment_type_id
-      ? customFixedAmountByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
-      : undefined
-  }));
+    commissionPercentage: snapshottedMode === 'percentage' && snapshottedRate != null
+      ? snapshottedRate
+      : Number(row.doctors?.commission_percentage || 0),
+    commissionPerVisit: snapshottedMode === 'flat_visit' && snapshottedRate != null
+      ? snapshottedRate
+      : Number(row.doctors?.commission_per_visit || 0),
+    customCommissionPercentage: snapshottedMode === 'percentage' && snapshottedRate != null
+      ? snapshottedRate
+      : row.doctor_id && row.treatment_type_id
+        ? customRateByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
+        : undefined,
+    customCommissionFixedAmount: snapshottedMode === 'flat_visit' && snapshottedRate != null
+      ? snapshottedRate
+      : row.doctor_id && row.treatment_type_id
+        ? customFixedAmountByDoctorAndType.get(`${row.doctor_id}|${row.treatment_type_id}`)
+        : undefined
+    });
+  });
   const payments = (paymentRows || []).map((row: any) => ({
     id: row.id,
     patientId: row.patient_id,
