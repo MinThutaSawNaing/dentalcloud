@@ -418,11 +418,13 @@ const Receipt: React.FC<ReceiptProps> = ({
                 {new Date(treatment.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 {treatment.teeth && treatment.teeth.length > 0 ? ` | ${formatTeethWithPosition(treatment.teeth)}` : ''}
               </div>
-              {treatment.doctorName ? (
-                <div style={{ fontSize: thermalSmallFontSize, color: '#555', overflowWrap: 'anywhere' }}>
-                  {formatDoctorName(treatment.doctorName)}
-                </div>
-              ) : null}
+              {/* Match the A4 Doctor column exactly: always print the line, and
+                  let formatDoctorName show its unknown-doctor placeholder rather
+                  than silently dropping the line and making thermal look like it
+                  never supported the doctor at all. */}
+              <div style={{ fontSize: thermalSmallFontSize, color: '#555', overflowWrap: 'anywhere' }}>
+                {formatDoctorName(treatment.doctorName)}
+              </div>
               {pricing.discountAmount > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalSmallFontSize, color: pricing.note === 'FOC' ? '#b45309' : '#15803d' }}>
                   <span>Std {formatCurrency(pricing.standardCost, effectiveCurrency)}</span>
