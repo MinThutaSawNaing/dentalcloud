@@ -83,6 +83,7 @@ import { mergePatientsById } from './utils/patientMerge';
 import type { SelectedMedicineCharge } from './components/MedicineSelectionModal';
 import { formatPaymentAllocations, formatPaymentMethod, getPaymentAllocationTotal, getPaymentHeaderMethod, isSelectablePaymentMethod, normalizePaymentAllocations, normalizePaymentMethod, PAYMENT_METHOD_OPTIONS, validatePaymentAllocations } from './utils/paymentMethods';
 import { buildLegacyPaymentReceiptSnapshot, buildPaymentReceiptSnapshot, getUncapturedMedicineSalesForReceipt, mergeTreatmentRecordsById, normalizePaymentReceiptSnapshot, removePatientTreatmentRecords, removeTreatmentRecordById } from './utils/paymentReceipt';
+import { buildTreatmentDoctorLookup } from './utils/receiptDoctors';
 import { hasRecordedServiceFeeForVisit } from './utils/serviceFee';
 import { getPaymentDedupeKey } from './utils/paymentTreatmentAllocation';
 import { validateAuthoritativePaymentTreatments } from './utils/paymentTreatmentValidation';
@@ -547,6 +548,10 @@ const App: React.FC = () => {
   const [settingsReceiptIdentityLoading, setSettingsReceiptIdentityLoading] = useState(false);
   const receiptIdentityRequestRef = useRef(0);
   const [selectedTreatmentsForReceipt, setSelectedTreatmentsForReceipt] = useState<ClinicalRecord[]>([]);
+  // Clinical rows loaded on demand so reprints of pre-doctor snapshots can still
+  // name the treating doctor when no record collection in memory covers them.
+  const [receiptDoctorSourceTreatments, setReceiptDoctorSourceTreatments] = useState<ClinicalRecord[]>([]);
+  const receiptDoctorSourceRequestRef = useRef(0);
   const [selectedMedicineSalesForReceipt, setSelectedMedicineSalesForReceipt] = useState<MedicineSale[]>([]);
   const [currency, setCurrency] = useState<'USD' | 'MMK'>('USD');
   const [loyaltyEnabled, setLoyaltyEnabled] = useState<boolean>(() => {
@@ -1048,6 +1053,51 @@ const App: React.FC = () => {
     });
     return result;
   }, [appointments]);
+  // Receipts only. Payment snapshots saved before receipts captured the treating
+  // doctor carry no name, so reprints resolve it from the clinical row and, when
+  // that is absent, from the visit the treatment came from. Gated on the receipt
+  // being open so the scan stays off the hot path.
+  const receiptDoctorLookupPatientId = showReceipt ? (receiptViewerPatient?.id || '') : '';
+  const receiptTreatmentDoctorLookup = useMemo((): Record<string, string> => {
+    if (!showReceipt || !receiptDoctorLookupPatientId) return {};
+
+    const patientTreatments = [
+      ...treatmentHistory,
+      ...globalRecords,
+      ...dashboardRecords,
+      ...assistantRecords,
+      ...auditRecords,
+      ...latestTreatmentBatch,
+      ...selectedTreatmentsForReceipt,
+      ...receiptDoctorSourceTreatments
+    ].filter((treatment) => treatment?.patient_id === receiptDoctorLookupPatientId);
+
+    const patientAppointments = [
+      ...appointments,
+      ...appointmentPageAppointments,
+      ...dashboardAppointments,
+      ...assistantAppointments,
+      ...auditAppointments
+    ].filter((appointment) => appointment?.patient_id === receiptDoctorLookupPatientId);
+
+    return buildTreatmentDoctorLookup(patientTreatments, patientAppointments);
+  }, [
+    showReceipt,
+    receiptDoctorLookupPatientId,
+    treatmentHistory,
+    globalRecords,
+    dashboardRecords,
+    assistantRecords,
+    auditRecords,
+    latestTreatmentBatch,
+    selectedTreatmentsForReceipt,
+    receiptDoctorSourceTreatments,
+    appointments,
+    appointmentPageAppointments,
+    dashboardAppointments,
+    assistantAppointments,
+    auditAppointments
+  ]);
 
   const applySessionState = (session: ReturnType<typeof auth.getSession>) => {
     if (!session) {
@@ -2673,12 +2723,14 @@ const App: React.FC = () => {
   };
 
   const closeReceiptViewer = () => {
+    receiptDoctorSourceRequestRef.current += 1;
     setShowReceipt(false);
     setReceiptViewerPatient(null);
     setActivePaymentReceiptSnapshot(null);
     setReceiptViewerIdentity(null);
     setSelectedTreatmentsForReceipt([]);
     setSelectedMedicineSalesForReceipt([]);
+    setReceiptDoctorSourceTreatments([]);
   };
 
   const buildReceiptClinicContext = (identity: BranchReceiptIdentity) => ({
@@ -2726,6 +2778,26 @@ const App: React.FC = () => {
     setLastPaymentAmount(payment.amount);
     setLastPaymentRecord(payment);
     setShowReceipt(true);
+
+    // Snapshots written before receipts stored the treating doctor carry no name.
+    // Load this patient's clinical rows in the background so the reprint can still
+    // attribute each line; the receipt opens immediately either way.
+    const missingSnapshotDoctor = (snapshot.treatments || []).some((treatment) => !treatment.doctorName);
+    const doctorRequestId = receiptDoctorSourceRequestRef.current + 1;
+    receiptDoctorSourceRequestRef.current = doctorRequestId;
+    setReceiptDoctorSourceTreatments([]);
+    if (missingSnapshotDoctor) {
+      void api.treatments
+        .getHistory(payment.patientId, { includeCommissionEntries: false })
+        .then((records) => {
+          if (receiptDoctorSourceRequestRef.current === doctorRequestId) {
+            setReceiptDoctorSourceTreatments(records || []);
+          }
+        })
+        .catch((error) => {
+          console.warn('Receipt treating doctor could not be resolved:', error);
+        });
+    }
   };
 
   const openPaymentModalWithCategory = (category: 'NEW' | 'RETURNING' | null, explicitServiceFeeAmount?: number) => {
@@ -6564,6 +6636,7 @@ const App: React.FC = () => {
             paymentAllocations={lastPaymentRecord?.allocations}
             receiptNumber={lastPaymentRecord?.receiptNumber}
             paymentReceiptSnapshot={activePaymentReceiptSnapshot}
+            treatmentDoctorLookup={receiptTreatmentDoctorLookup}
             treatmentTypes={treatmentTypes}
             currency={currency}
             appName={appName}

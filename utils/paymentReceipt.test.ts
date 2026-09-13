@@ -420,4 +420,93 @@ describe('paymentReceipt', () => {
     });
     expect(normalizePaymentReceiptSnapshot(snapshot)).toEqual(snapshot);
   });
+
+  it('captures the treating doctor on every receipt treatment line', () => {
+    const patient: Patient = {
+      id: 'patient-doctor', location_id: 'branch-1', name: 'Doctor Patient', email: '', phone: '', balance: 0, loyalty_points: 0
+    };
+    const snapshot = buildPaymentReceiptSnapshot({
+      patient,
+      amountPaid: 30000,
+      paymentMethod: 'CASH',
+      paymentDate: '2026-09-12',
+      receiptNumber: 'REC-DOCTOR-1',
+      balanceBefore: 30000,
+      balanceAfter: 0,
+      paymentStatus: 'FULL',
+      treatments: [
+        {
+          id: 'tr-doc-1',
+          location_id: 'branch-1',
+          patient_id: 'patient-doctor',
+          doctor_id: 'doctor-1',
+          doctor_name: 'Dr. Thiri',
+          teeth: [11],
+          description: 'Crown',
+          cost: 20000,
+          date: '2026-09-12'
+        },
+        {
+          id: 'tr-doc-2',
+          location_id: 'branch-1',
+          patient_id: 'patient-doctor',
+          teeth: [21],
+          description: 'Scaling',
+          cost: 10000,
+          date: '2026-09-12'
+        }
+      ],
+      clinic
+    });
+
+    expect(snapshot.treatments?.[0]).toMatchObject({ id: 'tr-doc-1', doctorId: 'doctor-1', doctorName: 'Dr. Thiri' });
+    // A treatment recorded without an assigned doctor must not gain empty doctor keys,
+    // so stored snapshots stay byte-identical to the pre-doctor format.
+    expect(snapshot.treatments?.[1]).not.toHaveProperty('doctorId');
+    expect(snapshot.treatments?.[1]).not.toHaveProperty('doctorName');
+    expect(normalizePaymentReceiptSnapshot(snapshot)).toEqual(snapshot);
+  });
+
+  it('normalizes stored doctor names written in either casing', () => {
+    const normalized = normalizePaymentReceiptSnapshot({
+      version: 1,
+      receiptType: 'PAYMENT',
+      receiptNumber: 'REC-DOCTOR-2',
+      receiptDate: '2026-09-12',
+      currency: 'MMK',
+      clinic: { appName: 'My Dentist', headerTitle: 'Receipt', email: '', phone: '' },
+      patient: { id: 'patient-doctor', name: 'Doctor Patient' },
+      payment: { amountPaid: 1000, method: 'CASH', status: 'FULL', balanceBefore: 1000, balanceAfter: 0 },
+      treatments: [
+        { id: 'tr-a', date: '2026-09-12', description: 'Filling', teeth: [], finalCost: 1000, standardCost: 1000, discountAmount: 0, doctor_name: ' Ko Ko ' },
+        { id: 'tr-b', date: '2026-09-12', description: 'Pull', teeth: [], finalCost: 0, standardCost: 0, discountAmount: 0, doctorName: '', doctorId: '  ' }
+      ]
+    });
+
+    expect(normalized?.treatments?.[0]).toMatchObject({ id: 'tr-a', doctorName: 'Ko Ko' });
+    expect(normalized?.treatments?.[0]).not.toHaveProperty('doctorId');
+    expect(normalized?.treatments?.[1]).not.toHaveProperty('doctorName');
+    expect(normalized?.treatments?.[1]).not.toHaveProperty('doctorId');
+  });
+
+  it('still normalizes snapshots written before receipts captured a doctor', () => {
+    const legacyStoredSnapshot = {
+      version: 1,
+      receiptType: 'PAYMENT',
+      receiptNumber: 'REC-LEGACY-DOCTOR',
+      receiptDate: '2026-05-01',
+      currency: 'MMK',
+      clinic: { appName: 'My Dentist', headerTitle: 'Receipt', email: '', phone: '' },
+      patient: { id: 'patient-legacy', name: 'Legacy Patient' },
+      payment: { amountPaid: 5000, method: 'CASH', status: 'PARTIAL', balanceBefore: 10000, balanceAfter: 5000 },
+      treatments: [
+        { id: 'tr-legacy', date: '2026-05-01', description: 'Cleaning', teeth: [31], finalCost: 5000, standardCost: 5000, discountAmount: 0 }
+      ]
+    };
+
+    const normalized = normalizePaymentReceiptSnapshot(legacyStoredSnapshot);
+    expect(normalized).not.toBeNull();
+    expect(normalized?.treatments?.[0]).toMatchObject({ id: 'tr-legacy', description: 'Cleaning' });
+    expect(normalized?.treatments?.[0]).not.toHaveProperty('doctorName');
+  });
 });

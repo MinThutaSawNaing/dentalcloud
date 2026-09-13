@@ -245,6 +245,8 @@ PAYMENT RECEIPT BEHAVIOR:
 - Payments receive a stable receipt number.
 - Saved payment receipts use an immutable snapshot for accurate reprints.
 - The snapshot can preserve the patient/clinic details, payment type and balances, collector, and captured treatment and medicine lines.
+- Each captured treatment line also stores the treating doctor, so staff and patients can see who performed each treatment. Receipts print the doctor per treatment line (A4 "Doctor" column, small line under each item on 55mm/80mm thermal).
+- Treatment lines saved before the doctor was captured fall back to the clinical row's doctor, then to the appointment the treatment came from.
 - New receipts use the issuing branch's receipt title, name, address, phone, and optional email. Currency and A4/55mm/80mm thermal format remain shared across devices.
 - Old saved receipts keep their original snapshot even when settings or patient data later change.
 - The receipt picker can include treatments and standalone medicine sales.

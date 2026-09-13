@@ -10,6 +10,8 @@ import { formatTeethWithPosition } from '../utils/toothNumbering';
 import { getReceiptPageSize, getReceiptPrintPosition, getThermalPageHeightMm, getThermalReceiptTypography } from '../utils/receiptPrint';
 import { resolveReceiptTreatmentPricing } from '../utils/receiptPricing';
 import { resolveMedicineSalePricing } from '../utils/medicineSalePricing';
+import { formatDoctorName } from '../utils/doctorName';
+import { resolveReceiptTreatmentDoctorName } from '../utils/receiptDoctors';
 
 interface ReceiptProps {
   patient: Patient;
@@ -20,6 +22,11 @@ interface ReceiptProps {
   paymentAllocations?: PaymentAllocation[];
   receiptNumber?: string;
   paymentReceiptSnapshot?: PaymentReceiptSnapshot | null;
+  /**
+   * Treatment id -> doctor name, supplied by reprint views that only hold a
+   * payment snapshot whose stored lines predate doctor capture.
+   */
+  treatmentDoctorLookup?: Record<string, string>;
   treatmentTypes?: TreatmentType[];
   currency: Currency;
   appName?: string;
@@ -39,6 +46,7 @@ const Receipt: React.FC<ReceiptProps> = ({
   paymentAllocations,
   receiptNumber: persistedReceiptNumber,
   paymentReceiptSnapshot,
+  treatmentDoctorLookup = {},
   treatmentTypes = [],
   currency,
   appName = 'DentalCloud Pro',
@@ -94,18 +102,37 @@ const Receipt: React.FC<ReceiptProps> = ({
         patientUniqueId: patient.patient_unique_id || ''
       };
   const today = displayDate;
+  // Live clinical rows are the second authority: they carry the doctor joined
+  // from treatments.doctor_id, which a pre-existing snapshot may be missing.
+  const liveDoctorNameByTreatmentId: Record<string, string | undefined> = {};
+  (treatments || []).forEach((treatment) => {
+    if (treatment?.id && treatment.doctor_name) {
+      liveDoctorNameByTreatmentId[String(treatment.id)] = treatment.doctor_name;
+    }
+  });
   const receiptTreatments = paymentSnapshot
     ? (paymentSnapshot.treatments || []).map((treatment) => ({
         id: treatment.id,
         date: treatment.date,
         description: treatment.description,
+        doctorName: resolveReceiptTreatmentDoctorName({
+          snapshotDoctorName: treatment.doctorName,
+          liveDoctorName: liveDoctorNameByTreatmentId[String(treatment.id)],
+          lookupDoctorName: treatmentDoctorLookup[String(treatment.id)]
+        }),
         teeth: treatment.teeth,
         cost: treatment.finalCost,
         standardCost: treatment.standardCost,
         discountAmount: treatment.discountAmount,
         pricingNote: treatment.pricingNote || null
       }))
-    : treatments;
+    : (treatments || []).map((treatment) => ({
+        ...treatment,
+        doctorName: resolveReceiptTreatmentDoctorName({
+          liveDoctorName: treatment.doctor_name,
+          lookupDoctorName: treatmentDoctorLookup[String(treatment.id)]
+        })
+      }));
   const receiptMedicines = paymentSnapshot
     ? (paymentSnapshot.medicines || []).map((medicine) => ({
         id: medicine.id,
@@ -243,6 +270,7 @@ const Receipt: React.FC<ReceiptProps> = ({
           <tr className="bg-gray-100 border-b-2 border-gray-800">
             <th className="text-left py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Date</th>
             <th className="text-left py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Description</th>
+            <th className="text-left py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Doctor</th>
             <th className="text-left py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Teeth</th>
             <th className="text-right py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Standard</th>
             <th className="text-right py-3 px-4 text-sm font-bold text-gray-900" style={isPrint ? { borderBottom: '2px solid #1f2937' } : undefined}>Adjustment</th>
@@ -252,7 +280,7 @@ const Receipt: React.FC<ReceiptProps> = ({
         <tbody>
           {receiptTreatments.length === 0 ? (
             <tr>
-              <td colSpan={6} className="py-6 text-center text-gray-500 italic" style={isPrint ? { padding: '24px 16px' } : undefined}>
+              <td colSpan={7} className="py-6 text-center text-gray-500 italic" style={isPrint ? { padding: '24px 16px' } : undefined}>
                 No treatment services recorded
               </td>
             </tr>
@@ -269,6 +297,9 @@ const Receipt: React.FC<ReceiptProps> = ({
                     })}
                   </td>
                   <td className="py-3 px-4 text-sm text-gray-900 font-medium" style={isPrint ? { padding: '12px 16px' } : undefined}>{treatment.description}</td>
+                  <td className="py-3 px-4 text-sm text-gray-700" style={isPrint ? { padding: '12px 16px' } : undefined}>
+                    {formatDoctorName(treatment.doctorName)}
+                  </td>
                   <td className="py-3 px-4 text-sm text-gray-600" style={isPrint ? { padding: '12px 16px' } : undefined}>
                     {treatment.teeth && treatment.teeth.length > 0
                       ? formatTeethWithPosition(treatment.teeth)
@@ -387,6 +418,11 @@ const Receipt: React.FC<ReceiptProps> = ({
                 {new Date(treatment.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 {treatment.teeth && treatment.teeth.length > 0 ? ` | ${formatTeethWithPosition(treatment.teeth)}` : ''}
               </div>
+              {treatment.doctorName ? (
+                <div style={{ fontSize: thermalSmallFontSize, color: '#555', overflowWrap: 'anywhere' }}>
+                  {formatDoctorName(treatment.doctorName)}
+                </div>
+              ) : null}
               {pricing.discountAmount > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: thermalSmallFontSize, color: pricing.note === 'FOC' ? '#b45309' : '#15803d' }}>
                   <span>Std {formatCurrency(pricing.standardCost, effectiveCurrency)}</span>

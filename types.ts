@@ -87,6 +87,7 @@ export interface ClinicalRecord {
   serviceCharges?: number; // Audit-only calculated patient service charge total for this treatment visit
   doctor_id?: string;
   doctor_name?: string; // Joined field for clinical ownership
+  appointment_id?: string | null; // Source visit, used for doctor attribution
   doctor_specialization?: string | null;
   doctor_commission_type?: 'percentage' | 'flat_visit' | null;
   doctor_commission_percentage?: number | null;
@@ -246,6 +247,10 @@ export interface PaymentReceiptTreatmentLine {
   id: string;
   date: string;
   description: string;
+  // Optional additive fields: snapshots saved before this change carry neither,
+  // so they must never become required in snapshot validation.
+  doctorId?: string | null;
+  doctorName?: string | null;
   teeth: number[];
   finalCost: number;
   standardCost: number;

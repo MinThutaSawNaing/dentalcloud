@@ -76,10 +76,15 @@ const normalizeTreatmentLine = (value: any): PaymentReceiptTreatmentLine | null 
   const date = normalizeString(value.date);
   if (!id || !description || !date) return null;
 
+  const doctorId = normalizeString(value.doctorId ?? value.doctor_id);
+  const doctorName = normalizeString(value.doctorName ?? value.doctor_name);
+
   return {
     id,
     date,
     description,
+    ...(doctorId ? { doctorId } : {}),
+    ...(doctorName ? { doctorName } : {}),
     teeth: Array.isArray(value.teeth) ? value.teeth.map((item: any) => normalizeNumber(item)).filter((item) => Number.isFinite(item)) : [],
     finalCost: normalizeNumber(value.finalCost ?? value.final_cost ?? value.cost),
     standardCost: normalizeNumber(value.standardCost ?? value.standard_cost ?? value.cost),
@@ -114,16 +119,23 @@ const normalizeMedicineLine = (value: any): PaymentReceiptMedicineLine | null =>
 };
 
 const buildTreatmentLines = (treatments: ClinicalRecord[] = []): PaymentReceiptTreatmentLine[] =>
-  treatments.map((treatment) => ({
-    id: treatment.id,
-    date: normalizeString(treatment.date),
-    description: normalizeString(treatment.description) || 'Treatment',
-    teeth: Array.isArray(treatment.teeth) ? treatment.teeth : [],
-    finalCost: normalizeNumber(treatment.cost),
-    standardCost: normalizeNumber(treatment.standardCost ?? treatment.cost),
-    discountAmount: normalizeNumber(treatment.discountAmount),
-    pricingNote: treatment.pricingNote || null
-  }));
+  treatments.map((treatment) => {
+    const doctorId = normalizeString(treatment.doctor_id);
+    const doctorName = normalizeString(treatment.doctor_name);
+
+    return {
+      id: treatment.id,
+      date: normalizeString(treatment.date),
+      description: normalizeString(treatment.description) || 'Treatment',
+      ...(doctorId ? { doctorId } : {}),
+      ...(doctorName ? { doctorName } : {}),
+      teeth: Array.isArray(treatment.teeth) ? treatment.teeth : [],
+      finalCost: normalizeNumber(treatment.cost),
+      standardCost: normalizeNumber(treatment.standardCost ?? treatment.cost),
+      discountAmount: normalizeNumber(treatment.discountAmount),
+      pricingNote: treatment.pricingNote || null
+    };
+  });
 
 const buildMedicineLines = (medicines: MedicineSale[] = []): PaymentReceiptMedicineLine[] =>
   medicines.map((medicine) => {

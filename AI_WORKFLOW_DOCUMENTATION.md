@@ -266,6 +266,7 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 - `createdByUserName`: Staff member or assistant identity that recorded the payment
 - `receiptSnapshot`: Immutable JSON snapshot used for accurate historical reprints
 - Snapshot line items can include treatments and standalone medicine sales captured at payment time
+- Each snapshot treatment line optionally carries `doctorId`/`doctorName`, printed as the treating doctor per line; the fields are additive, so snapshots written before they existed still validate
 
 ### Doctor Commission
 - Each doctor has an explicit commission method, independent of their custom specialization: `percentage` or `flat_visit`.
