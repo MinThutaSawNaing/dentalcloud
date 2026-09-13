@@ -3934,16 +3934,21 @@ const App: React.FC = () => {
         selectedPaymentTreatments,
         paymentDate
       );
-      const authoritativeTreatmentHistory = selectedPaymentTreatments.length > 0
-        ? await api.treatments.getHistory(selectedPatient.id)
-        : [];
+      // These reads are independent prerequisites for the payment snapshot.
+      // Starting them together removes one network round trip from the critical
+      // path without changing the atomic payment RPC or its validation.
+      const [authoritativeTreatmentHistory, paymentReceiptIdentity] = await Promise.all([
+        selectedPaymentTreatments.length > 0
+          ? api.treatments.getHistory(selectedPatient.id, { includeCommissionEntries: false })
+          : Promise.resolve([] as ClinicalRecord[]),
+        getReceiptIdentityForLocation(selectedPatient.location_id || currentLocationId)
+      ]);
       const authoritativePaymentTreatments = validateAuthoritativePaymentTreatments(
         selectedPaymentTreatments,
         authoritativeTreatmentHistory,
         selectedPatient.id,
         selectedPatient.location_id || currentLocationId
       );
-      const paymentReceiptIdentity = await getReceiptIdentityForLocation(selectedPatient.location_id || currentLocationId);
       const provisionalReceiptSnapshot = buildPaymentReceiptSnapshot({
         patient: selectedPatient,
         amountPaid: paymentAmountTendered,
@@ -4019,7 +4024,15 @@ const App: React.FC = () => {
       setPatientPaymentRecords((prev) => [paymentRecord, ...prev]);
       setAssistantPaymentRecords((prev) => [paymentRecord, ...prev]);
 
-      setSelectedPatient({ ...selectedPatient, balance: res.new_balance });
+      const applyPaymentBalance = (patient: Patient): Patient => (
+        patient.id === selectedPatient.id
+          ? { ...patient, balance: res.new_balance }
+          : patient
+      );
+      setSelectedPatient(applyPaymentBalance(selectedPatient));
+      setPatients((previous) => previous.map(applyPaymentBalance));
+      setDashboardPatients((previous) => previous.map(applyPaymentBalance));
+      setAssistantPatients((previous) => previous.map(applyPaymentBalance));
       setLatestTreatmentBatch((records) => removePatientTreatmentRecords(records, selectedPatient.id));
       setLastPaymentAmount(paymentAmountTendered);
       setLastPaymentRecord(paymentRecord);
@@ -4033,7 +4046,10 @@ const App: React.FC = () => {
       setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
       // Ask whether to generate a receipt after posting payment.
       setShowReceiptPrompt(true);
-      fetchInitialData(); 
+      // Keep the existing non-blocking authoritative refresh so commission-
+      // enriched reports converge with server state. It is intentionally not
+      // awaited and therefore is outside the payment button's critical path.
+      void fetchInitialData();
     } catch (err: any) {
       paymentSubmitInFlightRef.current = false;
       alert(err.message);
@@ -6373,6 +6389,10 @@ const App: React.FC = () => {
           title="Collect Payment"
           maxWidthClassName="max-w-4xl"
           onClose={() => {
+            // Keep the submission key stable until the in-flight payment returns.
+            // The RPC can commit even if the modal is dismissed locally; allowing
+            // a reopen here would create a new key and permit a duplicate payment.
+            if (paymentSubmitInFlightRef.current || isSubmitting) return;
             setShowPaymentModal(false);
             paymentSubmitInFlightRef.current = false;
             paymentSubmissionKeyRef.current = null;

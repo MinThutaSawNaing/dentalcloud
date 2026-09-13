@@ -173,30 +173,37 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
 
   const treatmentIds = treatmentRows.map((row: any) => row.id).filter(Boolean);
   const doctorIds = Array.from(new Set(treatmentRows.map((row: any) => row.doctor_id).filter(Boolean)));
-  const [{ data: paymentRows, error: paymentError }, materialByTreatment] = await Promise.all([
+  // These are independent, read-only inputs to the commission calculation.
+  // Fetch them together so payment completion does not pay one network round
+  // trip for each dataset before any ledger work can begin.
+  const [paymentResult, materialByTreatment, customResult, existingResult] = await Promise.all([
     supabase
       .from('payments')
       .select('id, patient_id, payment_date, created_at, amount, cleared_amount, treatment_ids, receipt_snapshot')
       .eq('patient_id', patientId),
-    api.materialCosts.getTotalsByTreatmentIds(treatmentIds, { idBatchSize: 50 })
+    api.materialCosts.getTotalsByTreatmentIds(treatmentIds, { idBatchSize: 50 }),
+    doctorIds.length > 0
+      ? supabase
+        .from('doctor_treatment_commissions')
+        .select('doctor_id, treatment_id, commission_rate, fixed_amount')
+        .in('doctor_id', doctorIds)
+      : Promise.resolve({ data: [] as any[], error: null }),
+    supabase
+      .from('doctor_commission_entries')
+      .select('id, payment_id, treatment_id, doctor_id, patient_id, location_id, payment_date, treatment_date, visit_key, calculation_mode, allocated_payment, material_deduction, commission_base, commission_rate, earnings')
+      .eq('patient_id', patientId)
   ]);
+  const { data: paymentRows, error: paymentError } = paymentResult;
   if (paymentError && !isMissingRelationError(paymentError, 'payments')) throw new Error(paymentError.message);
   const paymentCostsByPayment = await api.materialCosts.getTotalsByPaymentIds(
     (paymentRows || []).map((row: any) => row.id).filter(Boolean),
     { idBatchSize: 50 }
   );
 
-  let customRows: any[] = [];
-  if (doctorIds.length > 0) {
-    const customResult = await supabase
-      .from('doctor_treatment_commissions')
-      .select('doctor_id, treatment_id, commission_rate, fixed_amount')
-      .in('doctor_id', doctorIds);
-    if (customResult.error && !isMissingRelationError(customResult.error, 'doctor_treatment_commissions')) {
-      throw new Error(customResult.error.message);
-    }
-    customRows = customResult.data || [];
+  if (customResult.error && !isMissingRelationError(customResult.error, 'doctor_treatment_commissions')) {
+    throw new Error(customResult.error.message);
   }
+  const customRows = customResult.data || [];
   const customRateByDoctorAndType = new Map(
     customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, Number(row.commission_rate || 0)])
   );
@@ -204,10 +211,6 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, row.fixed_amount == null ? undefined : Number(row.fixed_amount)])
   );
 
-  const existingResult = await supabase
-    .from('doctor_commission_entries')
-    .select('id, payment_id, treatment_id, doctor_id, patient_id, location_id, payment_date, treatment_date, visit_key, calculation_mode, allocated_payment, material_deduction, commission_base, commission_rate, earnings')
-    .eq('patient_id', patientId);
   const ledgerInstalled = !existingResult.error;
   if (existingResult.error && !isMissingRelationError(existingResult.error, 'doctor_commission_entries')) {
     throw new Error(existingResult.error.message);
@@ -348,6 +351,11 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     if (error) throw new Error(error.message);
   }));
 
+};
+
+const recalculatePaymentDoctorCommissions = async (patientId: string): Promise<void> => {
+  if (!patientId || typeof (supabase as any).from !== 'function') return;
+  await recalculatePatientDoctorCommissions(patientId);
 };
 
 const processPendingCommissionRecalculation = async (
@@ -4934,7 +4942,7 @@ export const api = {
             authToken: input.staffAuthToken as string
           });
         } else {
-          await recalculateDoctorEarningsForTreatments(await resolvePaymentCommissionTreatmentIds(payment));
+          await recalculatePaymentDoctorCommissions(payment.patientId);
         }
         if (usePaymentMlsFlow) {
           const entries = await getDoctorEarningEntriesByPaymentIds([payment.id]);
@@ -5003,7 +5011,11 @@ export const api = {
           authToken: input.staffAuthToken as string
         });
       } else {
-        await recalculateDoctorEarningsForTreatments(await resolvePaymentCommissionTreatmentIds(payment));
+        // The payment input already supplies the authoritative patient. The old
+        // path first queried treatment rows solely to rediscover this same ID,
+        // then recalculated the complete patient ledger. Go directly to the same
+        // patient-wide recalculation and avoid that redundant round trip.
+        await recalculatePaymentDoctorCommissions(payment.patientId);
       }
       if (usePaymentMlsFlow) {
         const entries = await getDoctorEarningEntriesByPaymentIds([payment.id]);
