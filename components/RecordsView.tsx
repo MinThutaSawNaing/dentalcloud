@@ -16,6 +16,7 @@ import { formatDoctorName as formatDisplayDoctorName } from '../utils/doctorName
 import EditPaymentModal from './EditPaymentModal';
 import { api } from '../services/api';
 import { calculateMaterialAdjustedDoctorEarnings } from '../utils/materialCostCalculations';
+import { dataCache } from '../utils/dataCache';
 
 interface RecordsViewProps {
   records: ClinicalRecord[];
@@ -33,9 +34,13 @@ interface RecordsViewProps {
   onPaymentCorrected?: (payment: PaymentRecord) => void | Promise<void>;
   loadError?: string | null;
   onQueryChange?: (query: { dateFrom: string; dateTo: string; auditFilter: AuditFilter }) => void;
+  // Branch + user + doctor scope for the material cost summary cache, plus a
+  // revision that is bumped after MLS writes so stale totals are not reused.
+  cacheScope: string;
+  cacheRevision?: number;
 }
 
-const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], rescheduleLogs = [], payments = [], loading, onRefresh, onDeleteAll, currency, isDoctor = false, initialFilter = 'all', onOpenPaymentReceipt, canEditPayments = false, onPaymentCorrected, loadError = null, onQueryChange }) => {
+const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], rescheduleLogs = [], payments = [], loading, onRefresh, onDeleteAll, currency, isDoctor = false, initialFilter = 'all', onOpenPaymentReceipt, canEditPayments = false, onPaymentCorrected, loadError = null, onQueryChange, cacheScope, cacheRevision = 0 }) => {
   const desktopTableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
@@ -216,7 +221,17 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
     }
 
     let isMounted = true;
-    void api.materialCosts.getTotalsByTreatmentIds(treatmentIds)
+    const uniqueIds = Array.from(new Set(treatmentIds)).sort();
+    const summaryCacheKey = `mls-treatments:${cacheScope}:${uniqueIds.join(',')}`;
+    // Rows without recorded MLS costs are cached too, so paging back to a page
+    // that has no cost data does not repeat the same lookups.
+    void dataCache.getOrLoad(summaryCacheKey, async () => {
+      const loaded = await api.materialCosts.getTotalsByTreatmentIds(uniqueIds);
+      return Object.fromEntries(uniqueIds.map((treatmentId) => [treatmentId, loaded[treatmentId] || {
+        auditLogId: '', materialTotal: 0, materialItemCount: 0, labTotal: 0, labItemCount: 0,
+        specialDoctorTotal: 0, specialDoctorItemCount: 0, totalAmount: 0, itemCount: 0
+      }])) as Record<string, TreatmentCostSummary>;
+    }, 120_000)
       .then((summaries) => {
         if (!isMounted) return;
         setMaterialSummaries((current) => {
@@ -234,7 +249,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
     return () => {
       isMounted = false;
     };
-  }, [paginatedRows, loading]);
+  }, [paginatedRows, loading, cacheScope, cacheRevision]);
 
   const filteredSummary = useMemo(() => {
     return filteredRows.reduce(
