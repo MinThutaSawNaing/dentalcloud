@@ -1119,13 +1119,19 @@ const applyAutoOnpPatientTypeIfEnabled = async (locationId?: string): Promise<vo
 
   if (eligibleIds.length === 0) return;
 
-  const { error: updateError } = await supabase
-    .from('patients')
-    .update({ patient_type: AUTO_ONP_PATIENT_TYPE_NAME })
-    .in('id', eligibleIds);
+  // PostgREST encodes `.in()` filters in the request URL, even for PATCH calls.
+  // Large patient groups can exceed the Nginx/Kong request-line limit before the
+  // proxy adds CORS headers, which browsers misleadingly report as a CORS error.
+  // Process batches sequentially so each update stays within the custom-domain limit.
+  for (const patientIdBatch of chunkUniqueIds(eligibleIds)) {
+    const { error: updateError } = await supabase
+      .from('patients')
+      .update({ patient_type: AUTO_ONP_PATIENT_TYPE_NAME })
+      .in('id', patientIdBatch);
 
-  if (updateError) {
-    console.warn('Failed to auto-convert patients to ONP:', updateError.message);
+    if (updateError) {
+      console.warn(`Failed to auto-convert ${patientIdBatch.length} patients to ONP:`, updateError.message);
+    }
   }
 };
 
