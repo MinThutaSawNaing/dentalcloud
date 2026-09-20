@@ -140,6 +140,7 @@ export interface PatientMaterialCost {
   id: string;
   auditLogId: string;
   paymentId?: string | null;
+  doctorId?: string | null;
   materialName: string;
   costType: TreatmentCostType;
   costAmount: number;
@@ -156,6 +157,13 @@ export interface PatientMaterialCostInput {
   costType: TreatmentCostType;
   costAmount: number;
   quantity: number;
+  doctorId?: string | null;
+}
+
+export interface DoctorSpecialFee {
+  id: string;
+  paymentDate: string;
+  totalAmount: number;
 }
 
 export interface MaterialLabCostPreset {

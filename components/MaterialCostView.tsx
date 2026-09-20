@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowLeftRight, Beaker, Package, Plus, RotateCw, Search, Stethoscope } from 'lucide-react';
-import type { ClinicalRecord, PaymentRecord, TreatmentCostType } from '../types';
+import type { ClinicalRecord, Doctor, PaymentRecord, TreatmentCostType } from '../types';
 import { formatCurrency, type Currency } from '../utils/currency';
 import { toLocalISODate } from '../utils/auditLogFilters';
 import { formatDoctorName } from '../utils/doctorName';
@@ -13,6 +13,7 @@ import ProgressBar from './ProgressBar';
 
 interface MaterialCostViewProps {
   records: ClinicalRecord[];
+  doctors: Doctor[];
   paymentRecords: PaymentRecord[];
   loading: boolean;
   currency: Currency;
@@ -24,7 +25,7 @@ interface MaterialCostViewProps {
 
 type MaterialCostFilter = 'all' | 'tomorrow' | 'today' | 'custom';
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null }) => {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
@@ -166,7 +167,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, paymentRec
       </div></article>)}</div>
     </>}
     {!loading && filteredRows.length > 0 && <Pagination totalItems={filteredRows.length} itemsPerPage={itemsPerPage} currentPage={currentPage} onPageChange={setCurrentPage} showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} />}
-    <PaymentMlsCostModal payment={editingRow?.payment || null} treatments={editingRow?.treatments || []} currency={currency} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
+    <PaymentMlsCostModal payment={editingRow?.payment || null} treatments={editingRow?.treatments || []} doctors={doctors} currency={currency} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
   </div>;
 };
 

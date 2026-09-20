@@ -128,3 +128,19 @@ describe('doctor dashboard date-time range', () => {
     expect(summary.commission).toBe(0);
   });
 });
+
+describe('doctor dashboard special doctor fees', () => {
+  it('totals only fee rows inside the selected payment-date range and leaves commission separate', () => {
+    const summary = buildDoctorDashboardRangeSummary([], [treatment({
+      doctorEarningEntries: [commission({ paymentDate: '2026-03-15', earnings: 500 })]
+    })], {
+      start: '2026-03-01T00:00', end: '2026-03-31T23:59'
+    }, [
+      { id: 'fee-in', paymentDate: '2026-03-15', totalAmount: 40_000 },
+      { id: 'fee-out', paymentDate: '2026-04-01', totalAmount: 50_000 }
+    ]);
+
+    expect(summary.specialDoctorFees).toBe(40_000);
+    expect(summary.commission).toBe(500);
+  });
+});

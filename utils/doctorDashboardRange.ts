@@ -1,4 +1,4 @@
-import type { Appointment, ClinicalRecord, DoctorEarningEntry } from '../types';
+import type { Appointment, ClinicalRecord, DoctorEarningEntry, DoctorSpecialFee } from '../types';
 
 export interface DoctorDashboardRange {
   start: string;
@@ -132,21 +132,25 @@ export interface DoctorDashboardRangeSummary {
   treatedPatientCount: number;
   proceeds: number;
   commission: number;
+  specialDoctorFees: number;
   treatmentDistribution: Array<{ name: string; count: number }>;
 }
 
 export const buildDoctorDashboardRangeSummary = (
   appointments: Appointment[],
   treatmentRecords: ClinicalRecord[],
-  range: DoctorDashboardRange
+  range: DoctorDashboardRange,
+  specialDoctorFees: DoctorSpecialFee[] = []
 ): DoctorDashboardRangeSummary => {
-  if (!validateDoctorDashboardRange(range)) {
+  const validRange = validateDoctorDashboardRange(range);
+  if (!validRange) {
     return {
       treatments: [],
       completedAppointments: [],
       treatedPatientCount: 0,
       proceeds: 0,
       commission: 0,
+      specialDoctorFees: 0,
       treatmentDistribution: []
     };
   }
@@ -173,6 +177,11 @@ export const buildDoctorDashboardRangeSummary = (
       .flatMap((record) => record.doctorEarningEntries || [])
       .filter((entry) => isCommissionEntryInDoctorDashboardRange(entry, range))
       .reduce((sum, entry) => sum + finiteAmount(entry.earnings), 0),
+    specialDoctorFees: specialDoctorFees
+      .filter((fee) => /^\d{4}-\d{2}-\d{2}$/.test(fee.paymentDate)
+        && fee.paymentDate >= validRange.startDateKey
+        && fee.paymentDate <= validRange.endDateKey)
+      .reduce((sum, fee) => sum + finiteAmount(fee.totalAmount), 0),
     treatmentDistribution: Array.from(treatmentCounts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 6)

@@ -38,6 +38,7 @@ import {
   PaymentAllocation,
   PatientFile,
   Doctor,
+  DoctorSpecialFee,
   DoctorInput,
   DoctorTreatmentCommission,
   DoctorSchedule,
@@ -447,6 +448,7 @@ const App: React.FC = () => {
   const [auditRefreshKey, setAuditRefreshKey] = useState(0);
   const auditRequestRef = useRef(0);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [doctorSpecialFees, setDoctorSpecialFees] = useState<DoctorSpecialFee[]>([]);
   const [treatmentHistory, setTreatmentHistory] = useState<ClinicalRecord[]>([]); 
   const [treatmentHistoryLoading, setTreatmentHistoryLoading] = useState(false);
   const [globalRecords, setGlobalRecords] = useState<ClinicalRecord[]>([]); 
@@ -513,6 +515,19 @@ const App: React.FC = () => {
   // the refresh key instead of threading a force flag through the child view.
   const appliedAuditRefreshKeyRef = React.useRef(auditRefreshKey);
   const [materialCostCacheRevision, setMaterialCostCacheRevision] = useState(0);
+
+  useEffect(() => {
+    const session = auth.getSession();
+    if (session?.role !== 'doctor' || !session.doctor_id) {
+      setDoctorSpecialFees([]);
+      return;
+    }
+    let cancelled = false;
+    void api.materialCosts.getSpecialDoctorFeesByDoctorId(session.doctor_id)
+      .then((fees) => { if (!cancelled) setDoctorSpecialFees(fees); })
+      .catch((loadError) => { if (!cancelled) { console.warn('Unable to load special doctor fees for dashboard.', loadError); setDoctorSpecialFees([]); } });
+    return () => { cancelled = true; };
+  }, [isDoctor, materialCostCacheRevision]);
 
   const getClinicCacheScope = (locationId = currentLocationId): string => {
     const session = auth.getSession();
@@ -4673,6 +4688,7 @@ const App: React.FC = () => {
                   patients={patients}
                   locations={locations}
                   activeLocationIds={currentDoctorLocationIds}
+                  specialDoctorFees={doctorSpecialFees}
                   onSelectPatient={handlePatientSelect}
                   onOpenAppointmentsForDate={handleOpenDoctorAppointmentsForDate}
                 />
@@ -4922,7 +4938,7 @@ const App: React.FC = () => {
             />}
             {currentView === 'doctors' && canAccessView('doctors') && <DoctorsView doctors={doctors} loading={loading} currency={currency} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingDoctor(null); setNewDoctorData({ name: '', email: '', phone: '', specialization: 'General', commission_type: 'percentage', password: '', commission_percentage: 0, commission_per_visit: 0, schedules: [], location_id: currentLocationId || '', location_ids: currentLocationId ? [currentLocationId] : [] }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onEdit={(doc) => {setEditingDoctor(doc); setNewDoctorData({ ...doc, location_ids: doc.location_ids || [doc.location_id].filter(Boolean), specialization: doc.specialization || 'General', password: '' }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onDelete={handleDeleteDoctor} />}
             {currentView === 'treatments' && canAccessView('treatments') && <TreatmentConfigView treatmentTypes={treatmentTypes} currency={currency} loading={loading} syncProgress={(!treatmentTypesReady && initialSyncActive) ? initialSyncProgress : null} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingTreatmentType(null); setNewTreatmentTypeData({ name: '', cost: 0, category: '' }); setShowTreatmentTypeModal(true)}} onEdit={(t) => {setEditingTreatmentType(t); setNewTreatmentTypeData(t); setShowTreatmentTypeModal(true)}} onDelete={(id) => { const treatment = treatmentTypes.find(t => t.id === id); if (treatment) { setServiceToDelete({ id: treatment.id, name: treatment.name }); setDeleteServiceConfirmOpen(true); } }} />}
-            {currentView === 'material-cost' && canAccessView('material-cost') && <MaterialCostView records={globalRecords} paymentRecords={paymentRecords} loading={loading} syncProgress={(!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)} onRefresh={async () => { invalidateMaterialCostCaches(); await fetchGlobalRecords(true); }} onCostsSaved={async (patientId) => { invalidateMaterialCostCaches(); await refreshGlobalRecordsForPatient(patientId); void fetchExpenses(true); void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => { console.warn('Dashboard refresh after MLS cost save needs a manual refresh.'); }); }} />}
+            {currentView === 'material-cost' && canAccessView('material-cost') && <MaterialCostView records={globalRecords} doctors={doctors} paymentRecords={paymentRecords} loading={loading} syncProgress={(!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)} onRefresh={async () => { invalidateMaterialCostCaches(); await fetchGlobalRecords(true); }} onCostsSaved={async (patientId) => { invalidateMaterialCostCaches(); await refreshGlobalRecordsForPatient(patientId); void fetchExpenses(true); void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => { console.warn('Dashboard refresh after MLS cost save needs a manual refresh.'); }); }} />}
             {currentView === 'records' && canAccessView('records') && <RecordsView records={auditRecords} appointments={auditAppointments} rescheduleLogs={auditRescheduleLogs} payments={auditPayments} loading={auditLoading} loadError={auditLoadError} onQueryChange={loadAuditLog} onRefresh={() => setAuditRefreshKey((key) => key + 1)} onDeleteAll={isDoctor ? () => alert('Doctor accounts cannot delete patient records.') : handleDeleteAllRecords} currency={currency} isDoctor={isDoctor} initialFilter={recordsInitialFilter} onOpenPaymentReceipt={handleOpenStoredPaymentReceipt} canEditPayments={isAdmin && !isDoctor} onPaymentCorrected={handlePaymentCorrected} cacheScope={getClinicCacheScope()} cacheRevision={materialCostCacheRevision} />}
             {currentView === 'inventory' && canAccessView('inventory') && <InventoryView medicines={medicines} topSelling={topSellingMedicines} loading={loading} syncProgress={(!medicinesReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} onRefresh={() => fetchMedicines(true)} onAdd={() => {setEditingMedicine(null); setNewMedicineData({ name: '', description: '', unit: 'pack', item_type: 'Medicine', price: 0, stock: 0, min_stock: 0, quantity_step: 1, category: '' }); setShowMedicineModal(true)}} onEdit={(med) => {setEditingMedicine(med); setNewMedicineData(med); setShowMedicineModal(true)}} onDelete={handleDeleteMedicine} />}
             {currentView === 'expenses' && canAccessView('expenses') && (

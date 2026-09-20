@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Users, Activity, CalendarCheck2, TrendingUp, DollarSign, Clock3 } from 'lucide-react';
+import { Users, Activity, CalendarCheck2, TrendingUp, DollarSign, Clock3, Stethoscope } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
-import { Appointment, ClinicalRecord, Location, Patient } from '../types';
+import { Appointment, ClinicalRecord, DoctorSpecialFee, Location, Patient } from '../types';
 import {
   buildDoctorDashboardRangeSummary,
   createDoctorDashboardRange,
@@ -16,6 +16,7 @@ interface DoctorHomeViewProps {
   patients: Patient[];
   locations: Location[];
   activeLocationIds?: string[];
+  specialDoctorFees?: DoctorSpecialFee[];
   onSelectPatient: (patient: Patient) => void;
   onOpenAppointmentsForDate: (filter: 'today' | 'tomorrow') => void;
 }
@@ -26,6 +27,7 @@ const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({
   patients,
   locations,
   activeLocationIds = [],
+  specialDoctorFees = [],
   onSelectPatient,
   onOpenAppointmentsForDate
 }) => {
@@ -45,8 +47,8 @@ const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({
   }, []);
   const validReportRange = useMemo(() => validateDoctorDashboardRange(reportRange), [reportRange]);
   const rangeSummary = useMemo(
-    () => buildDoctorDashboardRangeSummary(appointments, treatmentRecords, reportRange),
-    [appointments, treatmentRecords, reportRange]
+    () => buildDoctorDashboardRangeSummary(appointments, treatmentRecords, reportRange, specialDoctorFees),
+    [appointments, treatmentRecords, reportRange, specialDoctorFees]
   );
   const rangeCaption = useMemo(() => {
     if (!validReportRange) return 'Enter a valid start and end date-time.';
@@ -302,6 +304,14 @@ const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({
             <p className="text-[11px] font-semibold uppercase tracking-wide">Range Commission</p>
           </div>
           <p className="text-2xl font-bold text-gray-900">{rangeSummary.commission.toLocaleString()} MMK</p>
+        </div>
+        <div className="rounded-xl border border-amber-100 bg-white p-3">
+          <div className="mb-1 flex items-center gap-2 text-amber-600">
+            <Stethoscope className="h-4 w-4" />
+            <p className="text-[11px] font-semibold uppercase tracking-wide">Special Doctor Fees</p>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{rangeSummary.specialDoctorFees.toLocaleString()} MMK</p>
+          <p className="mt-1 text-xs text-gray-500">Separate from commission</p>
         </div>
 
       </div>

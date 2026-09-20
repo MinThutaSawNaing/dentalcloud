@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -665,6 +665,7 @@ const mapPatientMaterialCostRow = (row: any): PatientMaterialCost => {
     id: row.id,
     auditLogId: row.audit_log_id,
     paymentId: row.payment_id || null,
+    doctorId: row.doctor_id || null,
     materialName: row.material_name,
     costType: row.cost_type === 'lab' ? 'lab' : row.cost_type === 'special_doctor' ? 'special_doctor' : 'material',
     costAmount,
@@ -3242,6 +3243,21 @@ export const api = {
   },
 
   materialCosts: {
+    getSpecialDoctorFeesByDoctorId: async (doctorId: string): Promise<DoctorSpecialFee[]> => {
+      const normalizedDoctorId = trimRequired(doctorId, 'Doctor');
+      const { data, error } = await supabase
+        .from('patient_material_costs')
+        .select('id, total_amount, payments!inner(payment_date)')
+        .eq('doctor_id', normalizedDoctorId)
+        .eq('cost_type', 'special_doctor')
+        .not('payment_id', 'is', null);
+      if (error) throw new Error(error.message);
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        paymentDate: String(row.payments?.payment_date || ''),
+        totalAmount: Number(row.total_amount || 0)
+      }));
+    },
     getPresets: async (
       actor: { userId: string; authToken: string }
     ): Promise<{ presets: MaterialLabCostPreset[]; revision: number }> => {
@@ -3470,7 +3486,10 @@ export const api = {
         material_name: trimRequired(item.materialName, 'MLS cost name', { maxLength: 255 }),
         cost_type: enumValue(item.costType, ['material', 'lab', 'special_doctor'] as const, 'Cost type'),
         cost_amount: finiteNumber(item.costAmount, 'MLS unit cost', { min: 0.01 }),
-        quantity: finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 })
+        quantity: finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 }),
+        ...(item.costType === 'special_doctor' && item.doctorId
+          ? { doctor_id: trimRequired(item.doctorId, 'Special doctor') }
+          : {})
       }));
       const total = normalizedItems.reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
       if (Math.round(total * 100) / 100 > Math.round(Number(payment.clearedAmount ?? payment.amount) * 100) / 100) {
@@ -3588,7 +3607,10 @@ export const api = {
           material_name: trimRequired(item.materialName, item.costType === 'lab' ? 'Lab cost name' : item.costType === 'special_doctor' ? 'Special doctor name' : 'Material name', { maxLength: 255 }),
           cost_type: enumValue(item.costType, ['material', 'lab', 'special_doctor'] as const, 'Cost type'),
           cost_amount: finiteNumber(item.costAmount, item.costType === 'lab' ? 'Lab cost' : item.costType === 'special_doctor' ? 'Special doctor cost' : 'Material cost', { min: 0.01 }),
-          quantity: finiteNumber(item.quantity, item.costType === 'lab' ? 'Lab quantity' : item.costType === 'special_doctor' ? 'Special doctor quantity' : 'Material quantity', { min: 0.01 })
+          quantity: finiteNumber(item.quantity, item.costType === 'lab' ? 'Lab quantity' : item.costType === 'special_doctor' ? 'Special doctor quantity' : 'Material quantity', { min: 0.01 }),
+          ...(item.costType === 'special_doctor' && item.doctorId
+            ? { doctor_id: trimRequired(item.doctorId, 'Special doctor') }
+            : {})
         }))
         .filter((item) => item.material_name);
 
