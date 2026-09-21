@@ -30,6 +30,9 @@ let storageConfigVersion = 0;
 
 const MEDICINE_ITEM_TYPES = ['Medicine', 'Retail', 'Supply', 'Other'] as const;
 const SUPABASE_PAGE_SIZE = 1000;
+const AUTO_ONP_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+const autoOnpRefreshInFlight = new Map<string, Promise<void>>();
+const autoOnpLastCompletedAt = new Map<string, number>();
 
 const fetchAllRows = async <T,>(
   buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
@@ -1090,7 +1093,18 @@ const getAutoOnpPatientTypeEnabled = async (): Promise<boolean> => {
   }
 };
 
-const applyAutoOnpPatientTypeIfEnabled = async (locationId?: string): Promise<void> => {
+const runAutoOnpPatientTypeRefresh = async (locationId?: string): Promise<void> => {
+  const { error: rpcError } = await supabase.rpc('apply_auto_onp_patient_type', {
+    p_location_id: locationId || null
+  });
+
+  if (!rpcError) return;
+  if (!isMissingFunctionError(rpcError, 'apply_auto_onp_patient_type')) {
+    console.warn('Failed to auto-convert patients to ONP:', rpcError.message);
+    return;
+  }
+
+  // Compatibility fallback while the database migration is rolling out.
   const enabled = await getAutoOnpPatientTypeEnabled();
   if (!enabled) return;
 
@@ -1133,6 +1147,26 @@ const applyAutoOnpPatientTypeIfEnabled = async (locationId?: string): Promise<vo
       console.warn(`Failed to auto-convert ${patientIdBatch.length} patients to ONP:`, updateError.message);
     }
   }
+};
+
+const applyAutoOnpPatientTypeIfEnabled = async (locationId?: string): Promise<void> => {
+  const scopeKey = locationId || '*';
+  const lastCompletedAt = autoOnpLastCompletedAt.get(scopeKey) || 0;
+  if (Date.now() - lastCompletedAt < AUTO_ONP_REFRESH_COOLDOWN_MS) return;
+
+  const existingRefresh = autoOnpRefreshInFlight.get(scopeKey);
+  if (existingRefresh) return existingRefresh;
+
+  const refresh = runAutoOnpPatientTypeRefresh(locationId)
+    .then(() => {
+      autoOnpLastCompletedAt.set(scopeKey, Date.now());
+    })
+    .finally(() => {
+      autoOnpRefreshInFlight.delete(scopeKey);
+    });
+
+  autoOnpRefreshInFlight.set(scopeKey, refresh);
+  return refresh;
 };
 
 const completeAppointmentWithClinicalFee = async (

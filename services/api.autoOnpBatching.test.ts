@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const supabaseMock = vi.hoisted(() => {
-  const state: any = { updateBatches: [] as string[][] };
+  const state: any = { updateBatches: [] as string[][], rpcCalls: [] as any[] };
   const query: any = {
     select: vi.fn(() => query),
     order: vi.fn(() => query),
@@ -31,7 +31,13 @@ const supabaseMock = vi.hoisted(() => {
 });
 
 vi.mock('./supabase', () => ({
-  supabase: { from: supabaseMock.from, rpc: vi.fn() },
+  supabase: {
+    from: supabaseMock.from,
+    rpc: vi.fn(async (name: string, payload: any) => {
+      supabaseMock.state.rpcCalls.push({ name, payload });
+      return { data: null, error: { code: 'PGRST202', message: `Could not find the function ${name}` } };
+    })
+  },
   supabaseUrl: '',
   supabaseAnonKey: ''
 }));
@@ -44,5 +50,18 @@ describe('automatic ONP patient conversion', () => {
 
     expect(supabaseMock.state.updateBatches.map((batch: string[]) => batch.length)).toEqual([20, 20, 5]);
     expect(new Set(supabaseMock.state.updateBatches.flat()).size).toBe(45);
+  });
+
+  it('deduplicates concurrent refreshes and observes the per-branch cooldown', async () => {
+    await Promise.all([
+      api.patients.getPage('location-2', 0, 10),
+      api.patients.getPage('location-2', 0, 10)
+    ]);
+    await api.patients.getPage('location-2', 0, 10);
+
+    const locationCalls = supabaseMock.state.rpcCalls.filter(
+      (call: any) => call.payload.p_location_id === 'location-2'
+    );
+    expect(locationCalls).toHaveLength(1);
   });
 });
