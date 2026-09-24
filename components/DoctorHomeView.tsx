@@ -305,6 +305,14 @@ const DoctorHomeView: React.FC<DoctorHomeViewProps> = ({
           </div>
           <p className="text-2xl font-bold text-gray-900">{rangeSummary.commission.toLocaleString()} MMK</p>
         </div>
+        <div className="rounded-xl border border-violet-100 bg-white p-3">
+          <div className="mb-1 flex items-center gap-2 text-violet-600">
+            <DollarSign className="h-4 w-4" />
+            <p className="text-[11px] font-semibold uppercase tracking-wide">Total Doctor Revenue</p>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{rangeSummary.totalDoctorRevenue.toLocaleString()} MMK</p>
+          <p className="mt-1 text-xs text-gray-500">Commission + special doctor fees</p>
+        </div>
         <div className="rounded-xl border border-amber-100 bg-white p-3">
           <div className="mb-1 flex items-center gap-2 text-amber-600">
             <Stethoscope className="h-4 w-4" />

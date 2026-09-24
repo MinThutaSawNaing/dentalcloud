@@ -103,6 +103,7 @@ describe('doctor dashboard date-time range', () => {
     expect(summary.treatedPatientCount).toBe(2);
     expect(summary.proceeds).toBe(230);
     expect(summary.commission).toBe(10);
+    expect(summary.totalDoctorRevenue).toBe(10);
     expect(summary.treatmentDistribution).toEqual([
       { name: 'Filling', count: 2 },
       { name: 'Cleaning', count: 1 }
@@ -118,6 +119,7 @@ describe('doctor dashboard date-time range', () => {
     expect(summary.treatments).toEqual([]);
     expect(summary.proceeds).toBe(0);
     expect(summary.commission).toBe(0);
+    expect(summary.totalDoctorRevenue).toBe(0);
   });
 
   it('does not allow invalid historical amounts to produce NaN totals', () => {
@@ -130,7 +132,7 @@ describe('doctor dashboard date-time range', () => {
 });
 
 describe('doctor dashboard special doctor fees', () => {
-  it('totals only fee rows inside the selected payment-date range and leaves commission separate', () => {
+  it('totals only fee rows inside the selected payment-date range and adds them to doctor revenue', () => {
     const summary = buildDoctorDashboardRangeSummary([], [treatment({
       doctorEarningEntries: [commission({ paymentDate: '2026-03-15', earnings: 500 })]
     })], {
@@ -142,5 +144,19 @@ describe('doctor dashboard special doctor fees', () => {
 
     expect(summary.specialDoctorFees).toBe(40_000);
     expect(summary.commission).toBe(500);
+    expect(summary.totalDoctorRevenue).toBe(40_500);
+  });
+
+  it('keeps total doctor revenue finite when fee amounts are invalid', () => {
+    const summary = buildDoctorDashboardRangeSummary([], [treatment({
+      doctorEarningEntries: [commission({ earnings: Number.NaN })]
+    })], range, [
+      { id: 'fee-invalid', paymentDate: '2026-08-08', totalAmount: Number.NaN },
+      { id: 'fee-valid', paymentDate: '2026-08-08', totalAmount: 25_000 }
+    ]);
+
+    expect(summary.commission).toBe(0);
+    expect(summary.specialDoctorFees).toBe(25_000);
+    expect(summary.totalDoctorRevenue).toBe(25_000);
   });
 });

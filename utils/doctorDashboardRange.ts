@@ -133,6 +133,7 @@ export interface DoctorDashboardRangeSummary {
   proceeds: number;
   commission: number;
   specialDoctorFees: number;
+  totalDoctorRevenue: number;
   treatmentDistribution: Array<{ name: string; count: number }>;
 }
 
@@ -151,6 +152,7 @@ export const buildDoctorDashboardRangeSummary = (
       proceeds: 0,
       commission: 0,
       specialDoctorFees: 0,
+      totalDoctorRevenue: 0,
       treatmentDistribution: []
     };
   }
@@ -168,20 +170,24 @@ export const buildDoctorDashboardRangeSummary = (
     treatmentCounts.set(name, (treatmentCounts.get(name) || 0) + 1);
   });
 
+  const commission = treatmentRecords
+    .flatMap((record) => record.doctorEarningEntries || [])
+    .filter((entry) => isCommissionEntryInDoctorDashboardRange(entry, range))
+    .reduce((sum, entry) => sum + finiteAmount(entry.earnings), 0);
+  const specialDoctorFeeTotal = specialDoctorFees
+    .filter((fee) => /^\d{4}-\d{2}-\d{2}$/.test(fee.paymentDate)
+      && fee.paymentDate >= validRange.startDateKey
+      && fee.paymentDate <= validRange.endDateKey)
+    .reduce((sum, fee) => sum + finiteAmount(fee.totalAmount), 0);
+
   return {
     treatments,
     completedAppointments,
     treatedPatientCount: new Set(treatments.map((record) => record.patient_id)).size,
     proceeds: treatments.reduce((sum, record) => sum + finiteAmount(record.cost), 0),
-    commission: treatmentRecords
-      .flatMap((record) => record.doctorEarningEntries || [])
-      .filter((entry) => isCommissionEntryInDoctorDashboardRange(entry, range))
-      .reduce((sum, entry) => sum + finiteAmount(entry.earnings), 0),
-    specialDoctorFees: specialDoctorFees
-      .filter((fee) => /^\d{4}-\d{2}-\d{2}$/.test(fee.paymentDate)
-        && fee.paymentDate >= validRange.startDateKey
-        && fee.paymentDate <= validRange.endDateKey)
-      .reduce((sum, fee) => sum + finiteAmount(fee.totalAmount), 0),
+    commission,
+    specialDoctorFees: specialDoctorFeeTotal,
+    totalDoctorRevenue: commission + specialDoctorFeeTotal,
     treatmentDistribution: Array.from(treatmentCounts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 6)

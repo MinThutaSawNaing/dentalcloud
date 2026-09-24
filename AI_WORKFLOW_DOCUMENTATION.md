@@ -277,6 +277,7 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 - Commission is reported by payment date and summarized into `treatments.doctor_earnings` for compatibility.
 - Visible in:
   - Doctor Dashboard: Range Commission card, filtered by the doctor's inclusive Start/End reporting range using payment dates
+  - Doctor Dashboard: Total Doctor Revenue card, calculated as Range Commission plus assigned Special Doctor Fees for the selected payment-date range; the two components remain separate
   - Admin Dashboard: Doctor Earnings (Commission) aggregated table
   - Admin Dashboard: Per-Treatment Commission Breakdown for individual records
   - Records Tab: Doctor Earned column per treatment
