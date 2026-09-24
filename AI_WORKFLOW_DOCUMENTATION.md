@@ -270,11 +270,12 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 
 ### Doctor Commission
 - Each doctor has an explicit commission method, independent of their custom specialization: `percentage` or `flat_visit`.
-- Percentage mode uses a treatment-specific percentage when configured, otherwise the doctor's default `commission_percentage` (0-100%). Commission is earned from collected treatment payments after recorded material and lab costs are recovered.
+- Percentage mode uses a treatment-specific percentage when configured, otherwise the doctor's default `commission_percentage` (0-100%). Commission is earned from collected treatment payments after recorded material, lab, and Special Doctor MLS costs are recovered.
 - Fixed mode uses `commission_per_visit` once for each doctor/patient/date visit after an eligible treatment payment is collected.
 - Each treatment snapshots the applicable commission method and rate when it is recorded. Later configuration changes apply only to new treatment records and do not change earlier records, even if those earlier treatments are paid later.
 - Commission ledger entries also preserve the snapshotted method and rate already earned for a visit.
 - Commission is reported by payment date and summarized into `treatments.doctor_earnings` for compatibility.
+- An assigned Special Doctor MLS fee is direct doctor revenue, not percentage commission. It is deducted from the commission base once as an MLS cost and added separately to the doctor's Total Doctor Revenue card.
 - Visible in:
   - Doctor Dashboard: Range Commission card, filtered by the doctor's inclusive Start/End reporting range using payment dates
   - Doctor Dashboard: Total Doctor Revenue card, calculated as Range Commission plus assigned Special Doctor Fees for the selected payment-date range; the two components remain separate

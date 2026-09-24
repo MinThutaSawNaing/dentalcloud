@@ -522,12 +522,20 @@ const App: React.FC = () => {
       setDoctorSpecialFees([]);
       return;
     }
+    const doctor = doctors.find((candidate) => candidate.id === session.doctor_id);
+    const locationIds = doctor
+      ? Array.from(new Set([...(doctor.location_ids || []), doctor.location_id].filter(Boolean)))
+      : [];
+    if (locationIds.length === 0) {
+      setDoctorSpecialFees([]);
+      return;
+    }
     let cancelled = false;
-    void api.materialCosts.getSpecialDoctorFeesByDoctorId(session.doctor_id)
+    void api.materialCosts.getSpecialDoctorFeesByDoctorId(session.doctor_id, locationIds)
       .then((fees) => { if (!cancelled) setDoctorSpecialFees(fees); })
       .catch((loadError) => { if (!cancelled) { console.warn('Unable to load special doctor fees for dashboard.', loadError); setDoctorSpecialFees([]); } });
     return () => { cancelled = true; };
-  }, [isDoctor, materialCostCacheRevision]);
+  }, [isDoctor, materialCostCacheRevision, doctors]);
 
   const getClinicCacheScope = (locationId = currentLocationId): string => {
     const session = auth.getSession();

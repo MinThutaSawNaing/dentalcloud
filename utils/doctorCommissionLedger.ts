@@ -304,12 +304,30 @@ export const calculateCommissionLedgerEntries = (
     // distributed across that payment's treatment allocations before applying
     // each allocation's snapshotted percentage rate.
     if (visitCandidates.some((candidate) => candidate.paymentMlsDeduction !== undefined)) {
+      const legacyMaterialRemainingByTreatment = new Map<string, number>();
       visitCandidates.forEach((candidate) => {
         const { treatment, rate, visitKey, ...allocation } = candidate;
-        const materialDeduction = roundMoney(Math.min(
-          toNonNegativeFiniteNumber(candidate.amount),
-          toNonNegativeFiniteNumber(candidate.paymentMlsDeduction)
-        ));
+        let materialDeduction: number;
+        if (candidate.paymentMlsDeduction !== undefined) {
+          materialDeduction = roundMoney(Math.min(
+            toNonNegativeFiniteNumber(candidate.amount),
+            toNonNegativeFiniteNumber(candidate.paymentMlsDeduction)
+          ));
+        } else {
+          if (!legacyMaterialRemainingByTreatment.has(treatment.id)) {
+            legacyMaterialRemainingByTreatment.set(
+              treatment.id,
+              toNonNegativeFiniteNumber(treatment.materialCost)
+            );
+          }
+          const remaining = legacyMaterialRemainingByTreatment.get(treatment.id) || 0;
+          const legacyCommission = calculatePercentageCommissionBase(candidate.amount, remaining);
+          legacyMaterialRemainingByTreatment.set(
+            treatment.id,
+            roundMoney(remaining - legacyCommission.materialDeduction)
+          );
+          materialDeduction = legacyCommission.materialDeduction;
+        }
         const commissionBase = roundMoney(Math.max(0, candidate.amount - materialDeduction));
         percentageRows.push({
           ...allocation,

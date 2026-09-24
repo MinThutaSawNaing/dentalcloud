@@ -3283,14 +3283,18 @@ export const api = {
   },
 
   materialCosts: {
-    getSpecialDoctorFeesByDoctorId: async (doctorId: string): Promise<DoctorSpecialFee[]> => {
+    getSpecialDoctorFeesByDoctorId: async (doctorId: string, locationIds: string[] = []): Promise<DoctorSpecialFee[]> => {
       const normalizedDoctorId = trimRequired(doctorId, 'Doctor');
-      const { data, error } = await supabase
+      const normalizedLocationIds = Array.from(new Set(locationIds.map((locationId) => String(locationId || '').trim()).filter(Boolean)));
+      if (normalizedLocationIds.length === 0) return [];
+      let query = supabase
         .from('patient_material_costs')
-        .select('id, total_amount, payments!inner(payment_date)')
+        .select('id, total_amount, payments!inner(payment_date, location_id)')
         .eq('doctor_id', normalizedDoctorId)
         .eq('cost_type', 'special_doctor')
         .not('payment_id', 'is', null);
+      query = query.in('payments.location_id', normalizedLocationIds);
+      const { data, error } = await query;
       if (error) throw new Error(error.message);
       return (data || []).map((row: any) => ({
         id: row.id,
@@ -3525,8 +3529,8 @@ export const api = {
       const normalizedItems = items.map((item) => ({
         material_name: trimRequired(item.materialName, 'MLS cost name', { maxLength: 255 }),
         cost_type: enumValue(item.costType, ['material', 'lab', 'special_doctor'] as const, 'Cost type'),
-        cost_amount: finiteNumber(item.costAmount, 'MLS unit cost', { min: 0.01 }),
-        quantity: finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 }),
+        cost_amount: roundMoney(finiteNumber(item.costAmount, 'MLS unit cost', { min: 0.01 })),
+        quantity: roundMoney(finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 })),
         ...(item.costType === 'special_doctor' && item.doctorId
           ? { doctor_id: trimRequired(item.doctorId, 'Special doctor') }
           : {})
@@ -3646,8 +3650,8 @@ export const api = {
         .map((item) => ({
           material_name: trimRequired(item.materialName, item.costType === 'lab' ? 'Lab cost name' : item.costType === 'special_doctor' ? 'Special doctor name' : 'Material name', { maxLength: 255 }),
           cost_type: enumValue(item.costType, ['material', 'lab', 'special_doctor'] as const, 'Cost type'),
-          cost_amount: finiteNumber(item.costAmount, item.costType === 'lab' ? 'Lab cost' : item.costType === 'special_doctor' ? 'Special doctor cost' : 'Material cost', { min: 0.01 }),
-          quantity: finiteNumber(item.quantity, item.costType === 'lab' ? 'Lab quantity' : item.costType === 'special_doctor' ? 'Special doctor quantity' : 'Material quantity', { min: 0.01 }),
+          cost_amount: roundMoney(finiteNumber(item.costAmount, item.costType === 'lab' ? 'Lab cost' : item.costType === 'special_doctor' ? 'Special doctor cost' : 'Material cost', { min: 0.01 })),
+          quantity: roundMoney(finiteNumber(item.quantity, item.costType === 'lab' ? 'Lab quantity' : item.costType === 'special_doctor' ? 'Special doctor quantity' : 'Material quantity', { min: 0.01 })),
           ...(item.costType === 'special_doctor' && item.doctorId
             ? { doctor_id: trimRequired(item.doctorId, 'Special doctor') }
             : {})
@@ -4952,10 +4956,13 @@ export const api = {
       const normalizedMlsItems = input.mlsCosts?.map((item) => ({
         material_name: trimRequired(item.materialName, 'MLS cost name', { maxLength: 255 }),
         cost_type: enumValue(item.costType, ['material', 'lab', 'special_doctor'] as const, 'Cost type'),
-        cost_amount: finiteNumber(item.costAmount, 'MLS unit cost', { min: 0.01 }),
-        quantity: finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 })
+        cost_amount: roundMoney(finiteNumber(item.costAmount, 'MLS unit cost', { min: 0.01 })),
+        quantity: roundMoney(finiteNumber(item.quantity, 'MLS quantity', { min: 0.01 })),
+        ...(item.costType === 'special_doctor' && item.doctorId
+          ? { doctor_id: trimRequired(item.doctorId, 'Special doctor') }
+          : {})
       }));
-      const mlsTotal = (normalizedMlsItems || []).reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
+      const mlsTotal = roundMoney((normalizedMlsItems || []).reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
       if (Math.round(mlsTotal * 100) > Math.round(normalizedAmount * 100)) {
         throw new Error('Payment MLS costs cannot exceed the amount collected in this payment.');
       }
@@ -5009,10 +5016,10 @@ export const api = {
         if (usePaymentMlsFlow) {
           const entries = await getDoctorEarningEntriesByPaymentIds([payment.id]);
           payment.doctorEarningEntries = entries.get(payment.id) || [];
-          payment.mlsTotal = Math.round(mlsTotal * 100) / 100;
-          payment.materialTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
-          payment.labTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
-          payment.specialDoctorTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
+          payment.mlsTotal = mlsTotal;
+          payment.materialTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+          payment.labTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+          payment.specialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
           payment.netRevenue = Math.max(0, Number(payment.clearedAmount ?? payment.amount) - payment.mlsTotal);
         }
         return {
@@ -5082,10 +5089,10 @@ export const api = {
       if (usePaymentMlsFlow) {
         const entries = await getDoctorEarningEntriesByPaymentIds([payment.id]);
         payment.doctorEarningEntries = entries.get(payment.id) || [];
-        payment.mlsTotal = Math.round(mlsTotal * 100) / 100;
-        payment.materialTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
-        payment.labTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
-        payment.specialDoctorTotal = (normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0);
+        payment.mlsTotal = mlsTotal;
+        payment.materialTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+        payment.labTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+        payment.specialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
         payment.netRevenue = Math.max(0, Number(payment.clearedAmount ?? payment.amount) - payment.mlsTotal);
       }
 

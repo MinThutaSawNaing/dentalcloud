@@ -530,6 +530,31 @@ describe('doctor commission ledger', () => {
     });
   });
 
+  it('keeps fixed-visit commission unchanged when payment MLS is recorded', () => {
+    const treatments = [treatment({
+      commissionType: 'flat_visit',
+      specialization: 'General',
+      commissionPerVisit: 25_000
+    })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1',
+      patientId: 'patient-1',
+      date: '2026-09-11',
+      commissionableAmount: 150_000,
+      treatmentIds: ['treatment-1'],
+      mlsCost: 70_000
+    }]);
+    const entries = calculateCommissionLedgerEntries(treatments, allocations);
+
+    expect(entries[0]).toMatchObject({
+      calculationMode: 'flat_visit',
+      materialDeduction: 0,
+      commissionBase: 150_000,
+      commissionRate: 25_000,
+      earnings: 25_000
+    });
+  });
+
   it('keeps payment MLS deductions on their respective partial-payment dates', () => {
     const treatments = [treatment({ cost: 200_000, commissionPercentage: 25 })];
     const allocations = allocateCommissionablePayments(treatments, [
@@ -541,6 +566,25 @@ describe('doctor commission ledger', () => {
     expect(entries.map((entry) => ({ date: entry.paymentDate, base: entry.commissionBase, earned: entry.earnings }))).toEqual([
       { date: '2026-09-10', base: 80_000, earned: 20_000 },
       { date: '2026-09-11', base: 90_000, earned: 22_500 }
+    ]);
+  });
+
+  it('recovers legacy treatment MLS when a later payment uses payment-bound MLS', () => {
+    const treatments = [treatment({ cost: 200_000, materialCost: 50_000, commissionPercentage: 10 })];
+    const allocations = allocateCommissionablePayments(treatments, [
+      { id: 'legacy-payment', patientId: 'patient-1', date: '2026-09-10', commissionableAmount: 100_000, treatmentIds: ['treatment-1'] },
+      { id: 'payment-bound-payment', patientId: 'patient-1', date: '2026-09-11', commissionableAmount: 100_000, treatmentIds: ['treatment-1'], mlsCost: 20_000 }
+    ]);
+    const entries = calculateCommissionLedgerEntries(treatments, allocations);
+
+    expect(entries.map((entry) => ({
+      paymentId: entry.paymentId,
+      materialDeduction: entry.materialDeduction,
+      commissionBase: entry.commissionBase,
+      earnings: entry.earnings
+    }))).toEqual([
+      { paymentId: 'legacy-payment', materialDeduction: 50_000, commissionBase: 50_000, earnings: 5_000 },
+      { paymentId: 'payment-bound-payment', materialDeduction: 20_000, commissionBase: 80_000, earnings: 8_000 }
     ]);
   });
 
