@@ -4756,7 +4756,7 @@ const App: React.FC = () => {
                     ]);
                     onProgress({ percent: 86, label: 'Calculating balances and profit…' });
                     const { buildMonthlyReport } = await import('./utils/monthlyReport');
-                    const report = buildMonthlyReport({ records, allocationRecords, payments, costSummaries });
+                    const report = buildMonthlyReport({ records, allocationRecords, payments, costSummaries, dateFrom, dateTo });
                     onProgress({ percent: 92, label: 'Report calculations complete' });
                     return report;
                   }}

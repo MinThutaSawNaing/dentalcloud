@@ -34,6 +34,28 @@ describe('monthly report', () => {
     expect(report.summary).toMatchObject({ treatmentCount: 1, patientCount: 1, production: 100, payment: 60, balance: 40, specialDoctorCost: 15, totalCost: 50, netProfit: 50, collectionRate: 0.6 });
   });
 
+  it('keeps production on the treatment date and shows later balance collection as zero-cost detail', () => {
+    const treatment = record({ id: 'treatment-1', cost: 250000, date: '2026-09-16' });
+    const report = buildMonthlyReport({
+      records: [treatment],
+      allocationRecords: [treatment],
+      payments: [
+        payment({ id: 'payment-1', amount: 100000, clearedAmount: 100000, date: '2026-09-16' }),
+        payment({ id: 'payment-2', amount: 150000, clearedAmount: 150000, date: '2026-09-25' })
+      ],
+      costSummaries: {},
+      dateFrom: '2026-09-01',
+      dateTo: '2026-09-30'
+    });
+
+    const detailRows = groupMonthlyReportDetailRows(report.detailRows || []);
+    expect(detailRows.map(row => ({ date: row.date, cost: row.cost, payment: row.payment, balance: row.balance }))).toEqual([
+      { date: '2026-09-16', cost: 250000, payment: 100000, balance: 150000 },
+      { date: '2026-09-25', cost: 0, payment: 150000, balance: 0 }
+    ]);
+    expect(report.summary).toMatchObject({ treatmentCount: 1, production: 250000, payment: 250000 });
+  });
+
   it('allocates a shared payment proportionally and never overpays a treatment', () => {
     const report = buildMonthlyReport({
       records: [record(), record({ id: 'treatment-2', cost: 300, description: 'Implant' })],

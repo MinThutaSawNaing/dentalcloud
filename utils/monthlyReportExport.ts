@@ -42,7 +42,7 @@ const addPdfGroupTable = (doc: jsPDF, title: string, groups: MonthlyReportGroup[
 
 export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: MonthlyReportMetadata) => {
   const generatedAt = metadata.generatedAt || new Date();
-  const detailRows = groupMonthlyReportDetailRows(report.rows);
+  const detailRows = groupMonthlyReportDetailRows(report.detailRows || report.rows);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true } as any);
   const drawingDoc = doc as any;
   const width = doc.internal.pageSize.width;
@@ -357,7 +357,7 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
     'Total Cost', 'Collected Payment', 'Receivable Balance', 'Material Cost', 'Lab Cost', 'Special Doctor Cost', 'Doctor RF',
     'Total Cost', 'Net Profit', 'Net Margin'
   ];
-  const groupedDetailRows = groupMonthlyReportDetailRows(report.rows);
+  const groupedDetailRows = groupMonthlyReportDetailRows(report.detailRows || report.rows);
   const detailData = groupedDetailRows.map(row => [
     row.date, row.patientName, row.age ?? '', row.phone, row.city, row.township, row.patientType, row.treatment, row.doctor,
     row.cost, row.payment, row.balance, row.materialCost, row.labCost, row.specialDoctorCost, row.doctorCost, row.totalCost, row.netProfit, row.netMargin
