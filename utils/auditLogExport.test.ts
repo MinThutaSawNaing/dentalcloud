@@ -452,6 +452,21 @@ describe('audit log export rows', () => {
     }
   });
 
+  it('adds assigned special doctor fees to doctor earned without attributing unassigned fees', () => {
+    const payment: PaymentRecord = {
+      ...payments[0],
+      specialDoctorTotal: 45_000,
+      assignedSpecialDoctorTotal: 40_000,
+      doctorEarningEntries: [{
+        paymentId: 'pay-1', treatmentId: 'tr-1', doctorId: 'doctor-1',
+        paymentDate: '2026-05-30', treatmentDate: '2026-05-30', calculationMode: 'percentage',
+        allocatedPayment: 60_000, commissionRate: 10, earnings: 6_000
+      }]
+    };
+
+    expect(getPaymentDoctorEarnings(payment)).toBe(46_000);
+  });
+
   it('exports payment-bound MLS costs on payment audit rows', () => {
     const payment: PaymentRecord = {
       ...payments[0],

@@ -65,4 +65,20 @@ describe('MLS payment rows', () => {
       allocatedTreatmentPayment: 0
     });
   });
+
+  it('adds only assigned special doctor fees to doctor earned while preserving commission separately', () => {
+    const paid = payment('payment-1', '2026-09-06', 300_000, 700_000);
+    paid.doctorEarningEntries = treatment.doctorEarningEntries?.filter((entry) => entry.paymentId === paid.id);
+    paid.specialDoctorTotal = 45_000;
+    paid.assignedSpecialDoctorTotal = 40_000;
+    paid.mlsTotal = 45_000;
+
+    const [row] = buildMaterialCostPaymentRows([treatment], [paid]);
+
+    expect(row).toMatchObject({
+      doctorCommission: 30_000,
+      assignedSpecialDoctorFees: 40_000,
+      doctorEarnings: 70_000
+    });
+  });
 });

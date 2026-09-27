@@ -191,6 +191,8 @@ export interface TreatmentCostSummary {
   labTotal: number;
   labItemCount: number;
   specialDoctorTotal: number;
+  /** Special Doctor fees that are attributable to a selected doctor. */
+  assignedSpecialDoctorTotal?: number;
   specialDoctorItemCount: number;
   totalAmount: number;
   itemCount: number;
@@ -223,6 +225,8 @@ export interface PaymentRecord {
   materialTotal?: number;
   labTotal?: number;
   specialDoctorTotal?: number;
+  /** Assigned direct doctor revenue; unassigned Special Doctor costs are excluded. */
+  assignedSpecialDoctorTotal?: number;
   mlsTotal?: number;
   netRevenue?: number;
   corrections?: PaymentCorrection[];

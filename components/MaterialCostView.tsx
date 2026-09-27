@@ -119,7 +119,9 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   const getTypedCost = (row: MaterialCostPaymentRow, type: TreatmentCostType) => Number(type === 'lab' ? row.payment.labTotal : type === 'special_doctor' ? row.payment.specialDoctorTotal : row.payment.materialTotal) || 0;
   const getTotalCost = (row: MaterialCostPaymentRow) => Number(row.payment.mlsTotal || 0);
   const getNetRevenue = (row: MaterialCostPaymentRow) => Math.max(0, getCollected(row) - getTotalCost(row));
-  const getNetProfit = (row: MaterialCostPaymentRow) => getNetRevenue(row) - row.doctorEarnings;
+  // Special Doctor fees are already deducted in MLS total/net revenue. Only
+  // subtract commission here so assigned fees are not counted twice.
+  const getNetProfit = (row: MaterialCostPaymentRow) => getNetRevenue(row) - row.doctorCommission;
   const renderBalance = (row: MaterialCostPaymentRow) => { const balance = Number(row.payment.remainingBalance || 0); return <span className={balance > 0 ? 'font-bold text-red-600' : 'font-semibold text-green-600'}>{balance > 0 ? formatCurrency(balance, currency) : 'Clear'}</span>; };
   const renderTreatments = (row: MaterialCostPaymentRow) => row.treatments.length > 0
     ? <div className="space-y-1">{row.treatments.map((record) => <div key={record.id} className="flex min-w-0 items-start gap-1.5"><span className="mt-0.5 shrink-0 text-green-600">&bull;</span><span className="min-w-0 break-words">{record.description || 'Treatment record'}</span></div>)}</div>

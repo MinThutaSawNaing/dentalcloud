@@ -3474,7 +3474,7 @@ export const api = {
         async (idBatch) => {
           const { data, error } = await supabase
             .from('patient_material_costs')
-            .select('audit_log_id, cost_type, total_amount')
+            .select('audit_log_id, cost_type, total_amount, doctor_id')
             .in('audit_log_id', idBatch);
           if (error) throw new Error(error.message);
           return data || [];
@@ -3494,6 +3494,7 @@ export const api = {
           labTotal: 0,
           labItemCount: 0,
           specialDoctorTotal: 0,
+          assignedSpecialDoctorTotal: 0,
           specialDoctorItemCount: 0,
           totalAmount: 0,
           itemCount: 0
@@ -4925,6 +4926,7 @@ export const api = {
         materialTotal: costsByPayment[payment.id]?.materialTotal || 0,
         labTotal: costsByPayment[payment.id]?.labTotal || 0,
         specialDoctorTotal: costsByPayment[payment.id]?.specialDoctorTotal || 0,
+        assignedSpecialDoctorTotal: costsByPayment[payment.id]?.assignedSpecialDoctorTotal || 0,
         mlsTotal: costsByPayment[payment.id]?.totalAmount || 0,
         netRevenue: Math.max(0, Number(payment.clearedAmount ?? payment.amount) - (costsByPayment[payment.id]?.totalAmount || 0))
       }));
@@ -5020,6 +5022,7 @@ export const api = {
           payment.materialTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
           payment.labTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
           payment.specialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+          payment.assignedSpecialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor' && item.doctor_id).reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
           payment.netRevenue = Math.max(0, Number(payment.clearedAmount ?? payment.amount) - payment.mlsTotal);
         }
         return {
@@ -5093,6 +5096,7 @@ export const api = {
         payment.materialTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'material').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
         payment.labTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'lab').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
         payment.specialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor').reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
+        payment.assignedSpecialDoctorTotal = roundMoney((normalizedMlsItems || []).filter((item) => item.cost_type === 'special_doctor' && item.doctor_id).reduce((sum, item) => sum + item.cost_amount * item.quantity, 0));
         payment.netRevenue = Math.max(0, Number(payment.clearedAmount ?? payment.amount) - payment.mlsTotal);
       }
 

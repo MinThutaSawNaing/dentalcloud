@@ -69,9 +69,13 @@ export const getAuditPaymentDiscount = (
 };
 
 export const getPaymentDoctorEarnings = (payment: PaymentRecord): number => {
-  return Math.round((payment.doctorEarningEntries || [])
+  const commission = (payment.doctorEarningEntries || [])
     .filter((entry) => entry.paymentId === payment.id)
-    .reduce((sum, entry) => sum + getPositiveNumber(entry.earnings), 0) * 100) / 100;
+    .reduce((sum, entry) => sum + getPositiveNumber(entry.earnings), 0);
+  // An assigned Special Doctor fee is direct doctor revenue rather than
+  // percentage commission. Include it in Doctor Earned while leaving an
+  // unassigned Special Doctor row as a clinic MLS cost.
+  return Math.round((commission + getPositiveNumber(payment.assignedSpecialDoctorTotal)) * 100) / 100;
 };
 
 export const getPaymentMlsCosts = (payment: PaymentRecord): number => {

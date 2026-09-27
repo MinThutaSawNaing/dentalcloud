@@ -15,6 +15,8 @@ export interface MaterialCostPaymentRow {
   payment: PaymentRecord;
   treatments: ClinicalRecord[];
   allocatedTreatmentPayment: number;
+  doctorCommission: number;
+  assignedSpecialDoctorFees: number;
   doctorEarnings: number;
   doctorNames: string[];
 }
@@ -74,6 +76,9 @@ export const buildMaterialCostPaymentRows = (
         });
       });
 
+      const doctorCommission = roundMoney(Array.from(entries.values()).reduce((sum, entry) => sum + Math.max(0, Number(entry.earnings || 0)), 0));
+      const assignedSpecialDoctorFees = roundMoney(Math.max(0, Number(payment.assignedSpecialDoctorTotal || 0)));
+
       return {
         id: payment.id,
         date: payment.date,
@@ -81,7 +86,9 @@ export const buildMaterialCostPaymentRows = (
         payment,
         treatments,
         allocatedTreatmentPayment: roundMoney(paymentAllocations.reduce((sum, allocation) => sum + allocation.amount, 0)),
-        doctorEarnings: roundMoney(Array.from(entries.values()).reduce((sum, entry) => sum + Math.max(0, Number(entry.earnings || 0)), 0)),
+        doctorCommission,
+        assignedSpecialDoctorFees,
+        doctorEarnings: roundMoney(doctorCommission + assignedSpecialDoctorFees),
         doctorNames: Array.from(new Set(treatments.map((record) => record.doctor_name).filter((name): name is string => Boolean(name))))
       };
     })

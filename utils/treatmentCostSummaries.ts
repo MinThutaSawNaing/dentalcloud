@@ -4,6 +4,7 @@ export interface TreatmentCostSummaryRow {
   audit_log_id: string;
   cost_type?: TreatmentCostType | null;
   total_amount?: number | string | null;
+  doctor_id?: string | null;
 }
 
 export const summarizeTreatmentCostRows = (
@@ -24,6 +25,7 @@ export const summarizeTreatmentCostRows = (
     labTotal: 0,
     labItemCount: 0,
     specialDoctorTotal: 0,
+    assignedSpecialDoctorTotal: 0,
     specialDoctorItemCount: 0,
     totalAmount: 0,
     itemCount: 0
@@ -34,6 +36,7 @@ export const summarizeTreatmentCostRows = (
     existing.labItemCount += 1;
   } else if (costType === 'special_doctor') {
     existing.specialDoctorTotal += amount;
+    if (row.doctor_id) existing.assignedSpecialDoctorTotal = (existing.assignedSpecialDoctorTotal || 0) + amount;
     existing.specialDoctorItemCount += 1;
   } else {
     existing.materialTotal += amount;
