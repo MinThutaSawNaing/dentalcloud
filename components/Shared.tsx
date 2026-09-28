@@ -44,6 +44,7 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
   isLoading?: boolean;
+  aboveModal?: boolean;
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -55,8 +56,21 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   type = 'danger',
   onConfirm,
   onCancel,
-  isLoading = false
+  isLoading = false,
+  aboveModal = false
 }) => {
+  const titleId = React.useId();
+  const messageId = React.useId();
+  const closeButtonRef = React.useRef<HTMLButtonElement>(null);
+  const cancelButtonRef = React.useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    if (!isOpen || !aboveModal) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelButtonRef.current?.focus();
+    return () => previousFocus?.focus();
+  }, [isOpen, aboveModal]);
+
   if (!isOpen) return null;
 
   const typeConfig = {
@@ -82,11 +96,36 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   const config = typeConfig[type];
 
-  return (
-    <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-fade-in">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full relative animate-scale-up">
-        <button 
+  const dialog = (
+    <div className={`fixed inset-0 bg-gray-900/60 backdrop-blur-md ${aboveModal ? 'z-[10000]' : 'z-50'} flex items-center justify-center p-4 sm:p-6 animate-fade-in`}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
+        onKeyDown={aboveModal ? (event: React.KeyboardEvent<HTMLDivElement>) => {
+          if (event.key === 'Escape' && !isLoading) {
+            event.preventDefault();
+            onCancel();
+          } else if (event.key === 'Tab' && !isLoading) {
+            const first = closeButtonRef.current;
+            const last = confirmButtonRef.current;
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        } : undefined}
+        className="bg-white rounded-3xl shadow-2xl max-w-md w-full relative animate-scale-up"
+      >
+        <button
+          type="button"
+          ref={closeButtonRef}
           onClick={onCancel} 
+          aria-label="Close confirmation dialog"
           className="absolute top-6 right-6 text-gray-300 hover:text-gray-600 transition-colors"
           disabled={isLoading}
         >
@@ -99,13 +138,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               {config.icon}
             </div>
             <div className="flex-1">
-              <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
-              <p className="text-sm text-gray-600 leading-relaxed">{message}</p>
+              <h3 id={titleId} className="text-xl font-black text-gray-900 mb-2">{title}</h3>
+              <p id={messageId} className="text-sm text-gray-600 leading-relaxed">{message}</p>
             </div>
           </div>
           
           <div className="flex gap-3">
             <button
+              type="button"
+              ref={cancelButtonRef}
               onClick={onCancel}
               disabled={isLoading}
               className="flex-1 px-6 py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -113,6 +154,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               {cancelText}
             </button>
             <button
+              type="button"
+              ref={confirmButtonRef}
               onClick={onConfirm}
               disabled={isLoading}
               className={`flex-1 px-6 py-3 rounded-xl font-bold text-white ${config.confirmBg} ${config.confirmShadow} shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
@@ -134,6 +177,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       </div>
     </div>
   );
+  return aboveModal && typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog;
 };
 
 type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {

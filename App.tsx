@@ -976,6 +976,7 @@ const App: React.FC = () => {
   const [doctorCommissionLoading, setDoctorCommissionLoading] = useState(false);
   const [doctorCommissionLoadError, setDoctorCommissionLoadError] = useState('');
   const [doctorCategoryLoadError, setDoctorCategoryLoadError] = useState('');
+  const [pendingDoctorCommissionType, setPendingDoctorCommissionType] = useState<'percentage' | 'flat_visit' | null>(null);
   const [newUserData, setNewUserData] = useState<Partial<User>>(getDefaultUserFormData());
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [newMedicineData, setNewMedicineData] = useState<Partial<Medicine>>({
@@ -3080,6 +3081,7 @@ const App: React.FC = () => {
   });
 
   const resetDoctorCommissionEditor = () => {
+    setPendingDoctorCommissionType(null);
     setDoctorCommissionRows([]);
     setDoctorCategoryRows([]);
     setDoctorServiceCategories([]);
@@ -5872,10 +5874,7 @@ const App: React.FC = () => {
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                     const nextType = e.target.value as 'percentage' | 'flat_visit';
                     if (nextType === newDoctorData.commission_type) return;
-                    if (!window.confirm('Change commission method? Saving will clear the previous method’s doctor default and all treatment and category override values. Existing treatment and payout snapshots are not changed.')) return;
-                    setNewDoctorData(prev => ({ ...prev, commission_type: nextType, commission_percentage: 0, commission_per_visit: 0 }));
-                    setDoctorCommissionRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
-                    setDoctorCategoryRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
+                    setPendingDoctorCommissionType(nextType);
                   }}
                 >
                   <option value="percentage">Percentage (%)</option>
@@ -7010,6 +7009,27 @@ const App: React.FC = () => {
         </div>
       )}
 
+
+      <ConfirmDialog
+        isOpen={showDoctorModal && pendingDoctorCommissionType !== null}
+        title="Change Commission Method?"
+        message="Changing the method resets the doctor default and all treatment and category commission amounts in this form. If you save, the old method’s values will be cleared. Existing treatment records and payouts will not change."
+        confirmText="Change Method"
+        cancelText="Keep Current Method"
+        type="warning"
+        aboveModal
+        onConfirm={() => {
+          if (!pendingDoctorCommissionType || !showDoctorModal || doctorCommissionLoading || doctorCategoriesLoading || isSubmitting || doctorCommissionLoadError || doctorCategoryLoadError) {
+            setPendingDoctorCommissionType(null);
+            return;
+          }
+          setNewDoctorData(prev => ({ ...prev, commission_type: pendingDoctorCommissionType, commission_percentage: 0, commission_per_visit: 0 }));
+          setDoctorCommissionRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
+          setDoctorCategoryRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
+          setPendingDoctorCommissionType(null);
+        }}
+        onCancel={() => setPendingDoctorCommissionType(null)}
+      />
 
       <ConfirmDialog
         isOpen={deleteServiceConfirmOpen}
