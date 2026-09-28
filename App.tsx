@@ -6011,14 +6011,17 @@ const App: React.FC = () => {
                     t.id === rule.treatment_id && t.category?.trim().toLowerCase() === row.category.trim().toLowerCase())) : [];
                   return <div key={row.id || `category-rule-${index}`} className="rounded-lg border border-gray-200 bg-white p-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px_auto] sm:items-end">
-                      <label className="text-xs text-gray-600">Specialty Category
-                        <select value={row.category} onChange={e => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? { ...item, category: e.target.value } : item))}
-                          className="mt-1 w-full rounded-lg border border-gray-200 p-2 text-sm bg-white">
-                          <option value="">Select category</option>
-                          {availableDoctorCategoryNames.map(category =>
-                            <option key={category} value={category}>{category}</option>)}
-                        </select>
-                      </label>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Specialty Category</label>
+                        <SearchableSelect
+                          value={row.category}
+                          onChange={category => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? { ...item, category } : item))}
+                          options={availableDoctorCategoryNames.map(category => ({ value: category, label: category }))}
+                          placeholder="Search and select category"
+                          emptyMessage="No specialty categories match your search"
+                          className="[&>div:first-child]:rounded-lg [&>div:first-child]:border-gray-200 [&>div:first-child]:p-2"
+                        />
+                      </div>
                       <label className="text-xs text-gray-600">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? `Fixed Per Visit (${getCurrencySymbol(currency)})` : 'Commission %'}
                         <input type="number" min="0" max={usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? undefined : 100} step="0.01"
                           value={usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? (row.fixed_amount ?? '') : row.commission_rate}

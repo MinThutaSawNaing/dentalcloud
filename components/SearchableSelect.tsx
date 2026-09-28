@@ -128,6 +128,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         <div className="flex items-center gap-1 flex-shrink-0">
           {value && (
             <button
+              type="button"
               onClick={handleClear}
               className="p-0.5 hover:bg-gray-100 rounded transition-colors"
               title="Clear selection"
