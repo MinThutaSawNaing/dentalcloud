@@ -269,6 +269,7 @@ Appointments do not have a target-teeth workflow. Tooth numbers belong to treatm
 - Each snapshot treatment line optionally carries `doctorId`/`doctorName`, printed as the treating doctor per line; the fields are additive, so snapshots written before they existed still validate
 
 ### Doctor Commission
+- A doctor may set a Service Menu specialty-category override. Enabled per-treatment overrides take precedence, followed by the category override, then the doctor's default. A treatment override can be disabled and re-enabled without losing its configured value. Category names are matched without case sensitivity; a treatment's rate remains snapshotted when recorded.
 - Each doctor has an explicit commission method, independent of their custom specialization: `percentage` or `flat_visit`.
 - Percentage mode uses a treatment-specific percentage when configured, otherwise the doctor's default `commission_percentage` (0-100%). Commission is earned from collected treatment payments after recorded material, lab, and Special Doctor MLS costs are recovered.
 - Fixed mode uses `commission_per_visit` once for each doctor/patient/date visit after an eligible treatment payment is collected.

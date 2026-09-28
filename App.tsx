@@ -41,6 +41,7 @@ import {
   DoctorSpecialFee,
   DoctorInput,
   DoctorTreatmentCommission,
+  DoctorCategoryCommission,
   DoctorSchedule,
   DoctorScheduleInput,
   User, 
@@ -968,9 +969,13 @@ const App: React.FC = () => {
   const [newTreatmentTypeData, setNewTreatmentTypeData] = useState<Partial<TreatmentType>>({ name: '', cost: 0, category: '' });
   const [newDoctorData, setNewDoctorData] = useState<Partial<DoctorInput>>({ name: '', email: '', phone: '', specialization: 'General', commission_type: 'percentage', password: '', commission_percentage: 0, commission_per_visit: 0, schedules: [], location_id: currentLocationId || '', location_ids: currentLocationId ? [currentLocationId] : [] });
   const [doctorCommissionRows, setDoctorCommissionRows] = useState<DoctorTreatmentCommission[]>([]);
+  const [doctorCategoryRows, setDoctorCategoryRows] = useState<DoctorCategoryCommission[]>([]);
+  const [doctorServiceCategories, setDoctorServiceCategories] = useState<{ id: string; category: string; name: string }[]>([]);
+  const [doctorCategoriesLoading, setDoctorCategoriesLoading] = useState(false);
   const [doctorCommissionAdvancedOpen, setDoctorCommissionAdvancedOpen] = useState(false);
   const [doctorCommissionLoading, setDoctorCommissionLoading] = useState(false);
   const [doctorCommissionLoadError, setDoctorCommissionLoadError] = useState('');
+  const [doctorCategoryLoadError, setDoctorCategoryLoadError] = useState('');
   const [newUserData, setNewUserData] = useState<Partial<User>>(getDefaultUserFormData());
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [newMedicineData, setNewMedicineData] = useState<Partial<Medicine>>({
@@ -1013,6 +1018,10 @@ const App: React.FC = () => {
     const existing = treatmentTypes.map((type) => (type.category || '').trim()).filter(Boolean);
     return [...new Set([...TREATMENT_CATEGORIES, ...existing])].sort((a, b) => a.localeCompare(b));
   }, [treatmentTypes]);
+  const availableDoctorCategoryNames = useMemo(() => [...new Set([
+    ...doctorServiceCategories.map(type => type.category?.trim()).filter(Boolean),
+    ...doctorCategoryRows.map(row => row.category.trim()).filter(Boolean)
+  ])].sort((a, b) => a.localeCompare(b)), [doctorServiceCategories, doctorCategoryRows]);
   const activePatientTypeOptions = useMemo(() => {
     const activeNames = patientTypes
       .filter((type) => type.is_active)
@@ -3072,9 +3081,13 @@ const App: React.FC = () => {
 
   const resetDoctorCommissionEditor = () => {
     setDoctorCommissionRows([]);
+    setDoctorCategoryRows([]);
+    setDoctorServiceCategories([]);
+    setDoctorCategoriesLoading(false);
     setDoctorCommissionAdvancedOpen(false);
     setDoctorCommissionLoading(false);
     setDoctorCommissionLoadError('');
+    setDoctorCategoryLoadError('');
     setIsLoggingOut(false);
   };
 
@@ -3086,6 +3099,7 @@ const App: React.FC = () => {
 
     if (!editingDoctor?.id) {
       setDoctorCommissionRows([]);
+      setDoctorCategoryRows([]);
       setDoctorCommissionLoading(false);
       setDoctorCommissionLoadError('');
       return;
@@ -3097,10 +3111,14 @@ const App: React.FC = () => {
       setDoctorCommissionLoading(true);
       setDoctorCommissionLoadError('');
       try {
-        const rows = await api.doctorTreatmentCommissions.getByDoctor(editingDoctor.id);
+        const [rows, categories] = await Promise.all([
+          api.doctorTreatmentCommissions.getByDoctor(editingDoctor.id),
+          api.doctorCategoryCommissions.getByDoctor(editingDoctor.id)
+        ]);
         if (!cancelled) {
           setDoctorCommissionRows(rows);
-          setDoctorCommissionAdvancedOpen(rows.length > 0);
+          setDoctorCategoryRows(categories);
+          setDoctorCommissionAdvancedOpen(rows.length > 0 || categories.length > 0);
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -3121,6 +3139,26 @@ const App: React.FC = () => {
       cancelled = true;
     };
   }, [showDoctorModal, editingDoctor?.id]);
+
+  useEffect(() => {
+    if (!showDoctorModal) return;
+    const assignedLocations = (newDoctorData.location_ids || [newDoctorData.location_id].filter(Boolean)).filter(Boolean);
+    if (!assignedLocations.length) {
+      setDoctorServiceCategories([]);
+      setDoctorCategoriesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDoctorCategoriesLoading(true);
+    api.treatments.getCategoryServicesForLocations(assignedLocations)
+      .then(rows => { if (!cancelled) {
+        setDoctorServiceCategories(rows);
+        setDoctorCategoryLoadError('');
+      } })
+      .catch(error => { if (!cancelled) setDoctorCategoryLoadError(error.message || 'Unable to load specialty categories.'); })
+      .finally(() => { if (!cancelled) setDoctorCategoriesLoading(false); });
+    return () => { cancelled = true; };
+  }, [showDoctorModal, (newDoctorData.location_ids || []).join(','), newDoctorData.location_id]);
 
   const handleCreateAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3299,7 +3337,7 @@ const App: React.FC = () => {
 
   const handleCreateDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting || doctorCommissionLoading || doctorCommissionLoadError) return;
+    if (isSubmitting || doctorCommissionLoading || doctorCategoriesLoading || doctorCommissionLoadError || doctorCategoryLoadError) return;
     setIsSubmitting(true);
 
     const isDoctorTransferValidationError = (error: unknown) =>
@@ -3382,12 +3420,40 @@ const App: React.FC = () => {
     }
 
     const normalizedCommissionRows = doctorCommissionRows
-      .filter((row) => row.treatment_id && (!useFlatVisitCommission || row.fixed_amount != null))
+      .filter((row) => row.treatment_id && (!useFlatVisitCommission || row.fixed_amount != null || row.is_enabled === false))
       .map((row) => ({
         treatment_id: row.treatment_id,
         commission_rate: Number(row.commission_rate),
-        fixed_amount: useFlatVisitCommission ? row.fixed_amount : null
+        fixed_amount: row.fixed_amount,
+        is_enabled: row.is_enabled !== false
       }));
+    if (doctorCategoryRows.some(row => !row.category.trim())) {
+      alert('Select a specialty category or remove the empty category row.');
+      setIsSubmitting(false);
+      return;
+    }
+    const normalizedCategoryRows = doctorCategoryRows.map(row => ({
+      category: row.category.trim(),
+      commission_rate: Number(row.commission_rate),
+      fixed_amount: row.fixed_amount
+    }));
+    if (new Set(normalizedCategoryRows.map(row => row.category.toLocaleLowerCase())).size !== normalizedCategoryRows.length) {
+      alert('Each specialty category can have only one commission rule.');
+      setIsSubmitting(false);
+      return;
+    }
+    if (normalizedCategoryRows.some(row => !availableDoctorCategoryNames.some(name => name.toLowerCase() === row.category.toLowerCase()))) {
+      alert('Choose a specialty category from the assigned branches’ Service Menu.');
+      setIsSubmitting(false);
+      return;
+    }
+    if (normalizedCategoryRows.some(row => useFlatVisitCommission
+      ? row.fixed_amount == null || !Number.isFinite(Number(row.fixed_amount)) || Number(row.fixed_amount) < 0
+      : !Number.isFinite(row.commission_rate) || row.commission_rate < 0 || row.commission_rate > 100)) {
+      alert('Enter a valid rate for every specialty category.');
+      setIsSubmitting(false);
+      return;
+    }
 
     const uniqueTreatmentIds = new Set(normalizedCommissionRows.map((row) => row.treatment_id));
     if (uniqueTreatmentIds.size !== normalizedCommissionRows.length) {
@@ -3396,7 +3462,7 @@ const App: React.FC = () => {
       return;
     }
 
-    const invalidCommissionRate = normalizedCommissionRows.find((row) => useFlatVisitCommission
+    const invalidCommissionRate = normalizedCommissionRows.find((row) => useFlatVisitCommission && row.is_enabled !== false
       ? !Number.isFinite(row.fixed_amount) || (row.fixed_amount as number) < 0
       : Number.isNaN(row.commission_rate) || row.commission_rate < 0 || row.commission_rate > 100);
     if (invalidCommissionRate) {
@@ -3424,6 +3490,7 @@ const App: React.FC = () => {
 
       try {
         await api.doctorTreatmentCommissions.replaceForDoctor(savedDoctor.id, normalizedCommissionRows);
+        await api.doctorCategoryCommissions.replaceForDoctor(savedDoctor.id, normalizedCategoryRows);
       } catch (commissionErr: any) {
         if (!editingDoctor) {
           await api.doctors.delete(savedDoctor.id);
@@ -5836,15 +5903,12 @@ const App: React.FC = () => {
                   onClick={() => {
                     setDoctorCommissionAdvancedOpen((prev) => {
                       const next = !prev;
-                      if (next && doctorCommissionRows.length === 0) {
-                        setDoctorCommissionRows([createEmptyDoctorCommissionRow()]);
-                      }
                       return next;
                     });
                   }}
                   className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
                 >
-                  {doctorCommissionAdvancedOpen ? 'Hide advanced treatment commission setup' : 'Advanced: Set custom commission per treatment'}
+              {doctorCommissionAdvancedOpen ? 'Hide advanced commission setup' : 'Advanced: Set commissions per treatment or specialty category'}
                 </button>
               </div>
             </div>
@@ -5874,7 +5938,7 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     doctorCommissionRows.map((row, index) => (
-                      <div key={row.id || `doctor-commission-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[1fr_160px_auto] sm:items-end">
+                      <div key={row.id || `doctor-commission-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[1fr_160px_auto_auto] sm:items-end">
                         <div>
                           <label className="block text-xs text-gray-600 mb-1">Treatment</label>
                           <select
@@ -5887,7 +5951,7 @@ const App: React.FC = () => {
                             }}
                           >
                             <option value="">Select treatment</option>
-                            {treatmentTypes.map((treatment) => (
+                            {doctorServiceCategories.map((treatment) => (
                               <option key={treatment.id} value={treatment.id}>{treatment.name}</option>
                             ))}
                           </select>
@@ -5910,6 +5974,11 @@ const App: React.FC = () => {
                             }}
                           />
                         </div>
+                        <button type="button" aria-pressed={row.is_enabled !== false}
+                          onClick={() => setDoctorCommissionRows(prev => prev.map((item, i) => i === index ? { ...item, is_enabled: item.is_enabled === false } : item))}
+                          className={`rounded-lg border px-3 py-2 text-xs font-bold ${row.is_enabled === false ? 'border-amber-300 text-amber-800' : 'border-indigo-200 text-indigo-700'}`}>
+                          {row.is_enabled === false ? 'Enable rule' : 'Disable rule'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
@@ -5925,6 +5994,47 @@ const App: React.FC = () => {
                     ))
                   )}
                 </div>
+              </div>
+            )}
+            {doctorCommissionAdvancedOpen && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-gray-800">Specialty Category Commissions</h4>
+                    <p className="text-xs text-gray-600">Choose a Service Menu category. Enabled per-treatment rules win; then this category rate; then the doctor default. Disabling a treatment rule preserves it for later.</p>
+                  </div>
+                  <button type="button" onClick={() => setDoctorCategoryRows(prev => [...prev, { category: '', commission_rate: 0, fixed_amount: null }])}
+                    className="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700">+ Add Category</button>
+                </div>
+                {doctorCategoryRows.map((row, index) => {
+                  const overlaps = row.category.trim() ? doctorCommissionRows.filter(rule => rule.is_enabled !== false && doctorServiceCategories.some(t =>
+                    t.id === rule.treatment_id && t.category?.trim().toLowerCase() === row.category.trim().toLowerCase())) : [];
+                  return <div key={row.id || `category-rule-${index}`} className="rounded-lg border border-gray-200 bg-white p-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px_auto] sm:items-end">
+                      <label className="text-xs text-gray-600">Specialty Category
+                        <select value={row.category} onChange={e => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? { ...item, category: e.target.value } : item))}
+                          className="mt-1 w-full rounded-lg border border-gray-200 p-2 text-sm bg-white">
+                          <option value="">Select category</option>
+                          {availableDoctorCategoryNames.map(category =>
+                            <option key={category} value={category}>{category}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs text-gray-600">{usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? `Fixed Per Visit (${getCurrencySymbol(currency)})` : 'Commission %'}
+                        <input type="number" min="0" max={usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? undefined : 100} step="0.01"
+                          value={usesFlatVisitCommission({ commissionType: newDoctorData.commission_type }) ? (row.fixed_amount ?? '') : row.commission_rate}
+                          onChange={e => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? (usesFlatVisitCommission({ commissionType: newDoctorData.commission_type })
+                            ? { ...item, fixed_amount: e.target.value === '' ? null : Number(e.target.value) }
+                            : { ...item, commission_rate: Number(e.target.value) }) : item))}
+                          className="mt-1 w-full rounded-lg border border-gray-200 p-2 text-sm" />
+                      </label>
+                      <button type="button" aria-label={`Remove category rule ${index + 1}`} onClick={() => setDoctorCategoryRows(prev => prev.filter((_, i) => i !== index))}
+                        className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                    {overlaps.length > 0 && <p role="alert" className="mt-2 text-xs font-semibold text-amber-800">
+                      {overlaps.length} enabled per-treatment rule{overlaps.length === 1 ? '' : 's'} in this category will win instead. Use “Disable rule” above to apply the category rate to those treatments.
+                    </p>}
+                  </div>;
+                })}
               </div>
             )}
             <div>
@@ -6019,14 +6129,14 @@ const App: React.FC = () => {
                 </button>
               </div>
             </div>
-            {doctorCommissionLoadError && (
+            {(doctorCommissionLoadError || doctorCategoryLoadError) && (
               <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                Custom commission rates could not be loaded. Close and reopen this form before saving.
+                {doctorCommissionLoadError || doctorCategoryLoadError} Close and reopen this form before saving.
               </p>
             )}
             <button
               type="submit"
-              disabled={isSubmitting || doctorCommissionLoading || Boolean(doctorCommissionLoadError)}
+              disabled={isSubmitting || doctorCommissionLoading || doctorCategoriesLoading || Boolean(doctorCommissionLoadError || doctorCategoryLoadError)}
               className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-indigo-600/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSubmitting ? (editingDoctor ? 'Updating...' : 'Creating...') : (editingDoctor ? 'Update Doctor' : 'Create Doctor')}

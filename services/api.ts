@@ -1,6 +1,6 @@
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -188,7 +188,7 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     doctorIds.length > 0
       ? supabase
         .from('doctor_treatment_commissions')
-        .select('doctor_id, treatment_id, commission_rate, fixed_amount')
+        .select('doctor_id, treatment_id, commission_rate, fixed_amount, is_enabled')
         .in('doctor_id', doctorIds)
       : Promise.resolve({ data: [] as any[], error: null }),
     supabase
@@ -208,10 +208,10 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
   }
   const customRows = customResult.data || [];
   const customRateByDoctorAndType = new Map(
-    customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, Number(row.commission_rate || 0)])
+    customRows.filter((row: any) => row.is_enabled !== false).map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, Number(row.commission_rate || 0)])
   );
   const customFixedAmountByDoctorAndType = new Map(
-    customRows.map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, row.fixed_amount == null ? undefined : Number(row.fixed_amount)])
+    customRows.filter((row: any) => row.is_enabled !== false).map((row: any) => [`${row.doctor_id}|${row.treatment_id}`, row.fixed_amount == null ? undefined : Number(row.fixed_amount)])
   );
 
   const ledgerInstalled = !existingResult.error;
@@ -3719,6 +3719,14 @@ export const api = {
 
   treatments: {
     // Configuration
+    getCategoryServicesForLocations: async (locationIds: string[]): Promise<{ id: string; category: string; name: string }[]> => {
+      const uniqueLocations = [...new Set(locationIds.filter(Boolean))];
+      if (!uniqueLocations.length) return [];
+      const { data, error } = await fetchAllRows<{ id: string; category: string; name: string }>((from, to) => supabase
+        .from('treatment_types').select('id, category, name').in('location_id', uniqueLocations).order('id').range(from, to));
+      if (error) throw new Error(error.message);
+      return data || [];
+    },
     getTypes: async (locationId?: string): Promise<TreatmentType[]> => {
        try {
          let query = supabase
@@ -4734,6 +4742,7 @@ export const api = {
           treatment_id,
           commission_rate,
           fixed_amount,
+          is_enabled,
           created_at,
           updated_at,
           treatment_types:treatment_id (
@@ -4751,6 +4760,7 @@ export const api = {
         treatment_id: row.treatment_id,
         commission_rate: Number(row.commission_rate ?? 0),
         fixed_amount: row.fixed_amount == null ? null : Number(row.fixed_amount),
+        is_enabled: row.is_enabled !== false,
         created_at: row.created_at,
         updated_at: row.updated_at,
         treatment_name: row.treatment_types?.name || undefined
@@ -4763,23 +4773,24 @@ export const api = {
           doctor_id: doctorId,
           treatment_id: entry.treatment_id,
           commission_rate: Number(entry.commission_rate),
-          fixed_amount: entry.fixed_amount == null ? null : Number(entry.fixed_amount)
+          fixed_amount: entry.fixed_amount == null ? null : Number(entry.fixed_amount),
+          is_enabled: entry.is_enabled !== false
         }));
 
-      const { error: deleteError } = await supabase
-        .from('doctor_treatment_commissions')
-        .delete()
-        .eq('doctor_id', doctorId);
-
-      if (deleteError) throw new Error(deleteError.message);
-
-      if (normalized.length === 0) return;
-
-      const { error: upsertError } = await supabase
-        .from('doctor_treatment_commissions')
-        .upsert(normalized, { onConflict: 'doctor_id,treatment_id' });
-
-      if (upsertError) throw new Error(upsertError.message);
+      if (normalized.length) {
+        const { error } = await supabase.from('doctor_treatment_commissions')
+          .upsert(normalized, { onConflict: 'doctor_id,treatment_id' });
+        if (error) throw new Error(error.message);
+      }
+      const { data: existing, error: readError } = await supabase.from('doctor_treatment_commissions')
+        .select('id, treatment_id').eq('doctor_id', doctorId);
+      if (readError) throw new Error(readError.message);
+      const retained = new Set(normalized.map(row => row.treatment_id));
+      const removed = (existing || []).filter(row => !retained.has(row.treatment_id)).map(row => row.id);
+      if (removed.length) {
+        const { error } = await supabase.from('doctor_treatment_commissions').delete().in('id', removed);
+        if (error) throw new Error(error.message);
+      }
     },
     getApplicableRate: async (doctorId: string, treatmentId: string): Promise<number> => {
       const { data, error } = await supabase.rpc('get_applicable_commission_rate', {
@@ -4790,6 +4801,42 @@ export const api = {
       if (error) throw new Error(error.message);
 
       return Number(data ?? 0);
+    }
+  },
+
+  doctorCategoryCommissions: {
+    getByDoctor: async (doctorId: string): Promise<DoctorCategoryCommission[]> => {
+      const { data, error } = await supabase.from('doctor_category_commissions')
+        .select('id, doctor_id, category, commission_rate, fixed_amount')
+        .eq('doctor_id', doctorId).order('category');
+      if (error) throw new Error(error.message);
+      return (data || []).map((row: any) => ({ ...row,
+        commission_rate: Number(row.commission_rate),
+        fixed_amount: row.fixed_amount == null ? null : Number(row.fixed_amount)
+      }));
+    },
+    replaceForDoctor: async (doctorId: string, rows: DoctorCategoryCommission[]): Promise<void> => {
+      const normalized = rows.map(row => ({ doctor_id: doctorId, category: row.category.trim(),
+        commission_rate: Number(row.commission_rate),
+        fixed_amount: row.fixed_amount == null ? null : Number(row.fixed_amount)
+      }));
+      const { data: existing, error: readError } = await supabase.from('doctor_category_commissions')
+        .select('id, category').eq('doctor_id', doctorId);
+      if (readError) throw new Error(readError.message);
+      for (const row of normalized) {
+        const match = (existing || []).find(item => item.category.toLowerCase() === row.category.toLowerCase());
+        const query = match
+          ? supabase.from('doctor_category_commissions').update(row).eq('id', match.id)
+          : supabase.from('doctor_category_commissions').insert(row);
+        const { error } = await query;
+        if (error) throw new Error(error.message);
+      }
+      const retained = normalized.map(row => row.category.toLowerCase());
+      const removed = (existing || []).filter(row => !retained.includes(row.category.toLowerCase())).map(row => row.id);
+      if (removed.length) {
+        const { error } = await supabase.from('doctor_category_commissions').delete().in('id', removed);
+        if (error) throw new Error(error.message);
+      }
     }
   },
 
