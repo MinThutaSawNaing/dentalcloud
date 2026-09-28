@@ -20,6 +20,26 @@ const treatment = (overrides: Partial<CommissionTreatmentInput> = {}): Commissio
 });
 
 describe('doctor commission ledger', () => {
+  it('uses only the selected method when a doctor stores both percentage and fixed values', () => {
+    const payment = {
+      id: 'payment-1', patientId: 'patient-1', date: '2026-07-01',
+      commissionableAmount: 100_000, treatmentIds: ['treatment-1']
+    };
+    const percentageTreatment = treatment({
+      cost: 100_000, commissionType: 'percentage', commissionPercentage: 20,
+      commissionPerVisit: 30_000, customCommissionPercentage: 25,
+      customCommissionFixedAmount: 40_000
+    });
+    const fixedTreatment = { ...percentageTreatment, commissionType: 'flat_visit' as const };
+
+    expect(calculateCommissionLedgerEntries(
+      [percentageTreatment], allocateCommissionablePayments([percentageTreatment], [payment])
+    )).toEqual([expect.objectContaining({ calculationMode: 'percentage', commissionRate: 25, earnings: 25_000 })]);
+    expect(calculateCommissionLedgerEntries(
+      [fixedTreatment], allocateCommissionablePayments([fixedTreatment], [payment])
+    )).toEqual([expect.objectContaining({ calculationMode: 'flat_visit', commissionRate: 40_000, earnings: 40_000 })]);
+  });
+
   it('pays the highest fixed treatment override once for a multi-treatment visit', () => {
     const treatments = [
       treatment({ id: 'filling', commissionType: 'flat_visit', commissionPerVisit: 20_000, customCommissionFixedAmount: 30_000 }),
