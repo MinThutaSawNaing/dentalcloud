@@ -2,12 +2,22 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveDoctorCommissionType,
   usesFlatVisitCommission,
+  singleMethodDoctorCommission,
+  singleMethodCommissionRule,
   validateDoctorCommissionPercentage,
   validateDoctorCommissionPerVisit,
   validateDoctorCommissionType
 } from './doctorCommission';
 
 describe('doctor commission mode', () => {
+  it('removes the inactive method at the doctor and rule levels', () => {
+    expect(singleMethodDoctorCommission('percentage', 20, 500)).toEqual({ commission_percentage: 20, commission_per_visit: 0 });
+    expect(singleMethodDoctorCommission('flat_visit', 20, 500)).toEqual({ commission_percentage: 0, commission_per_visit: 500 });
+    expect(singleMethodCommissionRule('percentage', 25, 600)).toEqual({ commission_rate: 25, fixed_amount: null });
+    expect(singleMethodCommissionRule('flat_visit', 25, 600)).toEqual({ commission_rate: 0, fixed_amount: 600 });
+    expect(singleMethodCommissionRule('flat_visit', 25, null)).toEqual({ commission_rate: 0, fixed_amount: null });
+    expect(singleMethodCommissionRule('flat_visit', 25, 0)).toEqual({ commission_rate: 0, fixed_amount: 0 });
+  });
   it('uses the explicit percentage mode regardless of specialization', () => {
     expect(resolveDoctorCommissionType({
       commissionType: 'percentage',

@@ -26,6 +26,18 @@ export const resolveDoctorCommissionType = ({
 export const usesFlatVisitCommission = (input: DoctorCommissionModeInput): boolean =>
   resolveDoctorCommissionType(input) === 'flat_visit';
 
+/** A doctor configuration only keeps the values for its selected method. */
+export const singleMethodDoctorCommission = (type: DoctorCommissionType, percentage: number, perVisit: number) => ({
+  commission_percentage: type === 'flat_visit' ? 0 : percentage,
+  commission_per_visit: type === 'flat_visit' ? perVisit : 0
+});
+
+/** A blank fixed override is distinct from an explicit zero (it falls back). */
+export const singleMethodCommissionRule = (type: DoctorCommissionType, rate: number, fixed: number | null | undefined) => ({
+  commission_rate: type === 'flat_visit' ? 0 : rate,
+  fixed_amount: type === 'flat_visit' ? fixed ?? null : null
+});
+
 export const validateDoctorCommissionType = (commissionType: unknown): DoctorCommissionType => {
   if (commissionType === 'percentage' || commissionType === 'flat_visit') return commissionType;
   throw new Error('Commission method must be percentage or flat_visit.');

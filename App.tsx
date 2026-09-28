@@ -71,7 +71,7 @@ import {
 } from './constants';
 import { api } from './services/api';
 import { formatCurrency, getCurrencySymbol, Currency } from './utils/currency';
-import { usesFlatVisitCommission } from './utils/doctorCommission';
+import { usesFlatVisitCommission, singleMethodDoctorCommission, singleMethodCommissionRule } from './utils/doctorCommission';
 import { buildFinancialReport, renderFinancialReportMarkdown } from './utils/aiReport';
 import { auth } from './services/auth';
 import { activeStaffPresence } from './services/activeStaffPresence';
@@ -3405,9 +3405,10 @@ const App: React.FC = () => {
     });
     const savedPercentage = Number(newDoctorData.commission_percentage ?? 0);
     const savedPerVisit = Number(newDoctorData.commission_per_visit ?? 0);
-    if (!Number.isFinite(savedPercentage) || savedPercentage < 0 || savedPercentage > 100
-      || !Number.isFinite(savedPerVisit) || savedPerVisit < 0) {
-      alert('Enter a percentage between 0 and 100 and a non-negative fixed amount.');
+    if (useFlatVisitCommission
+      ? !Number.isFinite(savedPerVisit) || savedPerVisit < 0
+      : !Number.isFinite(savedPercentage) || savedPercentage < 0 || savedPercentage > 100) {
+      alert(useFlatVisitCommission ? 'Enter a non-negative fixed amount.' : 'Enter a percentage between 0 and 100.');
       setIsSubmitting(false);
       return;
     }
@@ -3416,8 +3417,7 @@ const App: React.FC = () => {
       .filter((row) => row.treatment_id)
       .map((row) => ({
         treatment_id: row.treatment_id,
-        commission_rate: Number(row.commission_rate),
-        fixed_amount: row.fixed_amount,
+        ...singleMethodCommissionRule(newDoctorData.commission_type === 'flat_visit' ? 'flat_visit' : 'percentage', Number(row.commission_rate), row.fixed_amount),
         is_enabled: row.is_enabled !== false
       }));
     if (doctorCategoryRows.some(row => !row.category.trim())) {
@@ -3427,8 +3427,7 @@ const App: React.FC = () => {
     }
     const normalizedCategoryRows = doctorCategoryRows.map(row => ({
       category: row.category.trim(),
-      commission_rate: Number(row.commission_rate),
-      fixed_amount: row.fixed_amount
+      ...singleMethodCommissionRule(newDoctorData.commission_type === 'flat_visit' ? 'flat_visit' : 'percentage', Number(row.commission_rate), row.fixed_amount)
     }));
     if (new Set(normalizedCategoryRows.map(row => row.category.toLocaleLowerCase())).size !== normalizedCategoryRows.length) {
       alert('Each specialty category can have only one commission rule.');
@@ -3469,6 +3468,7 @@ const App: React.FC = () => {
     try {
       const doctorDataToSave = {
         ...newDoctorData,
+        ...singleMethodDoctorCommission(useFlatVisitCommission ? 'flat_visit' : 'percentage', savedPercentage, savedPerVisit),
         specialization: newDoctorData.specialization?.trim() || 'General',
         location_id: targetDoctorLocationIds[0],
         location_ids: targetDoctorLocationIds,
@@ -5866,16 +5866,25 @@ const App: React.FC = () => {
                 </label>
                 <select
                   id="doctor-commission-type"
-                  className="w-full border-gray-200 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                  disabled={doctorCommissionLoading || doctorCategoriesLoading || isSubmitting || Boolean(doctorCommissionLoadError || doctorCategoryLoadError)}
+                  className="w-full border-gray-200 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white disabled:cursor-not-allowed disabled:opacity-50"
                   value={newDoctorData.commission_type || 'percentage'}
-                  onChange={(e: any) => setNewDoctorData({ ...newDoctorData, commission_type: e.target.value })}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                    const nextType = e.target.value as 'percentage' | 'flat_visit';
+                    if (nextType === newDoctorData.commission_type) return;
+                    if (!window.confirm('Change commission method? Saving will clear the previous method’s doctor default and all treatment and category override values. Existing treatment and payout snapshots are not changed.')) return;
+                    setNewDoctorData(prev => ({ ...prev, commission_type: nextType, commission_percentage: 0, commission_per_visit: 0 }));
+                    setDoctorCommissionRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
+                    setDoctorCategoryRows(prev => prev.map(row => ({ ...row, commission_rate: 0, fixed_amount: null })));
+                  }}
                 >
                   <option value="percentage">Percentage (%)</option>
                   <option value="flat_visit">Fixed amount per visit ({getCurrencySymbol(currency)})</option>
                 </select>
               </div>
               <div className="sm:col-span-2">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  {newDoctorData.commission_type !== 'flat_visit' ? (
                   <label htmlFor="doctor-commission-percentage" className="block text-xs font-bold text-gray-600">
                     Default Commission Percentage (%)
                     <input id="doctor-commission-percentage" type="number" min="0" max="100" step="0.01"
@@ -5883,6 +5892,7 @@ const App: React.FC = () => {
                       onChange={e => setNewDoctorData(prev => ({ ...prev, commission_percentage: Number(e.target.value) }))}
                       className="mt-1 w-full border-gray-200 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500" />
                   </label>
+                  ) : (
                   <label htmlFor="doctor-commission-per-visit" className="block text-xs font-bold text-gray-600">
                     Default Fixed Per Visit ({getCurrencySymbol(currency)})
                     <input id="doctor-commission-per-visit" type="number" min="0" step="0.01"
@@ -5890,8 +5900,9 @@ const App: React.FC = () => {
                       onChange={e => setNewDoctorData(prev => ({ ...prev, commission_per_visit: Number(e.target.value) }))}
                       className="mt-1 w-full border-gray-200 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500" />
                   </label>
+                  )}
                 </div>
-                <p className="mt-1 text-xs text-gray-600">Only the selected commission method is paid: percentage of collected treatment fees after costs, or one fixed amount per patient visit. Saving both values does not add them together.</p>
+                <p className="mt-1 text-xs text-gray-600">Choose one method only. Percentage is based on collected treatment fees after costs; fixed is paid once per patient visit. Saving clears values from the other method.</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -5911,7 +5922,7 @@ const App: React.FC = () => {
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Custom Treatment Commissions</label>
-                    <p className="text-xs text-gray-500">Override the doctor default for specific treatments. Both stored values remain editable; only the selected doctor commission method is used. With fixed-per-visit, the highest applicable treatment amount is paid once per visit.</p>
+                    <p className="text-xs text-gray-500">Override the doctor default for specific treatments using the selected method only. With fixed-per-visit, the highest applicable treatment amount is paid once per visit.</p>
                   </div>
                   <button
                     type="button"
@@ -5932,7 +5943,7 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     doctorCommissionRows.map((row, index) => (
-                      <div key={row.id || `doctor-commission-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[1fr_130px_130px_auto_auto] sm:items-end">
+                      <div key={row.id || `doctor-commission-${index}`} className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[1fr_130px_auto_auto] sm:items-end">
                         <div>
                           <label className="block text-xs text-gray-600 mb-1">Treatment</label>
                           <select
@@ -5950,7 +5961,7 @@ const App: React.FC = () => {
                             ))}
                           </select>
                         </div>
-                        <div>
+                        {newDoctorData.commission_type !== 'flat_visit' && <div>
                           <label className="block text-xs text-gray-600 mb-1">Commission %</label>
                           <input
                             type="number"
@@ -5965,13 +5976,13 @@ const App: React.FC = () => {
                               setDoctorCommissionRows(updated);
                             }}
                           />
-                        </div>
-                        <div>
+                        </div>}
+                        {newDoctorData.commission_type === 'flat_visit' && <div>
                           <label className="block text-xs text-gray-600 mb-1">Fixed / Visit ({getCurrencySymbol(currency)})</label>
                           <input type="number" min="0" step="0.01" value={row.fixed_amount ?? ''}
                             onChange={e => setDoctorCommissionRows(prev => prev.map((item, i) => i === index ? { ...item, fixed_amount: e.target.value === '' ? null : Number(e.target.value) } : item))}
                             className="w-full border-gray-200 border rounded-lg p-2 text-sm" placeholder="Not set" />
-                        </div>
+                        </div>}
                         <button type="button" aria-pressed={row.is_enabled !== false}
                           onClick={() => setDoctorCommissionRows(prev => prev.map((item, i) => i === index ? { ...item, is_enabled: item.is_enabled === false } : item))}
                           className={`rounded-lg border px-3 py-2 text-xs font-bold ${row.is_enabled === false ? 'border-amber-300 text-amber-800' : 'border-indigo-200 text-indigo-700'}`}>
@@ -5999,7 +6010,7 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-bold text-gray-800">Specialty Category Commissions</h4>
-                    <p className="text-xs text-gray-600">Choose a Service Menu category. Enabled per-treatment rules win; then this category rate; then the doctor default. Both saved values are shown; only the doctor's selected method is paid. Disabling a treatment rule preserves it for later.</p>
+                    <p className="text-xs text-gray-600">Choose a Service Menu category. Enabled per-treatment rules win; then this category rule; then the doctor default. Only the selected commission method can be entered. Disabling a treatment rule preserves it for later.</p>
                   </div>
                   <button type="button" onClick={() => setDoctorCategoryRows(prev => [...prev, { category: '', commission_rate: 0, fixed_amount: null }])}
                     className="rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700">+ Add Category</button>
@@ -6009,7 +6020,7 @@ const App: React.FC = () => {
                   const overlaps = row.category.trim() ? doctorCommissionRows.filter(rule => rule.is_enabled !== false && doctorServiceCategories.some(t =>
                     t.id === rule.treatment_id && t.category?.trim().toLowerCase() === row.category.trim().toLowerCase())) : [];
                   return <div key={row.id || `category-rule-${index}`} className="rounded-lg border border-gray-200 bg-white p-3">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_130px_130px_auto] sm:items-end">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_130px_auto] sm:items-end">
                       <div>
                         <label className="block text-xs text-gray-600 mb-1">Specialty Category</label>
                         <SearchableSelect
@@ -6021,18 +6032,17 @@ const App: React.FC = () => {
                           className="[&>div:first-child]:rounded-lg [&>div:first-child]:border-gray-200 [&>div:first-child]:p-2"
                         />
                       </div>
-                      <label className="text-xs text-gray-600">Commission %
+                      {newDoctorData.commission_type !== 'flat_visit' ? <label className="text-xs text-gray-600">Commission %
                         <input type="number" min="0" max="100" step="0.01"
                           value={row.commission_rate}
                           onChange={e => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? { ...item, commission_rate: Number(e.target.value) } : item))}
                           className="mt-1 w-full rounded-lg border border-gray-200 p-2 text-sm" />
-                      </label>
-                      <label className="text-xs text-gray-600">Fixed / Visit ({getCurrencySymbol(currency)})
+                      </label> : <label className="text-xs text-gray-600">Fixed / Visit ({getCurrencySymbol(currency)})
                         <input type="number" min="0" step="0.01" value={row.fixed_amount ?? ''}
                           onChange={e => setDoctorCategoryRows(prev => prev.map((item, i) => i === index ? { ...item, fixed_amount: e.target.value === '' ? null : Number(e.target.value) } : item))}
                           placeholder="Not set"
                           className="mt-1 w-full rounded-lg border border-gray-200 p-2 text-sm" />
-                      </label>
+                      </label>}
                       <button type="button" aria-label={`Remove category rule ${index + 1}`} onClick={() => setDoctorCategoryRows(prev => prev.filter((_, i) => i !== index))}
                         className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
                     </div>
