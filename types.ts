@@ -24,6 +24,7 @@ export interface BranchReceiptIdentity {
 }
 
 export interface Patient {
+  auth_session_token?: string;
   id: string;
   patient_unique_id?: string;
   location_id: string;

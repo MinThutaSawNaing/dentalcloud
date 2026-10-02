@@ -292,8 +292,12 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
         setError('Current password is incorrect');
         return;
       }
+      if (authenticated.id !== patient.id) throw new Error('Unable to verify this patient account.');
+      const currentSession = auth.getSession();
+      if (!currentSession || !authenticated.auth_session_token) throw new Error('Please sign in again.');
+      auth.setSession({ ...currentSession, patientAuthToken: authenticated.auth_session_token });
 
-      const nextPassword = passwordChange.newPassword.trim();
+      const nextPassword = passwordChange.newPassword;
       const supabaseUser = await otpService.getCurrentUser();
       const canSyncSupabase =
         !!supabaseUser &&

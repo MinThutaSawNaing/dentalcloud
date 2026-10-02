@@ -54,6 +54,8 @@ vi.mock('./supabase', () => ({
 }));
 
 import { api } from './api';
+vi.mock('./secureAuth', () => ({ secureAuthRequest: vi.fn() }));
+import { secureAuthRequest } from './secureAuth';
 
 describe('patients.authenticate', () => {
   beforeEach(() => {
@@ -64,6 +66,10 @@ describe('patients.authenticate', () => {
   });
 
   it('checks all matching patient_auth rows before rejecting a correct password', async () => {
+    vi.mocked(secureAuthRequest).mockResolvedValue({ patient: {
+      id: 'current-patient-id', name: 'Patient One', location_id: 'location-1',
+      email: 'patient@example.com', phone: '09123456789', balance: 0, loyalty_points: 0,
+    }, token: 'server-token' });
     supabaseMock.authRowsByColumnValue.set('email:patient@example.com', [
       {
         patient_id: 'stale-patient-id',
@@ -95,5 +101,10 @@ describe('patients.authenticate', () => {
 
     expect(result?.id).toBe('current-patient-id');
     expect(result?.name).toBe('Patient One');
+    expect(result?.auth_session_token).toBe('server-token');
+    expect(secureAuthRequest).toHaveBeenCalledWith('login', {
+      kind: 'patient', identifier: 'patient@example.com', password: 'correct-password',
+    });
+    expect(supabaseMock.from).not.toHaveBeenCalled();
   });
 });

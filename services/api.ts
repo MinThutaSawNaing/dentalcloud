@@ -1,3 +1,4 @@
+import { secureAuthRequest } from './secureAuth';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
 import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee } from '../types';
@@ -2144,9 +2145,13 @@ export const api = {
 
       if (existing) {
         // Update
-        const updateData: any = { password, email: normalizedEmail, location_id: patientLocationId };
-        if (phone !== undefined) updateData.phone = normalizedPhone;
-        if (username !== undefined) updateData.username = normalizedUsername ?? null;
+        const patientSession = typeof localStorage !== 'undefined'
+          ? JSON.parse(localStorage.getItem('dental_auth_session') || 'null') : null;
+        const updateData: any = patientSession?.role === 'patient'
+          ? { password }
+          : { password, email: normalizedEmail, location_id: patientLocationId };
+        if (patientSession?.role !== 'patient' && phone !== undefined) updateData.phone = normalizedPhone;
+        if (patientSession?.role !== 'patient' && username !== undefined) updateData.username = normalizedUsername ?? null;
         
         const { error } = await supabase
           .from('patient_auth')
@@ -2215,187 +2220,11 @@ export const api = {
     
     // Authenticate patient with email, phone, username, or name + password
     authenticate: async (identifier: string, password: string): Promise<Patient | null> => {
-      try {
-        const trimmedIdentifier = identifier.trim();
-        const normalizedIdentifier = normalizePatientUsernameForAuth(trimmedIdentifier) || trimmedIdentifier.toLowerCase();
-        type PatientAuthCandidate = {
-          patient_id: string;
-          password: string | null;
-          is_verified?: boolean | null;
-          phone?: string | null;
-        };
-        const findVerifiedPasswordMatch = (rows: PatientAuthCandidate[]): PatientAuthCandidate | null => {
-          return rows.find((row) => row.is_verified !== false && row.password === password) || null;
-        };
-        
-        // 1. Try to find patient_auth by email, phone, or username
-        const lookupAuthMatch = async (
-          column: 'email' | 'phone' | 'username',
-          value: string
-        ): Promise<PatientAuthCandidate[]> => {
-          if (!value) return [];
-
-          const { data, error } = await supabase
-            .from('patient_auth')
-            .select('patient_id, password, is_verified, created_at')
-            .eq(column, value)
-            .order('is_verified', { ascending: false })
-            .order('created_at', { ascending: false })
-            .limit(5);
-
-          if (error) {
-            console.warn(`Patient auth lookup error (${column}):`, error.message);
-            return [];
-          }
-
-          return data || [];
-        };
-
-        const lookupPhoneByNormalizedDigits = async (): Promise<PatientAuthCandidate[]> => {
-          const normalizedPhoneDigits = normalizePhoneDigitsForLookup(trimmedIdentifier);
-          if (!normalizedPhoneDigits) return [];
-
-          const { data, error } = await supabase
-            .from('patient_auth')
-            .select('patient_id, password, phone, is_verified, created_at')
-            .order('is_verified', { ascending: false })
-            .order('created_at', { ascending: false });
-
-          if (error) {
-            console.warn('Patient auth normalized phone lookup error:', error.message);
-            return [];
-          }
-
-          return (data || []).filter((record: any) => normalizePhoneDigitsForLookup(record.phone) === normalizedPhoneDigits);
-        };
-
-        const normalizedPhone = normalizeMyanmarPhoneForLookup(trimmedIdentifier);
-        const authCandidates = [
-          ...await lookupAuthMatch('email', normalizedIdentifier),
-          ...await lookupAuthMatch('username', normalizedIdentifier),
-          ...await lookupAuthMatch('phone', trimmedIdentifier),
-          ...await lookupAuthMatch('phone', normalizedPhone || ''),
-          ...await lookupPhoneByNormalizedDigits()
-        ];
-        const authMatch = findVerifiedPasswordMatch(authCandidates);
-
-        if (authCandidates.length > 0) {
-          if (!authMatch) {
-            const hasVerifiedCandidate = authCandidates.some((candidate) => candidate.is_verified !== false);
-            if (!hasVerifiedCandidate) {
-              console.log('Patient auth record is not verified yet.');
-            } else {
-              console.log('Password mismatch for patient_auth records.');
-            }
-            return null;
-          }
-
-          if (authMatch.is_verified === false) {
-            console.log('Patient auth record is not verified yet.');
-            return null;
-          }
-
-          const { data: patientData, error: pError } = await supabase
-            .from('patients')
-            .select('id, patient_unique_id, location_id, name, email, phone, balance, loyalty_points, medical_history, created_at')
-            .eq('id', authMatch.patient_id)
-            .maybeSingle();
-
-          if (pError || !patientData) {
-            console.log('No patient found for auth record:', authMatch.patient_id);
-            return null;
-          }
-
-          console.log('Patient authentication successful for:', patientData.name);
-          return mapPatient(patientData);
-        }
-
-        // 2. Fallback: allow phone login when patient_auth.phone is missing but patients.phone is present.
-        const lookupPatientByNormalizedPhone = async (): Promise<Patient | null> => {
-          const normalizedPhoneDigits = normalizePhoneDigitsForLookup(trimmedIdentifier);
-          if (!normalizedPhoneDigits) return null;
-
-          const { data: patientRows, error: patientRowsError } = await supabase
-            .from('patients')
-            .select('id, patient_unique_id, location_id, name, email, phone, balance, loyalty_points, medical_history, created_at');
-
-          if (patientRowsError) {
-            console.warn('Patient normalized phone lookup error:', patientRowsError.message);
-            return null;
-          }
-
-          const phonePatient = (patientRows || []).find((record: any) => normalizePhoneDigitsForLookup(record.phone) === normalizedPhoneDigits);
-          if (!phonePatient?.id) return null;
-
-          const { data: phoneAuthData, error: phoneAuthError } = await supabase
-            .from('patient_auth')
-            .select('password, is_verified')
-            .eq('patient_id', phonePatient.id)
-            .maybeSingle();
-
-          if (phoneAuthError || !phoneAuthData) {
-            console.log('No auth record found for phone patient:', phonePatient.name);
-            return null;
-          }
-
-          if (phoneAuthData.is_verified === false) {
-            console.log('Phone patient auth record is not verified yet.');
-            return null;
-          }
-
-          if (password !== phoneAuthData.password) {
-            console.log('Password mismatch for phone patient:', phonePatient.name);
-            return null;
-          }
-
-          console.log('Patient authentication successful for phone:', phonePatient.name);
-          return mapPatient(phonePatient);
-        };
-
-        const phonePatient = await lookupPatientByNormalizedPhone();
-        if (phonePatient) {
-          return phonePatient;
-        }
-
-        // 3. Fallback: allow legacy login by patient name
-        const { data: patientData, error: pError } = await supabase
-          .from('patients')
-          .select('id, patient_unique_id, location_id, name, email, phone, balance, loyalty_points, medical_history, created_at')
-          .eq('name', trimmedIdentifier)
-          .maybeSingle();
-
-        if (pError || !patientData) {
-          console.log('No patient found with identifier:', trimmedIdentifier);
-          return null;
-        }
-
-        const { data: authData, error: aError } = await supabase
-          .from('patient_auth')
-          .select('password, is_verified')
-          .eq('patient_id', patientData.id)
-          .maybeSingle();
-
-        if (aError || !authData) {
-          console.log('No auth record found for patient:', patientData.name);
-          return null;
-        }
-
-        if (authData.is_verified === false) {
-          console.log('Patient auth record is not verified yet:', patientData.name);
-          return null;
-        }
-
-        if (password === authData.password) {
-          console.log('Patient authentication successful for:', patientData.name);
-          return mapPatient(patientData);
-        }
-
-        console.log('Password mismatch for patient:', patientData.name);
-        return null;
-      } catch (err) {
-        console.error('Error authenticating patient:', err);
-        return null;
-      }
+      const result = await secureAuthRequest<{ patient: any; token?: string }>('login', {
+        kind: 'patient', identifier, password,
+      });
+      if (!result.patient) return null;
+      return { ...mapPatient(result.patient), auth_session_token: result.token };
     },
 
     // Register patient with password
@@ -6373,99 +6202,10 @@ export const api = {
       }
     },
     authenticate: async (username: string, password: string): Promise<User | null> => {
-      try {
-        const trimmedUsername = username.trim();
-        const passwordMatches = (storedPassword?: string | null) => (
-          String(storedPassword || '') === password ||
-          String(storedPassword || '').trim() === password.trim()
-        );
-        console.log('Attempting to authenticate user:', trimmedUsername);
-        const supportsAllowedTabs = await detectUsersAllowedTabsSupport();
-        const supportsDoctorId = await detectUsersDoctorIdSupport();
-        const selectColumns = supportsAllowedTabs
-          ? `id, location_id, username, role, allowed_tabs${supportsDoctorId ? ', doctor_id' : ''}`
-          : `id, location_id, username, role${supportsDoctorId ? ', doctor_id' : ''}`;
-        const mapUserForSession = (user: User): User => ({
-          id: user.id,
-          location_id: user.location_id,
-          doctor_id: supportsDoctorId ? (user.doctor_id || null) : null,
-          username: user.username,
-          auth_session_token: user.auth_session_token,
-          role: user.role,
-          allowed_tabs: resolveAllowedTabs(user.role, supportsAllowedTabs ? user.allowed_tabs : undefined)
-        });
-  
-        const authResult = await supabase.rpc('authenticate_staff_user_session', {
-          p_username: trimmedUsername,
-          p_password: password
-        });
-        const data = authResult.data as User[] | null;
-        const error = authResult.error;
-
-        if (error) {
-          console.error('Supabase error:', error);
-          return null;
-        }
-
-        const user = (data || []).find((row) => row.username === trimmedUsername)
-          || (data || []).find((row) => row.username?.toLowerCase() === trimmedUsername.toLowerCase())
-          || (data || [])[0];
-
-        if (user) {
-          console.log('Authentication successful for user:', trimmedUsername);
-          return mapUserForSession(user);
-        }
-
-        if (!user) {
-          console.log('No user found with username:', trimmedUsername);
-        } else {
-          console.log('Password mismatch for user:', trimmedUsername);
-        }
-
-        if (supportsDoctorId) {
-          const { data: doctorRows, error: doctorError } = await supabase
-            .from('doctors')
-            .select('id, location_id, email, password')
-            .ilike('email', trimmedUsername)
-            .limit(1);
-
-          if (doctorError) {
-            console.warn('Doctor email login fallback failed:', doctorError.message);
-            return null;
-          }
-
-          const doctor = doctorRows?.[0];
-          if (doctor && passwordMatches(doctor.password)) {
-            const { data: linkedUser, error: linkedUserError } = await supabase
-              .from('users')
-              .select(selectColumns)
-              .eq('doctor_id', doctor.id)
-              .maybeSingle() as { data: User | null, error: any };
-
-            if (linkedUserError) {
-              console.warn('Doctor email matched, but linked staff user lookup failed:', linkedUserError.message);
-              throw new Error('Unable to verify the linked doctor login account. Please try again.');
-            }
-
-            if (linkedUser) {
-              console.log('Authentication successful for doctor email:', trimmedUsername);
-              return {
-                ...mapUserForSession(linkedUser),
-                doctor_id: doctor.id,
-                allowed_tabs: DOCTOR_DASHBOARD_TABS
-              };
-            }
-
-            console.log('Authentication successful for doctor email without linked staff user:', trimmedUsername);
-            throw new Error('This doctor login account is incomplete. Please ask an administrator to update the doctor account.');
-          }
-        }
-
-        return null;
-      } catch (err) {
-        console.error("Error authenticating user:", err);
-        throw err;
-      }
+      const result = await secureAuthRequest<{ user: User | null }>('login', {
+        kind: 'staff', identifier: username, password,
+      });
+      return result.user;
     },
     create: async (data: Partial<User>): Promise<User> => {
       const supportsAllowedTabs = await detectUsersAllowedTabsSupport();

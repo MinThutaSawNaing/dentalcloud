@@ -1,3 +1,4 @@
+import { secureAuthRequest } from './secureAuth';
 import { supabase } from './supabase';
 import { api } from './api';
 
@@ -273,127 +274,18 @@ export const otpService = {
     profile: { username?: string; phone?: string; age?: number; address?: string; city?: string; township?: string },
     password: string
   ): Promise<{ success: boolean; message: string }> {
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
-      if (!this.isValidEmail(normalizedEmail)) {
-        return { success: false, message: 'Please enter a valid email address.' };
-      }
-      if (!password || password.length < 6) {
-        return { success: false, message: 'Password must be at least 6 characters long.' };
-      }
-
-      await this.cleanupPendingSignupConflicts(normalizedEmail, profile.username);
-
-      await api.patients.registerWithSupabase(
-        normalizedEmail,
-        password,
-        undefined,
-        profile.username,
-        profile.phone,
-        false,
-        profile.age,
-        profile.address,
-        profile.city,
-        profile.township
-      );
-
-      const code = this.generateOTP();
-      await this.storeAuthCode(normalizedEmail, code, 30);
-
-      const pendingData = {
-        username: profile.username?.trim() || undefined,
-        phone: profile.phone?.trim() || undefined,
-        age: profile.age ?? undefined,
-        address: profile.address?.trim() || undefined,
-        city: profile.city?.trim() || undefined,
-        township: profile.township?.trim() || undefined
-      };
-      localStorage.setItem(this.getPendingSignupKey(normalizedEmail), JSON.stringify(pendingData));
-
-      const clinicName = await this.getClinicName();
-      const html = this.buildEmailHtml({
-        title: 'Your patient portal OTP code',
-        eyebrow: 'DentalCloud patient signup',
-        message: `Welcome to ${clinicName}. Enter the OTP code below in the registration form to finish creating your patient portal account.`,
-        code,
-        expiryText: 'This OTP code expires in 30 minutes. If you did not request this account, you can ignore this email.',
-        clinicName
-      });
-
-      await this.sendPatientAuthEmail({
-        to: normalizedEmail,
-        subject: `Your ${clinicName} patient portal OTP code`,
-        html,
-        text: `Your ${clinicName} patient portal OTP code is: ${code}\n\nEnter this code in the registration form. This code expires in 30 minutes.`,
-        clinicName
-      });
-
-      return { success: true, message: 'OTP code sent to your email. Please enter it below to verify your account.' };
-    } catch (error: any) {
-      console.error('Custom signup OTP email failed:', error);
-      return { success: false, message: error.message || 'Failed to send OTP email.' };
-    }
+    try { return await secureAuthRequest('signup', { email, profile, password }); }
+    catch (error) { return { success:false, message:error instanceof Error ? error.message : 'Signup unavailable.' }; }
   },
 
   async verifySignupOtp(email: string, code: string): Promise<{ success: boolean; message: string; email?: string }> {
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
-      const valid = await this.verifyAuthCode(normalizedEmail, code, true);
-      if (!valid) {
-        return { success: false, message: 'This OTP code is invalid or has expired. Please request a new code.' };
-      }
-
-      const { data: existingAuth, error: fetchError } = await supabase
-        .from('patient_auth')
-        .select('id')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (fetchError || !existingAuth?.id) {
-        return { success: false, message: 'No pending patient account was found for this email. Please register again.' };
-      }
-
-      const { error: updateError } = await supabase
-        .from('patient_auth')
-        .update({ is_verified: true, updated_at: new Date().toISOString() })
-        .eq('id', existingAuth.id);
-
-      if (updateError) {
-        throw new Error(updateError.message);
-      }
-
-      localStorage.removeItem(this.getPendingSignupKey(normalizedEmail));
-      return { success: true, message: 'Email verified and account created successfully!', email: normalizedEmail };
-    } catch (error: any) {
-      console.error('Custom patient signup OTP verification failed:', error);
-      return { success: false, message: error.message || 'Failed to verify OTP code.' };
-    }
+    try { return await secureAuthRequest('verify-signup', { email, code }); }
+    catch (error) { return { success:false, message:error instanceof Error ? error.message : 'Verification unavailable.' }; }
   },
 
   async resendSignupOtp(email: string): Promise<{ success: boolean; message: string }> {
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
-      const { data: existingAuth, error: fetchError } = await supabase
-        .from('patient_auth')
-        .select('username, phone, password, is_verified')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (fetchError || !existingAuth?.password) {
-        return { success: false, message: 'Your pending signup was not found. Please start registration again.' };
-      }
-      if (existingAuth.is_verified) {
-        return { success: false, message: 'This email is already verified. Please log in instead.' };
-      }
-
-      return await this.sendSignupOtpEmail(normalizedEmail, {
-        username: existingAuth.username,
-        phone: existingAuth.phone
-      }, existingAuth.password);
-    } catch (error: any) {
-      console.error('Custom resend signup OTP failed:', error);
-      return { success: false, message: error.message || 'Failed to resend OTP code.' };
-    }
+    try { return await secureAuthRequest('resend', { email }); }
+    catch (error) { return { success:false, message:error instanceof Error ? error.message : 'Resend unavailable.' }; }
   },
 
   async isEmailRegistered(email: string): Promise<boolean> {
@@ -440,101 +332,13 @@ export const otpService = {
   },
 
   async requestPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
-    const genericSuccess = 'If that email is registered, password reset instructions have been sent.';
-
-    try {
-      const normalizedEmail = email.toLowerCase().trim();
-      if (!this.isValidEmail(normalizedEmail)) {
-        return { success: false, message: 'Please enter a valid email address.' };
-      }
-
-      const { data: existingAuth, error: fetchError } = await supabase
-        .from('patient_auth')
-        .select('id')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (fetchError) {
-        console.error('Password reset patient lookup error:', fetchError);
-        return { success: true, message: genericSuccess };
-      }
-
-      if (!existingAuth?.id) {
-        return { success: true, message: genericSuccess };
-      }
-
-      const code = this.generateResetToken();
-      await this.storeAuthCode(normalizedEmail, code, 20);
-
-      const clinicName = await this.getClinicName();
-      const resetUrl = `${window.location.origin}${window.location.pathname}?reset=password&email=${encodeURIComponent(normalizedEmail)}&code=${encodeURIComponent(code)}`;
-      const safeClinicName = this.escapeHtml(clinicName);
-      const safeResetUrl = this.escapeHtml(resetUrl);
-      const html = `
-        <div style="margin:0;padding:0;background:#020617;font-family:Inter,Arial,sans-serif;color:#e5e7eb;">
-          <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
-            <div style="background:#0f172a;border:1px solid #1e293b;border-radius:22px;overflow:hidden;box-shadow:0 24px 80px rgba(15,23,42,.45);">
-              <div style="height:7px;background:linear-gradient(90deg,#2563eb,#06b6d4,#8b5cf6);"></div>
-              <div style="padding:30px;">
-                <div style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#38bdf8;font-weight:800;margin-bottom:12px;">DentalCloud password recovery</div>
-                <h1 style="margin:0 0 14px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:900;">Reset your patient portal password</h1>
-                <p style="margin:0 0 24px;color:#cbd5e1;font-size:15px;line-height:1.65;">We received a request to reset your ${safeClinicName} patient portal password. Click the button below to choose a new password.</p>
-                <div style="margin:24px 0;text-align:center;">
-                  <a href="${safeResetUrl}" style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,#2563eb,#06b6d4);color:#ffffff;font-weight:800;border-radius:14px;padding:14px 24px;box-shadow:0 12px 30px rgba(37,99,235,.35);">Reset password</a>
-                </div>
-                <p style="margin:0;color:#94a3b8;font-size:13px;line-height:1.55;">This reset link expires in 20 minutes. If you did not request a password reset, you can ignore this email.</p>
-                <p style="margin:18px 0 0;color:#64748b;font-size:12px;line-height:1.55;">If the button does not work, copy and paste this link into your browser:<br><span style="color:#93c5fd;word-break:break-all;">${safeResetUrl}</span></p>
-              </div>
-              <div style="padding:18px 30px;background:#020617;border-top:1px solid #1e293b;color:#64748b;font-size:12px;">${safeClinicName} - Secure patient portal</div>
-            </div>
-          </div>
-        </div>
-      `;
-
-      await this.sendPatientAuthEmail({
-        to: normalizedEmail,
-        subject: `Reset your ${clinicName} patient portal password`,
-        html,
-        text: `Reset your ${clinicName} patient portal password. Open this link to choose a new password: ${resetUrl}\n\nThis reset link expires in 20 minutes.`,
-        clinicName
-      });
-
-      return { success: true, message: genericSuccess };
-    } catch (error: any) {
-      console.error('Custom password reset request failed:', error);
-      return { success: false, message: error.message || 'Failed to send password reset email.' };
-    }
+    try { return await secureAuthRequest('reset-request', { email }); }
+    catch (error) { return { success:false, message:error instanceof Error ? error.message : 'Recovery unavailable.' }; }
   },
 
   async completePasswordReset(newPassword: string, email?: string, code?: string): Promise<{ success: boolean; message: string; email?: string }> {
-    try {
-      const trimmedPassword = newPassword.trim();
-      const normalizedEmail = (email || '').toLowerCase().trim();
-      const normalizedCode = (code || '').trim();
-
-      if (trimmedPassword.length < 6) {
-        return { success: false, message: 'Password must be at least 6 characters long.' };
-      }
-      if (!this.isValidEmail(normalizedEmail) || !/^[A-Za-z0-9_-]{6,64}$/.test(normalizedCode)) {
-        return { success: false, message: 'This reset link is invalid. Please request a new reset email.' };
-      }
-
-      const valid = await this.verifyAuthCode(normalizedEmail, normalizedCode, true);
-      if (!valid) {
-        return { success: false, message: 'This reset link has expired or was already used. Please request a new reset email.' };
-      }
-
-      await api.patients.updatePasswordByEmail(normalizedEmail, trimmedPassword);
-
-      return {
-        success: true,
-        message: 'Your password has been reset successfully. Please log in again.',
-        email: normalizedEmail
-      };
-    } catch (error: any) {
-      console.error('Custom password reset completion failed:', error);
-      return { success: false, message: error.message || 'Failed to reset password.' };
-    }
+    try { return await secureAuthRequest('reset-complete', { email, code, password: newPassword }); }
+    catch (error) { return { success:false, message:error instanceof Error ? error.message : 'Reset unavailable.' }; }
   },
 
   // Legacy 6-digit OTP helpers retained for compatibility with any older screens.

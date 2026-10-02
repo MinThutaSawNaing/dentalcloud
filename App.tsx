@@ -1314,6 +1314,8 @@ const App: React.FC = () => {
     const checkAuth = async () => {
       let session = auth.getSession();
       if (session) {
+        if (session.role === 'patient') session = await auth.validatePatientSession();
+        if (!session) { resetStaffSession(); return; }
         if (session.role !== 'patient') {
           try {
             session = await auth.refreshStaffSession();

@@ -1,13 +1,14 @@
-# Password security rollout — blocked pending production preflight
+# Password security rollout
 
 ## Status
 
-This is preparation only. No authentication change or password conversion is
-implemented by this document. Do not deploy a credential migration yet.
+The server-only Argon2id module, credential endpoint, frontend transport, session
+validation and recovery paths are implemented. See PASSWORD_SECURITY_AUDIT_20261002.md
+for audit/rehearsal evidence and the final production record for deployed status.
 
-The repository currently uses plaintext custom authentication. This audit does
-not fix that vulnerability. Production permissions and backend capabilities must
-be verified before choosing and implementing the conversion.
+Never restore legacy credential reads or equality-based authentication after hashes
+are stored: that creates pass-the-hash account takeover. Roll back only to a secure
+compatible frontend/backend. Private backups still contain historical plaintext.
 
 ## First step: read-only audit
 
@@ -21,8 +22,7 @@ be verified before choosing and implementing the conversion.
    data changes; use ROLLBACK to close an aborted transaction before continuing.
    Do not add columns or run the destructive complete_database_setup.sql script.
 
-The SQL has not yet been executed against a PostgreSQL instance. Repository
-tests can check its read-only structure but cannot establish schema compatibility.
+The preflight was executed read-only on production and the restored isolated copy.
 
 ## Required decisions and release gates
 
@@ -59,9 +59,12 @@ because of hashing. Incident evidence may require separate resets/notifications.
 2. Add private hash storage and explicit migration state; restrict client access.
 3. Test every account creation/update/login/reset route on the isolated database.
 4. Deploy compatible backend paths and frontend before final credential cutover.
-5. Perform resumable, locked/version-checked conversion in bounded batches.
+5. Execute 20261002000001_secure_credentials_freeze.sql BEFORE conversion.
+   This is a short login-maintenance window; old clients must refresh afterwards.
+   Perform compare-and-swap conversion using the tested migrate-passwords.py runner.
    Verify each hash before atomically clearing its plaintext. Log IDs/counts only.
-6. During final cutover, pause incompatible writes, refresh stale clients, remove
+6. Execute 20261002000002_secure_credentials_cutover.sql after stored hashes verify.
+   During final cutover, pause incompatible writes, refresh stale clients, remove
    plaintext fallback, and enforce server-authorized credentials and sessions.
 7. Verify zero unexpected plaintext, successful role-specific logins, protected
    credential access, single-use reset tokens, and valid existing staff tokens.

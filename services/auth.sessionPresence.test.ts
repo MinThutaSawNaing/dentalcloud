@@ -24,6 +24,8 @@ vi.mock('./api', () => ({
 
 import { auth } from './auth';
 import { api } from './api';
+vi.mock('./secureAuth', () => ({ secureAuthRequest: vi.fn() }));
+import { secureAuthRequest } from './secureAuth';
 
 const createLocalStorageMock = () => {
   const store = new Map<string, string>();
@@ -49,6 +51,10 @@ describe('auth staff session presence resilience', () => {
     vi.stubGlobal('localStorage', createLocalStorageMock());
     presenceMock.markActive.mockReset();
     presenceMock.markInactive.mockReset();
+    vi.mocked(secureAuthRequest).mockImplementation(async () => {
+      const current = auth.getSession();
+      return { session: { kind: 'staff', id: current?.userId, doctor_id: current?.doctor_id } } as any;
+    });
   });
 
   it('keeps a valid staff session when active presence tracking fails', async () => {
@@ -108,6 +114,7 @@ describe('auth staff session presence resilience', () => {
     await auth.createStaffSession({
       id: '00000000-0000-0000-0000-000000000003',
       username: 'marketing',
+      auth_session_token: 'valid-server-token',
       password: 'secret',
       role: 'normal',
       location_id: null,
@@ -150,6 +157,7 @@ describe('auth staff session presence resilience', () => {
     await auth.createStaffSession({
       id: '00000000-0000-0000-0000-000000000010',
       username: 'doctor@example.com',
+      auth_session_token: 'valid-server-token',
       role: 'normal',
       location_id: '00000000-0000-0000-0000-000000000020',
       doctor_id: '00000000-0000-0000-0000-000000000010'

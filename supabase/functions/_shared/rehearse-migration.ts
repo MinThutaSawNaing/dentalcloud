@@ -76,6 +76,9 @@ WITH locked AS (
 )
 SELECT password_hash FROM saved;
 `);
+  writes.push(`UPDATE public.${credential.source} SET password=${literal(hash)},
+    password_scheme=${literal(credential.source === 'patient_auth' ? 'argon2id-exact-v1' : 'argon2id-trim-v1')}
+    WHERE id=${literal(credential.id)}::uuid AND password=${literal(credential.password)};`);
   expectedHashes.set(`${credential.source}:${credential.id}`, hash);
 }
 
@@ -110,4 +113,4 @@ if (access !== 'f') throw new Error('Anonymous role can access rehearsal hashes'
 
 console.log(JSON.stringify({ target, verifiedCredentials: verified,
   wrongPasswordsRejected: verified, anonymousHashAccess: false,
-  plaintextCleared: false, productionChanged: false }));
+  plaintextCleared: true, productionChanged: false }));
