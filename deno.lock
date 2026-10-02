@@ -1,0 +1,48 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:hash-wasm@4.12.0": "4.12.0"
+  },
+  "npm": {
+    "hash-wasm@4.12.0": {
+      "integrity": "sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ=="
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@supabase/supabase-js@^2.90.1",
+        "npm:@types/node@^22.14.0",
+        "npm:@vitejs/plugin-react@5",
+        "npm:autoprefixer@^10.5.4",
+        "npm:framer-motion@12.36.0",
+        "npm:html5-qrcode@^2.3.8",
+        "npm:jspdf-autotable@^5.0.7",
+        "npm:jspdf@4",
+        "npm:jsqr@^1.4.0",
+        "npm:lucide-react@0.562",
+        "npm:postcss@^8.5.25",
+        "npm:qrcode.react@^4.2.0",
+        "npm:react-dom@^19.2.3",
+        "npm:react-markdown@^10.1.0",
+        "npm:react-teeth-selector@^1.0.10",
+        "npm:react@^19.2.3",
+        "npm:recharts@^3.6.0",
+        "npm:remark-gfm@^4.0.1",
+        "npm:tailwindcss@^3.4.17",
+        "npm:tsx@^4.21.0",
+        "npm:tus-js-client@^4.3.1",
+        "npm:typescript@~5.8.2",
+        "npm:vite@^6.2.0",
+        "npm:vitest@^4.1.6",
+        "npm:xlsx-js-style@1.2.0",
+        "npm:xlsx@~0.18.5"
+      ],
+      "overrides": {
+        "@reduxjs/toolkit": "2.10.1",
+        "motion-dom": "12.36.0",
+        "motion-utils": "12.36.0"
+      }
+    }
+  }
+}

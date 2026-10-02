@@ -22,19 +22,35 @@
   /root/password-security-rehearsal-20261002 (dump and role inventory mode 600).
   Role inventory excludes role passwords. No credential dump was downloaded.
 
-## Rehearsal status: FAILED — do not migrate
+## Rehearsal status: restore and hash verification pass; cutover not ready
 
 A separate dental-password-rehearsal container was created using the installed
 PostgreSQL image, with network=none, no published ports, 768 MiB memory limit,
 one CPU, and temporary database storage. Only this container was restarted or
 recreated. Production containers were not restarted.
 
-Full restore is blocked by a Supabase GraphQL function dependency:
+The initial full restore was blocked by a Supabase GraphQL function dependency:
 function graphql_public.graphql(text, text, jsonb, jsonb) does not exist.
 Earlier rehearsal-only issues included role privilege restoration and pg_net
-preload configuration. Fix the isolated restore procedure and verify table data,
-function dependencies, permissions, and ownership before proceeding. Restore used
+preload configuration. The restore subsequently passed by restoring schema/data
+without ACLs, restoring the original GraphQL wrapper, then applying ACLs. Verified
+44 users, 27 doctors, 132 patient_auth records, 48 session records, 46 public
+tables and all eight extensions in the isolated database. Verify function
+dependencies, permissions, and ownership before proceeding. Restore used
 --no-owner: it is not yet an authorization-equivalent production clone.
+
+Server-only Argon2id code uses pinned hash-wasm 4.12.0. Four local Deno tests
+pass for correct/wrong passwords, Unicode, spaces, long passwords, random salts,
+and fail-closed verification. A synthetic bundle executed successfully in a
+network-isolated container using production's Edge Runtime v1.74.0 image.
+
+The isolated migration rehearsal verified all 203 copied credential records:
+each original password verifies its stored Argon2id hash, 203 altered passwords
+are rejected, and anon cannot read the private rehearsal hash table. Existing
+source passwords are intentionally NOT cleared by this rehearsal. It is not a
+production migration or an end-to-end login/session/reset test. Frontend and
+backend integration, concurrent-write testing, authorization-equivalent restore,
+and full cutover verification remain required.
 
 Restricted restore diagnostics remain in the root-only rehearsal directory.
 Do not publish full restore logs: they can contain data. Do not expose the
@@ -48,6 +64,6 @@ No credential conversion, schema migration, grants/policy changes, session
 revocations, authentication deployment, or application push was performed.
 Plaintext storage and permissive access are NOT fixed yet.
 
-Next: finish isolated restore, implement server credential/recovery paths, run
+Next: verify restore authorization equivalence, implement server credential/recovery paths, run
 real credential compatibility checks without printing secrets, and only then
 perform the reviewed production cutover. Rotate the password shared in chat.
