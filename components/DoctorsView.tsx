@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit2, Trash2, Clock, Loader2, User, RotateCw } from 'lucide-react';
+import { Plus, Edit2, Trash2, Clock, User, RotateCw } from 'lucide-react';
 import { Doctor, DoctorSchedule } from '../types';
 import { exportDoctorsToPDF } from '../utils/pdfExport';
 import { exportDoctorsToExcel } from '../utils/excelExport';
@@ -8,10 +8,12 @@ import { usesFlatVisitCommission } from '../utils/doctorCommission';
 import Pagination from './Pagination';
 import { ConfirmDialog } from './Shared';
 import ExportMenu from './ExportMenu';
+import ProgressBar from './ProgressBar';
 
 interface DoctorsViewProps {
   doctors: Doctor[];
   loading: boolean;
+  syncProgress?: number | null;
   currency: Currency;
   onAdd: () => void;
   onEdit: (doctor: Doctor) => void;
@@ -22,6 +24,7 @@ interface DoctorsViewProps {
 const DoctorsView: React.FC<DoctorsViewProps> = ({
   doctors,
   loading,
+  syncProgress = null,
   currency,
   onAdd,
   onEdit,
@@ -109,6 +112,7 @@ const DoctorsView: React.FC<DoctorsViewProps> = ({
           </div>
           <button
             type="button"
+            disabled={loading}
             onClick={() => void onRefresh?.()}
             className="refresh-action-button inline-flex items-center gap-2 border px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-bold whitespace-nowrap"
           >
@@ -129,15 +133,16 @@ const DoctorsView: React.FC<DoctorsViewProps> = ({
         </div>
       </div>
 
-      {loading ? (
-        <div className="p-8 md:p-12 flex justify-center">
-          <Loader2 className="animate-spin text-[var(--hover-600)]" />
+      {loading && (
+        <div className="px-4 py-6 md:px-6" aria-live="polite">
+          <ProgressBar progress={syncProgress} label="Loading doctors and schedules…" />
         </div>
-      ) : doctors.length === 0 ? (
+      )}
+      {doctors.length === 0 ? (!loading && (
         <div className="p-8 md:p-12 text-center text-gray-400 italic">
           No doctors found. Add your first doctor to begin.
         </div>
-      ) : (
+      )) : (
         <div className="p-3 sm:p-4 md:p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             {paginatedDoctors.map((doctor) => (

@@ -6,6 +6,7 @@ import { formatCurrency, Currency } from '../utils/currency';
 import { formatPaymentMethod } from '../utils/paymentMethods';
 import { appointmentPatientName, buildRecallsCancelsLists } from '../utils/recallsCancels';
 import ExportMenu from './ExportMenu';
+import ProgressBar from './ProgressBar';
 import TreatmentAnalysisView from './TreatmentAnalysisView';
 import {
   buildDailyAppointmentData,
@@ -34,6 +35,7 @@ interface DashboardViewProps {
   onSelectPatient: (patient: Patient) => void;
   onUpdateCancellationOutcome: (id: string, outcome: CancellationOutcome | null, completedLaterAppointmentId?: string | null) => Promise<void>;
   loading?: boolean;
+  syncProgress?: number | null;
 }
 
 const toLocalISODate = (date: Date) => {
@@ -59,7 +61,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   onLoadMonthlyReport,
   onSelectPatient,
   onUpdateCancellationOutcome,
-  loading = false
+  loading = false,
+  syncProgress = null
 }) => {
   const selectedLocationName = useMemo(() => {
     if (selectedLocationId === allBranchesValue) return 'All Branches';
@@ -960,6 +963,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {loading && (
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-6 shadow-sm sm:px-6" aria-live="polite">
+          <ProgressBar progress={syncProgress} label="Loading Overview data…" />
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 rounded-xl border border-gray-100 bg-white p-2 shadow-sm">
         {[

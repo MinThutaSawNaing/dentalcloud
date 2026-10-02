@@ -488,6 +488,7 @@ const App: React.FC = () => {
   const [patientPaymentHistoryError, setPatientPaymentHistoryError] = useState<string | null>(null);
   const scheduledTaskProcessorRef = React.useRef<boolean>(false);
   const [loading, setLoading] = useState(true);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   // Startup sync tracking: Service Menu / MLS / Inventory share data that is
   // fetched in the background after the first screen is usable, so each of those
   // tabs needs a progress signal until its own dataset has arrived.
@@ -1708,38 +1709,43 @@ const App: React.FC = () => {
     preloaded?: { patients?: Patient[]; appointments?: Appointment[] | Promise<Appointment[]>; records?: ClinicalRecord[]; expenses?: Expense[] }
   ) => {
     const requestId = ++dashboardFetchRequestRef.current;
-    const session = auth.getSession();
-    const restrictedLocationId = getSessionRestrictedLocationId(session);
-    const availableLocations = knownLocations || locations;
-    const canUseAllBranchesScope = !restrictedLocationId && scopeLocationId === ALL_BRANCHES_VALUE;
-    const requestedScope = canUseAllBranchesScope
-      ? ALL_BRANCHES_VALUE
-      : restrictedLocationId || scopeLocationId || currentLocationId || availableLocations[0]?.id || '';
-    const hasMatchingLocation = availableLocations.some(loc => loc.id === requestedScope);
-    const sanitizedScope = canUseAllBranchesScope
-      ? ALL_BRANCHES_VALUE
-      : restrictedLocationId || (hasMatchingLocation ? requestedScope : (availableLocations[0]?.id || requestedScope));
-    const queryLocationId = sanitizedScope === ALL_BRANCHES_VALUE ? undefined : (sanitizedScope || undefined);
-    // Use preloaded data when available; fetch missing dashboard datasets in parallel.
-    const [patData, aptData, recordsData, expenseData, scopedPayments] = await Promise.all([
-      preloaded?.patients ? Promise.resolve(preloaded.patients) : safeLoad('Dashboard patients', api.patients.getAll(queryLocationId), []),
-      preloaded?.appointments ? Promise.resolve(preloaded.appointments) : safeLoad('Dashboard appointments', api.appointments.getAll(queryLocationId), []),
-      preloaded?.records ? Promise.resolve(preloaded.records) : safeLoad('Dashboard treatment records', api.treatments.getAllRecords(queryLocationId), []),
-      preloaded?.expenses ? Promise.resolve(preloaded.expenses) : safeLoad('Dashboard expenses', api.expenses.getAll(queryLocationId), []),
-      safeLoad('Dashboard payments', api.finance.getPayments(queryLocationId), [])
-    ]);
+    setDashboardLoading(true);
+    try {
+      const session = auth.getSession();
+      const restrictedLocationId = getSessionRestrictedLocationId(session);
+      const availableLocations = knownLocations || locations;
+      const canUseAllBranchesScope = !restrictedLocationId && scopeLocationId === ALL_BRANCHES_VALUE;
+      const requestedScope = canUseAllBranchesScope
+        ? ALL_BRANCHES_VALUE
+        : restrictedLocationId || scopeLocationId || currentLocationId || availableLocations[0]?.id || '';
+      const hasMatchingLocation = availableLocations.some(loc => loc.id === requestedScope);
+      const sanitizedScope = canUseAllBranchesScope
+        ? ALL_BRANCHES_VALUE
+        : restrictedLocationId || (hasMatchingLocation ? requestedScope : (availableLocations[0]?.id || requestedScope));
+      const queryLocationId = sanitizedScope === ALL_BRANCHES_VALUE ? undefined : (sanitizedScope || undefined);
+      // Use preloaded data when available; fetch missing dashboard datasets in parallel.
+      const [patData, aptData, recordsData, expenseData, scopedPayments] = await Promise.all([
+        preloaded?.patients ? Promise.resolve(preloaded.patients) : safeLoad('Dashboard patients', api.patients.getAll(queryLocationId), []),
+        preloaded?.appointments ? Promise.resolve(preloaded.appointments) : safeLoad('Dashboard appointments', api.appointments.getAll(queryLocationId), []),
+        preloaded?.records ? Promise.resolve(preloaded.records) : safeLoad('Dashboard treatment records', api.treatments.getAllRecords(queryLocationId), []),
+        preloaded?.expenses ? Promise.resolve(preloaded.expenses) : safeLoad('Dashboard expenses', api.expenses.getAll(queryLocationId), []),
+        safeLoad('Dashboard payments', api.finance.getPayments(queryLocationId), [])
+      ]);
 
-    if (requestId !== dashboardFetchRequestRef.current) {
-      return;
+      if (requestId !== dashboardFetchRequestRef.current) {
+        return;
+      }
+
+      setDashboardPatients(patData);
+      setDashboardAppointments(aptData);
+      setDashboardRecords(recordsData);
+      setDashboardExpenses(expenseData);
+      setDashboardPayments(mergeLegacyPaymentRecords(scopedPayments, queryLocationId));
+      setDashboardLocationId(sanitizedScope);
+      localStorage.setItem('dashboardLocationId', sanitizedScope);
+    } finally {
+      if (requestId === dashboardFetchRequestRef.current) setDashboardLoading(false);
     }
-
-    setDashboardPatients(patData);
-    setDashboardAppointments(aptData);
-    setDashboardRecords(recordsData);
-    setDashboardExpenses(expenseData);
-    setDashboardPayments(mergeLegacyPaymentRecords(scopedPayments, queryLocationId));
-    setDashboardLocationId(sanitizedScope);
-    localStorage.setItem('dashboardLocationId', sanitizedScope);
   };
 
   const fetchAssistantData = async () => {
@@ -4827,7 +4833,8 @@ const App: React.FC = () => {
                     return report;
                   }}
                   onSelectPatient={handlePatientSelect}
-                  loading={loading}
+                  loading={loading || initialSyncActive || dashboardLoading}
+                  syncProgress={initialSyncActive ? initialSyncProgress : null}
                 />
               )
             )}
@@ -5010,7 +5017,7 @@ const App: React.FC = () => {
                    await exportAppointmentsToExcel(freshAppointments);
                 }}
             />}
-            {currentView === 'doctors' && canAccessView('doctors') && <DoctorsView doctors={doctors} loading={loading} currency={currency} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingDoctor(null); setNewDoctorData({ name: '', email: '', phone: '', specialization: 'General', commission_type: 'percentage', password: '', commission_percentage: 0, commission_per_visit: 0, schedules: [], location_id: currentLocationId || '', location_ids: currentLocationId ? [currentLocationId] : [] }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onEdit={(doc) => {setEditingDoctor(doc); setNewDoctorData({ ...doc, location_ids: doc.location_ids || [doc.location_id].filter(Boolean), specialization: doc.specialization || 'General', password: '' }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onDelete={handleDeleteDoctor} />}
+            {currentView === 'doctors' && canAccessView('doctors') && <DoctorsView doctors={doctors} loading={loading || initialSyncActive} syncProgress={initialSyncActive ? initialSyncProgress : null} currency={currency} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingDoctor(null); setNewDoctorData({ name: '', email: '', phone: '', specialization: 'General', commission_type: 'percentage', password: '', commission_percentage: 0, commission_per_visit: 0, schedules: [], location_id: currentLocationId || '', location_ids: currentLocationId ? [currentLocationId] : [] }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onEdit={(doc) => {setEditingDoctor(doc); setNewDoctorData({ ...doc, location_ids: doc.location_ids || [doc.location_id].filter(Boolean), specialization: doc.specialization || 'General', password: '' }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onDelete={handleDeleteDoctor} />}
             {currentView === 'treatments' && canAccessView('treatments') && <TreatmentConfigView treatmentTypes={treatmentTypes} currency={currency} loading={loading} syncProgress={(!treatmentTypesReady && initialSyncActive) ? initialSyncProgress : null} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingTreatmentType(null); setNewTreatmentTypeData({ name: '', cost: 0, category: '' }); setShowTreatmentTypeModal(true)}} onEdit={(t) => {setEditingTreatmentType(t); setNewTreatmentTypeData(t); setShowTreatmentTypeModal(true)}} onDelete={(id) => { const treatment = treatmentTypes.find(t => t.id === id); if (treatment) { setServiceToDelete({ id: treatment.id, name: treatment.name }); setDeleteServiceConfirmOpen(true); } }} />}
             {currentView === 'material-cost' && canAccessView('material-cost') && <MaterialCostView records={globalRecords} doctors={doctors} paymentRecords={paymentRecords} loading={loading} syncProgress={(!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)} onRefresh={async () => { invalidateMaterialCostCaches(); await fetchGlobalRecords(true); }} onCostsSaved={async (patientId) => { invalidateMaterialCostCaches(); await refreshGlobalRecordsForPatient(patientId); void fetchExpenses(true); void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => { console.warn('Dashboard refresh after MLS cost save needs a manual refresh.'); }); }} />}
             {currentView === 'records' && canAccessView('records') && <RecordsView records={auditRecords} appointments={auditAppointments} rescheduleLogs={auditRescheduleLogs} payments={auditPayments} loading={auditLoading} loadError={auditLoadError} onQueryChange={loadAuditLog} onRefresh={() => setAuditRefreshKey((key) => key + 1)} onDeleteAll={isDoctor ? () => alert('Doctor accounts cannot delete patient records.') : handleDeleteAllRecords} currency={currency} isDoctor={isDoctor} initialFilter={recordsInitialFilter} onOpenPaymentReceipt={handleOpenStoredPaymentReceipt} canEditPayments={isAdmin && !isDoctor} onPaymentCorrected={handlePaymentCorrected} cacheScope={getClinicCacheScope()} cacheRevision={materialCostCacheRevision} />}
