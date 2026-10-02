@@ -24,4 +24,18 @@ describe('credential transport', () => {
     await wrapped('https://example.test/rest/v1/patients?select=id');
     expect(native.mock.calls[0][0]).toBeInstanceOf(Request);
   });
+  it('loads doctor profiles and relations without requesting restricted credentials', async () => {
+    const native = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('[]'));
+    const wrapped = createCredentialFetch('https://example.test', 'anon', native);
+    await wrapped('https://example.test/rest/v1/doctors?select=*,doctor_schedules(*),doctor_locations(location_id)&order=name.asc', {
+      headers: { apikey: 'anon', Authorization: 'Bearer anon' },
+    });
+    const request = native.mock.calls[0][0] as Request;
+    const url = new URL(request.url);
+    expect(url.searchParams.get('select')).toContain('doctor_schedules(*),doctor_locations(location_id)');
+    expect(url.searchParams.get('select')).not.toMatch(/^\*/);
+    expect(url.searchParams.get('select')).not.toContain('password');
+    expect(url.searchParams.get('order')).toBe('name.asc');
+    expect(request.headers.get('apikey')).toBe('anon');
+  });
 });

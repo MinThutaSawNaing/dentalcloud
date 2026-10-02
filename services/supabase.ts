@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { createCredentialFetch } from './credentialTransport';
 
 // Configuration with hardcoded keys to ensure immediate connectivity
 const SUPABASE_URL = 'https://supabasemydentist.dentalcloud.asia';
@@ -6,6 +7,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5v
 
 // Create client with proper configuration for Supabase Auth
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  global: { fetch: createCredentialFetch(SUPABASE_URL, SUPABASE_ANON_KEY, (input, init) => fetch(input, init)) },
   auth: {
     autoRefreshToken: true,
     persistSession: true,
