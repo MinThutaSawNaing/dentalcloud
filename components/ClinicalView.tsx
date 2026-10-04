@@ -35,6 +35,7 @@ interface ClinicalViewProps {
   treatmentTypes: TreatmentType[];
   treatmentHistory: ClinicalRecord[];
   treatmentHistoryLoading?: boolean;
+  treatmentHistoryError?: string | null;
   medicineSales: MedicineSale[];
   medicineHistoryLoading?: boolean;
   medicineHistoryError?: string | null;
@@ -42,6 +43,8 @@ interface ClinicalViewProps {
   paymentHistoryLoading?: boolean;
   paymentHistoryError?: string | null;
   paymentsAvailable?: boolean;
+  patientDetailsLoading?: boolean;
+  patientDetailsError?: string | null;
   patientFiles: PatientFile[];
   uploadingFiles: boolean;
   useFlatRate: boolean;
@@ -88,6 +91,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   treatmentTypes,
   treatmentHistory,
   treatmentHistoryLoading = false,
+  treatmentHistoryError = null,
   medicineSales,
   medicineHistoryLoading = false,
   medicineHistoryError = null,
@@ -95,6 +99,8 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   paymentHistoryLoading = false,
   paymentHistoryError = null,
   paymentsAvailable = true,
+  patientDetailsLoading = false,
+  patientDetailsError = null,
   patientFiles,
   uploadingFiles,
   useFlatRate,
@@ -185,6 +191,10 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
   const [isRecordingTreatment, setIsRecordingTreatment] = React.useState(false);
   const [isSavingNextAppointment, setIsSavingNextAppointment] = React.useState(false);
   const [showPatientReport, setShowPatientReport] = React.useState(false);
+  const patientReportUnavailable = patientDetailsLoading || Boolean(patientDetailsError)
+    || treatmentHistoryLoading || Boolean(treatmentHistoryError)
+    || medicineHistoryLoading || Boolean(medicineHistoryError)
+    || (paymentsAvailable && (paymentHistoryLoading || Boolean(paymentHistoryError)));
   const [medicineSaleToDelete, setMedicineSaleToDelete] = React.useState<MedicineSale | null>(null);
   const [deletingMedicineSaleId, setDeletingMedicineSaleId] = React.useState<string | null>(null);
   const [nextAppointmentFeedback, setNextAppointmentFeedback] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -853,7 +863,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
               </div>
             </div>
             <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-bold text-violet-700 ring-1 ring-violet-200">
-              {treatmentHistoryLoading ? 'Loading…' : `${treatmentHistory.length} ${treatmentHistory.length === 1 ? 'record' : 'records'}`}
+              {treatmentHistoryLoading ? 'Loading…' : treatmentHistoryError ? 'Unable to load' : `${treatmentHistory.length} ${treatmentHistory.length === 1 ? 'record' : 'records'}`}
             </span>
           </div>
           <div className="max-h-[34rem] min-h-[18rem] overflow-auto custom-scrollbar">
@@ -880,6 +890,8 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                       <p className="mt-2 text-xs text-gray-400">Please wait while patient records are retrieved.</p>
                     </td>
                   </tr>
+                ) : treatmentHistoryError ? (
+                  <tr><td colSpan={6} className="px-5 py-12 text-center text-red-700" role="alert">{treatmentHistoryError}<button type="button" className="ml-3 underline" onClick={() => selectedPatient && onSelectPatient(selectedPatient)}>Retry</button></td></tr>
                 ) : treatmentHistory.length === 0 ? (
                   <tr><td colSpan={7} className="px-5 py-12 text-center text-gray-400 italic">No clinical history recorded for this patient.</td></tr>
                 ) : (
@@ -1166,7 +1178,8 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
           <div className="space-y-6">
              <button
                type="button"
-               onClick={() => setShowPatientReport(true)}
+               onClick={() => { if (!patientReportUnavailable) setShowPatientReport(true); }}
+               disabled={patientReportUnavailable}
                className="flex w-full items-center justify-between gap-3 rounded-xl bg-slate-950 px-4 py-3 text-left text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2"
              >
                <span className="flex items-center gap-3">
@@ -1175,6 +1188,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
                </span>
                <Eye size={18} className="shrink-0 text-cyan-300" />
              </button>
+              {patientReportUnavailable && <p role="status" className="text-xs text-amber-800">Patient report is unavailable while details are loading or could not be loaded. Wait, or reopen this patient to retry.</p>}
              <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center text-xl font-bold text-indigo-700">
                   {selectedPatient.name.charAt(0)}
@@ -2016,7 +2030,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
         </div>
       )}
 
-      {showPatientReport && selectedPatient && (
+      {showPatientReport && selectedPatient && !patientReportUnavailable && (
         <React.Suspense fallback={
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900/60 backdrop-blur-md">
             <div className="rounded-2xl bg-white px-6 py-5 text-center shadow-2xl"><Loader2 className="mx-auto animate-spin text-indigo-600" /><p className="mt-2 text-sm font-bold text-gray-700">Preparing patient report…</p></div>

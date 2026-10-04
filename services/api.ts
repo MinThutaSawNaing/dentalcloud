@@ -1837,6 +1837,18 @@ export const api = {
         throw err;
       }
     },
+    getById: async (id: string, locationId: string): Promise<Patient | null> => {
+      const { data, error } = await supabase.from('patients').select('*')
+        .eq('id', id).eq('location_id', locationId).maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      const patient = mapPatient(data);
+      // This lightweight lookup does not read patient_auth. Do not overwrite
+      // account information already loaded by the directory with false/null.
+      delete patient.has_account;
+      delete patient.username;
+      return patient;
+    },
     search: async (locationId: string | undefined, term: string, limit = 100): Promise<Patient[]> => {
       try {
         if (!term?.trim()) return [];
@@ -1846,7 +1858,7 @@ export const api = {
         throw err;
       }
     },
-    getAll: async (locationId?: string): Promise<Patient[]> => {
+    getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Patient[]> => {
       try {
         await applyAutoOnpPatientTypeIfEnabled(locationId);
 
@@ -1859,6 +1871,7 @@ export const api = {
         return patients;
       } catch (err) {
         console.warn("Error fetching patients:", err);
+        if (options?.throwOnError) throw err;
         return []; // Return empty array instead of crashing
       }
     },
@@ -2535,6 +2548,7 @@ export const api = {
       dateFrom?: string;
       dateTo?: string;
       doctorId?: string;
+      patientId?: string;
       throwOnError?: boolean;
     }): Promise<Appointment[]> => {
       try {
@@ -2554,6 +2568,7 @@ export const api = {
             if (options?.dateFrom) query = query.gte('date', options.dateFrom);
             if (options?.dateTo) query = query.lte('date', options.dateTo);
             if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
+            if (options?.patientId) query = query.eq('patient_id', options.patientId);
             return query;
           };
 
@@ -3556,7 +3571,7 @@ export const api = {
       if (error) throw new Error(error.message);
       return data || [];
     },
-    getTypes: async (locationId?: string): Promise<TreatmentType[]> => {
+    getTypes: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<TreatmentType[]> => {
        try {
          let query = supabase
            .from('treatment_types')
@@ -3573,6 +3588,7 @@ export const api = {
          return data || [];
        } catch (err) {
          console.warn("Error fetching treatment types:", err);
+         if (options?.throwOnError) throw err;
          return [];
        }
     },
@@ -3611,18 +3627,19 @@ export const api = {
       patientId: string,
       options?: { includeCommissionEntries?: boolean }
     ): Promise<ClinicalRecord[]> => {
-      let { data, error } = await supabase
+      const buildHistoryQuery = (columns: string) => (from: number, to: number) => supabase
         .from('treatments')
-        .select('*, doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
+        .select(columns)
         .eq('patient_id', patientId)
-        .order('date', { ascending: false });
+        .order('date', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, to);
+      let { data, error } = await fetchAllRows<any>(buildHistoryQuery(
+        '*, doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)'
+      ));
 
       if (error && isOptionalRelationAccessError(error, ['doctors'])) {
-        const fallback = await supabase
-          .from('treatments')
-          .select('*')
-          .eq('patient_id', patientId)
-          .order('date', { ascending: false });
+        const fallback = await fetchAllRows<any>(buildHistoryQuery('*'));
         data = fallback.data;
         error = fallback.error;
       }
@@ -4125,12 +4142,13 @@ export const api = {
         hasAny: hasAppointments || hasTreatments
       };
     },
-    getAll: async (locationId?: string): Promise<Doctor[]> => {
+    getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Doctor[]> => {
       try {
         let supportsDoctorLocations = false;
         try {
           supportsDoctorLocations = await detectDoctorLocationsSupport();
         } catch (supportError) {
+          if (options?.throwOnError) throw supportError;
           console.warn('Could not check doctor branch assignments. Falling back to primary doctor locations.', supportError);
         }
         let query = supabase
@@ -4168,6 +4186,7 @@ export const api = {
           : doctors;
       } catch (err) {
         console.warn("Error fetching doctors:", err);
+        if (options?.throwOnError) throw err;
         return [];
       }
     },
@@ -6053,7 +6072,7 @@ export const api = {
   },
 
   expenses: {
-    getAll: async (locationId?: string): Promise<Expense[]> => {
+    getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Expense[]> => {
       try {
           const { data, error } = await fetchAllRows<Expense>((from, to) => {
             let query = supabase
@@ -6068,11 +6087,15 @@ export const api = {
           if (error) throw error;
           const storedExpenses = (data || []) as Expense[];
           const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses)
-            .catch(() => []);
+            .catch((err) => {
+              if (options?.throwOnError) throw err;
+              return [];
+            });
           return [...storedExpenses, ...syntheticMaterialExpenses]
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         } catch (err) {
           console.warn("Error fetching expenses:", err);
+          if (options?.throwOnError) throw err;
           return [];
         }
       },
@@ -6465,7 +6488,7 @@ export const api = {
   },
 
   medicines: {
-    getAll: async (locationId?: string): Promise<Medicine[]> => {
+    getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Medicine[]> => {
       try {
         let query = supabase
           .from('medicines')
@@ -6496,6 +6519,7 @@ export const api = {
         }));
       } catch (err) {
         console.warn("Error fetching medicines:", err);
+        if (options?.throwOnError) throw err;
         return [];
       }
     },
@@ -6976,7 +7000,7 @@ export const api = {
 
       return { status: 'success', new_points: newPoints, new_balance: newBalance };
     },
-    getRules: async (locationId?: string): Promise<LoyaltyRule[]> => {
+    getRules: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<LoyaltyRule[]> => {
       try {
         let query = supabase.from('loyalty_rules').select('*').order('name');
         if (locationId) {
@@ -6987,6 +7011,7 @@ export const api = {
         return data || [];
       } catch (err) {
         console.warn("Error fetching loyalty rules:", err);
+        if (options?.throwOnError) throw err;
         return [];
       }
     },

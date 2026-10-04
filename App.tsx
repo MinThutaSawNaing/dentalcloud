@@ -70,6 +70,7 @@ import {
   type AppTabPermission
 } from './constants';
 import { api } from './services/api';
+import { loadStaffStartup } from './services/staffStartup';
 import { formatCurrency, getCurrencySymbol, Currency } from './utils/currency';
 import { usesFlatVisitCommission, singleMethodDoctorCommission, singleMethodCommissionRule } from './utils/doctorCommission';
 import { buildFinancialReport, renderFinancialReportMarkdown } from './utils/aiReport';
@@ -437,6 +438,25 @@ const App: React.FC = () => {
   const [appointmentPageAppointments, setAppointmentPageAppointments] = useState<Appointment[]>([]);
   const [appointmentPageTotal, setAppointmentPageTotal] = useState(0);
   const [appointmentPageLoading, setAppointmentPageLoading] = useState(false);
+  const [appointmentPageError, setAppointmentPageError] = useState<string | null>(null);
+  const [historyScope, setHistoryScope] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyRequestRef = useRef(0);
+  const [startupScope, setStartupScope] = useState('');
+  const startupNavigationDoneRef = useRef(false);
+  const leanStaffStartup = import.meta.env.VITE_LEAN_STAFF_STARTUP !== 'false' && !isDoctor;
+  const [loadedLazyView, setLoadedLazyView] = useState('');
+  const [lazyViewError, setLazyViewError] = useState<string | null>(null);
+  const [lazyViewRevision, setLazyViewRevision] = useState(0);
+  const lazyViewRequestRef = useRef(0);
+  const [patientAppointments, setPatientAppointments] = useState<Appointment[]>([]);
+  const [patientAppointmentsLoading, setPatientAppointmentsLoading] = useState(false);
+  const [patientAppointmentsError, setPatientAppointmentsError] = useState<string | null>(null);
+  const [patientTreatmentError, setPatientTreatmentError] = useState<string | null>(null);
+  const [patientProfileLoading, setPatientProfileLoading] = useState(false);
+  const [patientProfileError, setPatientProfileError] = useState<string | null>(null);
+  const appointmentPatientSelectionRef = useRef(0);
   const [appointmentPageRefreshKey, setAppointmentPageRefreshKey] = useState(0);
   const appointmentPageRequestRef = useRef(0);
   const [appointmentRescheduleLogs, setAppointmentRescheduleLogs] = useState<AppointmentRescheduleLog[]>([]);
@@ -1182,10 +1202,24 @@ const App: React.FC = () => {
     const nextAllowedViews = resolveAllowedTabs(session.role, session.allowed_tabs).filter((tab) => (
       tab !== 'branch-switching' || !session.location_id
     )) as ViewState[];
-    setAllowedViews(nextAllowedViews);
+    setAllowedViews((previous) => previous.length === nextAllowedViews.length && previous.every((view, index) => view === nextAllowedViews[index]) ? previous : nextAllowedViews);
   };
 
   const resetStaffSession = () => {
+    handleClosePatient();
+    startupNavigationDoneRef.current = false;
+    setShowPaymentModal(false);
+    setShowTreatmentSelection(false);
+    initialDataFetchRequestRef.current += 1;
+    historyRequestRef.current += 1;
+    lazyViewRequestRef.current += 1;
+    appointmentPageRequestRef.current += 1;
+    treatmentHistoryRequestRef.current += 1;
+    medicineHistoryRequestRef.current += 1;
+    paymentHistoryRequestRef.current += 1;
+    setStartupScope('');
+    setHistoryScope('');
+    setLoadedLazyView('');
     setIsAuthenticated(false);
     setIsAdmin(false);
     setIsDoctor(false);
@@ -1709,6 +1743,7 @@ const App: React.FC = () => {
     preloaded?: { patients?: Patient[]; appointments?: Appointment[] | Promise<Appointment[]>; records?: ClinicalRecord[]; expenses?: Expense[] }
   ) => {
     const requestId = ++dashboardFetchRequestRef.current;
+    const startupRequestId = initialDataFetchRequestRef.current;
     setDashboardLoading(true);
     try {
       const session = auth.getSession();
@@ -1725,14 +1760,14 @@ const App: React.FC = () => {
       const queryLocationId = sanitizedScope === ALL_BRANCHES_VALUE ? undefined : (sanitizedScope || undefined);
       // Use preloaded data when available; fetch missing dashboard datasets in parallel.
       const [patData, aptData, recordsData, expenseData, scopedPayments] = await Promise.all([
-        preloaded?.patients ? Promise.resolve(preloaded.patients) : safeLoad('Dashboard patients', api.patients.getAll(queryLocationId), []),
-        preloaded?.appointments ? Promise.resolve(preloaded.appointments) : safeLoad('Dashboard appointments', api.appointments.getAll(queryLocationId), []),
-        preloaded?.records ? Promise.resolve(preloaded.records) : safeLoad('Dashboard treatment records', api.treatments.getAllRecords(queryLocationId), []),
-        preloaded?.expenses ? Promise.resolve(preloaded.expenses) : safeLoad('Dashboard expenses', api.expenses.getAll(queryLocationId), []),
-        safeLoad('Dashboard payments', api.finance.getPayments(queryLocationId), [])
+        preloaded?.patients ? Promise.resolve(preloaded.patients) : api.patients.getAll(queryLocationId, { throwOnError: true }),
+        preloaded?.appointments ? Promise.resolve(preloaded.appointments) : api.appointments.getAll(queryLocationId, { throwOnError: true }),
+        preloaded?.records ? Promise.resolve(preloaded.records) : api.treatments.getAllRecords(queryLocationId, { limit: null, throwOnError: true }),
+        preloaded?.expenses ? Promise.resolve(preloaded.expenses) : api.expenses.getAll(queryLocationId, { throwOnError: true }),
+        api.finance.getPayments(queryLocationId)
       ]);
 
-      if (requestId !== dashboardFetchRequestRef.current) {
+      if (requestId !== dashboardFetchRequestRef.current || startupRequestId !== initialDataFetchRequestRef.current) {
         return;
       }
 
@@ -1749,23 +1784,25 @@ const App: React.FC = () => {
   };
 
   const fetchAssistantData = async () => {
+    const startupRequestId = initialDataFetchRequestRef.current;
     const session = auth.getSession();
     const restrictedLocationId = getSessionRestrictedLocationId(session);
     const queryLocationId = restrictedLocationId || currentLocationId || undefined;
     const assistantLocationId = queryLocationId;
 
     const [patData, aptData, docData, typeData, recordsData, medData, expenseData, salesData, paymentData] = await Promise.all([
-      safeLoad('Assistant patients', api.patients.getAll(assistantLocationId), []),
-      safeLoad('Assistant appointments', api.appointments.getAll(assistantLocationId), []),
-      safeLoad('Assistant doctors', api.doctors.getAll(assistantLocationId), []),
-      safeLoad('Assistant treatment types', api.treatments.getTypes(assistantLocationId), []),
-      safeLoad('Assistant treatment records', api.treatments.getAllRecords(assistantLocationId), []),
-      safeLoad('Assistant medicines', api.medicines.getAll(assistantLocationId), []),
-      safeLoad('Assistant expenses', api.expenses.getAll(assistantLocationId), []),
-      safeLoad('Assistant medicine sales', api.medicines.getSales(assistantLocationId), []),
-      safeLoad('Assistant payments', api.finance.getPayments(assistantLocationId), [])
+      api.patients.getAll(assistantLocationId, { throwOnError: true }),
+      api.appointments.getAll(assistantLocationId, { throwOnError: true }),
+      api.doctors.getAll(assistantLocationId, { throwOnError: true }),
+      api.treatments.getTypes(assistantLocationId, { throwOnError: true }),
+      api.treatments.getAllRecords(assistantLocationId, { limit: null, throwOnError: true }),
+      api.medicines.getAll(assistantLocationId, { throwOnError: true }),
+      api.expenses.getAll(assistantLocationId, { throwOnError: true }),
+      api.medicines.getSales(assistantLocationId, undefined, { throwOnError: true }),
+      api.finance.getPayments(assistantLocationId)
     ]);
 
+    if (startupRequestId !== initialDataFetchRequestRef.current) return;
     setAssistantPatients(patData);
     setAssistantAppointments(aptData);
     setAssistantDoctors(docData);
@@ -1788,6 +1825,8 @@ const App: React.FC = () => {
     const locationId = currentLocationId || undefined;
     if (!locationId) return;
     const session = auth.getSession();
+    const requestId = ++appointmentPageRequestRef.current;
+    setAppointmentPageError(null);
 
     const now = new Date();
     const toLocalISODate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -1815,7 +1854,6 @@ const App: React.FC = () => {
       setAppointmentPageLoading(false);
       return;
     }
-    const requestId = ++appointmentPageRequestRef.current;
     setAppointmentPageLoading(true);
     try {
       const result = await api.appointments.list(locationId, {
@@ -1832,8 +1870,7 @@ const App: React.FC = () => {
     } catch (err) {
       if (requestId !== appointmentPageRequestRef.current) return;
       console.warn('Error fetching appointment page:', err);
-      setAppointmentPageAppointments([]);
-      setAppointmentPageTotal(0);
+      setAppointmentPageError('Could not load appointments. Please check your connection and retry.');
     } finally {
       if (requestId === appointmentPageRequestRef.current) setAppointmentPageLoading(false);
     }
@@ -1964,6 +2001,7 @@ const App: React.FC = () => {
     options: { deferBranchCommit?: boolean; throwOnError?: boolean } = {}
   ) => {
     const requestId = ++initialDataFetchRequestRef.current;
+    appointmentPatientSelectionRef.current += 1;
     const advanceInitialSync = (points: number) => {
       if (requestId !== initialDataFetchRequestRef.current) return;
       setInitialSyncProgress((current) => Math.min(96, Math.round(current + points)));
@@ -1976,6 +2014,24 @@ const App: React.FC = () => {
       setTreatmentTypesReady(false);
       setGlobalRecordsReady(false);
       setMedicinesReady(false);
+      setStartupScope('');
+      setLoadedLazyView('');
+      lazyViewRequestRef.current += 1;
+      globalRecordsFetchRequestRef.current += 1;
+      medicinesFetchRequestRef.current += 1;
+      expensesFetchRequestRef.current += 1;
+      medicineSalesFetchRequestRef.current += 1;
+      treatmentHistoryRequestRef.current += 1;
+      medicineHistoryRequestRef.current += 1;
+      paymentHistoryRequestRef.current += 1;
+      setHistoryScope('');
+      setHistoryError(null);
+      setHistoryLoading(false);
+      historyRequestRef.current += 1;
+      appointmentPageRequestRef.current += 1;
+      setAppointmentPageAppointments([]);
+      setAppointmentPageTotal(0);
+      setAppointmentPageError(null);
       
       const [locData, patientTypeData, appointmentTypeData] = await Promise.all([
         api.locations.getAll(),
@@ -2041,6 +2097,54 @@ const App: React.FC = () => {
       
       // Only fetch data if we have a valid location
       if (locId) {
+        // Doctor visibility depends on full ownership records. Preserve that path.
+        if (import.meta.env.VITE_LEAN_STAFF_STARTUP !== 'false' && session?.role !== 'doctor') {
+          if (!startupNavigationDoneRef.current && session) {
+            startupNavigationDoneRef.current = true;
+            const tabs = resolveAllowedTabs(session.role, session.allowed_tabs);
+            if (tabs.includes('patients')) setCurrentView('patients');
+            else if (tabs.includes('appointments')) setCurrentView('appointments');
+          }
+          const startup = await loadStaffStartup(api, locId);
+          if (requestId !== initialDataFetchRequestRef.current) return;
+          setPatients(startup.patients);
+          setAppointments(startup.appointments);
+          setDoctors(startup.doctors);
+          setTreatmentTypes(startup.treatmentTypes);
+          setTreatmentTypesReady(true);
+          setLoyaltyRules(startup.loyaltyRules);
+          setGlobalRecords([]);
+          setPaymentRecords([]);
+          setAppointmentRescheduleLogs([]);
+          setMedicines([]);
+          setExpenses([]);
+          setMedicineSales([]);
+          setStartupScope(locId);
+          advanceInitialSync(86);
+          // Keep the existing complete patient directory/appointment selector.
+          // Heavy clinical and financial histories are NOT downloaded here.
+          setPatientsBackgroundLoading(startup.patients.length === PATIENTS_INITIAL_LOAD_SIZE);
+          if (startup.patients.length === PATIENTS_INITIAL_LOAD_SIZE) {
+            void (async () => {
+              try {
+                for (let offset = PATIENTS_INITIAL_LOAD_SIZE; ; offset += SUPABASE_PAGE_SIZE_BATCH) {
+                  if (requestId !== initialDataFetchRequestRef.current) return;
+                  const batch = await api.patients.getPage(locId, offset, SUPABASE_PAGE_SIZE_BATCH);
+                  if (requestId !== initialDataFetchRequestRef.current) return;
+                  setPatients((previous) => mergePatientsById(previous, batch));
+                  if (batch.length < SUPABASE_PAGE_SIZE_BATCH) break;
+                }
+              } catch (err) {
+                if (requestId === initialDataFetchRequestRef.current) {
+                  setError('Some older patients could not load. Search still checks Supabase; use Refresh to retry.');
+                }
+              } finally {
+                if (requestId === initialDataFetchRequestRef.current) setPatientsBackgroundLoading(false);
+              }
+            })();
+          }
+          return;
+        }
         // � Critical data: what the main views need immediately �
         const sessionDoctorId = session?.role === 'doctor' ? session.doctor_id : null;
         const allDoctorsForSession = sessionDoctorId ? await safeLoad('Doctor session branch lookup', api.doctors.getAll(), []) : [];
@@ -2299,10 +2403,9 @@ const App: React.FC = () => {
 
   const handlePatientSearch = useCallback((term: string) => {
     if (patientSearchDebounceRef.current) clearTimeout(patientSearchDebounceRef.current);
+    const requestId = ++patientSearchRequestRef.current;
     setPatientSearching(true);
     patientSearchDebounceRef.current = setTimeout(() => {
-      patientSearchRequestRef.current += 1;
-      const requestId = patientSearchRequestRef.current;
       const searchLocationId = currentLocationId;
 
       if (!term.trim()) {
@@ -2316,13 +2419,17 @@ const App: React.FC = () => {
           if (requestId !== patientSearchRequestRef.current) return;
           setPatientSearchResults(matches);
           if (matches.length > 0) {
-            setPatients((previous) => mergePatientsById(previous, matches));
+            setPatients((previous) => {
+              const freshById = new Map(matches.map((patient) => [patient.id, patient]));
+              return mergePatientsById(previous.map((patient) => freshById.get(patient.id) || patient), matches);
+            });
           }
         })
         .catch((err: any) => {
           if (requestId !== patientSearchRequestRef.current) return;
           console.warn('Patient search failed:', err);
           setPatientSearchResults(null);
+          setError('Patient search could not finish. Please check your connection and search again.');
         })
         .finally(() => {
           if (requestId === patientSearchRequestRef.current) {
@@ -2333,6 +2440,8 @@ const App: React.FC = () => {
   }, [currentLocationId]);
 
   useEffect(() => {
+    patientSearchRequestRef.current += 1;
+    if (patientSearchDebounceRef.current) clearTimeout(patientSearchDebounceRef.current);
     setPatientSearchResults(null);
     setPatientSearching(false);
   }, [currentLocationId]);
@@ -2410,6 +2519,7 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (leanStaffStartup) return; // Staff datasets have an explicit, error-aware loader below.
     if (currentView === 'users' && canAccessView('users')) {
       fetchUsers();
     }
@@ -2425,11 +2535,126 @@ const App: React.FC = () => {
         console.warn('Error fetching AI assistant data:', err);
       });
     }
-  }, [currentView, currentLocationId, allowedViews]);
+  }, [currentView, currentLocationId, allowedViews, leanStaffStartup]);
+
+  // Fetch only the selected screen's complete datasets. Do not mount that screen
+  // with empty/partial financial data while its requests are still running.
+  useEffect(() => {
+    if (!leanStaffStartup || !isAuthenticated || !currentLocationId || startupScope !== currentLocationId || initialSyncActive) return;
+    if (!canAccessView(currentView) && currentView !== 'finance') return;
+    const scope = currentLocationId;
+    const view = currentView;
+    const key = `${scope}:${view}`;
+    const requestId = ++lazyViewRequestRef.current;
+    let cancelled = false;
+    setLazyViewError(null);
+    setLoadedLazyView('');
+    const load = async () => {
+      if (view === 'material-cost') {
+        const [records, payments] = await Promise.all([
+          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true }),
+          api.finance.getPayments(scope)
+        ]);
+        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        setGlobalRecords(records);
+        setPaymentRecords(mergeLegacyPaymentRecords(payments, scope));
+        setGlobalRecordsReady(true);
+      } else if (view === 'expenses') {
+        const [expenseData, sales, records] = await Promise.all([
+          api.expenses.getAll(scope, { throwOnError: true }),
+          api.medicines.getSales(scope, undefined, { throwOnError: true }),
+          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true })
+        ]);
+        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        setExpenses(expenseData);
+        setMedicineSales(sales);
+        setGlobalRecords(records);
+        setGlobalRecordsReady(true);
+      } else if (view === 'inventory' || view === 'finance') {
+        if (view === 'finance' && selectedPatient) {
+          if (selectedPatient.location_id && selectedPatient.location_id !== scope) handleClosePatient();
+          else handlePatientSelect(selectedPatient, { preserveDraft: true });
+        }
+        const [medicineData, topSelling] = await Promise.all([
+          api.medicines.getAll(scope, { throwOnError: true }),
+          view === 'inventory' ? api.medicines.getTopSelling(scope, 10) : Promise.resolve([])
+        ]);
+        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        setMedicines(medicineData);
+        if (view === 'inventory') setTopSellingMedicines(topSelling);
+        setMedicinesReady(true);
+      } else if (view === 'dashboard') {
+        await fetchDashboardData(dashboardLocationId || scope);
+      } else if (view === 'ai-assistant') {
+        await fetchAssistantData();
+      } else if (view === 'users') {
+        await fetchUsers();
+      } else if (view === 'patients') {
+        const page = await api.patients.getPage(scope, 0, PATIENTS_INITIAL_LOAD_SIZE);
+        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        setPatients((previous) => {
+          const freshById = new Map(page.map((patient) => [patient.id, patient]));
+          return mergePatientsById(previous.map((patient) => freshById.get(patient.id) || patient), page);
+        });
+        setHistoryScope('');
+      } else if (view === 'doctors') {
+        const rows = await api.doctors.getAll(scope, { throwOnError: true });
+        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        setDoctors(rows);
+      }
+      if (!cancelled && requestId === lazyViewRequestRef.current) setLoadedLazyView(key);
+    };
+    void load().catch((err: any) => {
+      if (!cancelled && requestId === lazyViewRequestRef.current) {
+        setLazyViewError(err?.message || 'Could not load this screen. Please retry.');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup, lazyViewRevision, allowedViews]);
+
+  useEffect(() => {
+    if (!leanStaffStartup || !isAuthenticated) return;
+    const refreshVisibleReads = () => {
+      if (document.visibilityState === 'hidden' || initialSyncActive) return;
+      if (currentView === 'appointments') setAppointmentPageRefreshKey((key) => key + 1);
+      else if (currentView === 'patients' || currentView === 'doctors') setLazyViewRevision((key) => key + 1);
+    };
+    document.addEventListener('visibilitychange', refreshVisibleReads);
+    window.addEventListener('online', refreshVisibleReads);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshVisibleReads);
+      window.removeEventListener('online', refreshVisibleReads);
+    };
+  }, [leanStaffStartup, isAuthenticated, currentView, initialSyncActive]);
+
+  const loadDirectoryHistory = async () => {
+    const scope = currentLocationId;
+    const requestId = ++historyRequestRef.current;
+    const startupRequestId = initialDataFetchRequestRef.current;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const [records, allAppointments] = await Promise.all([
+        api.treatments.getAllRecords(scope, { limit: null, throwOnError: true }),
+        api.appointments.getAll(scope, { throwOnError: true })
+      ]);
+      if (requestId !== historyRequestRef.current || startupRequestId !== initialDataFetchRequestRef.current || currentLocationIdRef.current !== scope) return;
+      setGlobalRecords(records);
+      setGlobalRecordsReady(true);
+      setAppointments(allAppointments);
+      setHistoryScope(scope);
+    } catch (err: any) {
+      if (requestId === historyRequestRef.current && startupRequestId === initialDataFetchRequestRef.current) setHistoryError(err?.message || 'Could not load history. Please retry.');
+    } finally {
+      if (requestId === historyRequestRef.current) setHistoryLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (currentView !== 'finance') {
       treatmentHistoryRequestRef.current += 1;
+      medicineHistoryRequestRef.current += 1;
+      paymentHistoryRequestRef.current += 1;
     }
   }, [currentView]);
 
@@ -2479,7 +2704,7 @@ const App: React.FC = () => {
         dataCache.invalidate(topSellingKey);
       }
       const [medData, topSellingData] = await Promise.all([
-        dataCache.getOrLoad(inventoryKey, () => api.medicines.getAll(locationId), 60_000),
+        dataCache.getOrLoad(inventoryKey, () => api.medicines.getAll(locationId, { throwOnError: leanStaffStartup }), 60_000),
         dataCache.getOrLoad(topSellingKey, () => api.medicines.getTopSelling(locationId, 10), 180_000)
       ]);
       if (requestId !== medicinesFetchRequestRef.current || currentLocationIdRef.current !== locationId) return;
@@ -2487,6 +2712,7 @@ const App: React.FC = () => {
       setTopSellingMedicines(topSellingData);
     } catch (err: any) {
       console.warn('Error fetching medicines:', err);
+      if (leanStaffStartup && requestId === medicinesFetchRequestRef.current) setLazyViewError(err?.message || 'Could not refresh medicines. Retry.');
     }
   };
 
@@ -2500,11 +2726,12 @@ const App: React.FC = () => {
       }
       const key = getClinicCacheKey('expenses', locationId);
       if (force) dataCache.invalidate(key);
-      const expenseData = await dataCache.getOrLoad(key, () => api.expenses.getAll(locationId), 60_000);
+      const expenseData = await dataCache.getOrLoad(key, () => api.expenses.getAll(locationId, { throwOnError: leanStaffStartup }), 60_000);
       if (requestId !== expensesFetchRequestRef.current || currentLocationIdRef.current !== locationId) return;
       setExpenses(expenseData);
     } catch (err: any) {
       console.warn('Error fetching expenses:', err);
+      if (leanStaffStartup && requestId === expensesFetchRequestRef.current) setLazyViewError(err?.message || 'Could not refresh expenses. Retry.');
     }
   };
 
@@ -2518,26 +2745,36 @@ const App: React.FC = () => {
       }
       const key = getClinicCacheKey('medicine-sales', locationId);
       if (force) dataCache.invalidate(key);
-      const salesData = await dataCache.getOrLoad(key, () => api.medicines.getSales(locationId), 60_000);
+      const salesData = await dataCache.getOrLoad(key, () => api.medicines.getSales(locationId, undefined, { throwOnError: leanStaffStartup }), 60_000);
       if (requestId !== medicineSalesFetchRequestRef.current || currentLocationIdRef.current !== locationId) return;
       setMedicineSales(salesData);
     } catch (err: any) {
       console.warn('Error fetching medicine sales:', err);
+      if (leanStaffStartup && requestId === medicineSalesFetchRequestRef.current) setLazyViewError(err?.message || 'Could not refresh medicine sales. Retry.');
     }
   };
 
-  const handlePatientSelect = async (patient: Patient) => {
+  const handlePatientSelect = (patient: Patient, options: { preserveDraft?: boolean } = {}) => {
+    appointmentPatientSelectionRef.current += 1;
     const requestId = ++treatmentHistoryRequestRef.current;
     const medicineRequestId = ++medicineHistoryRequestRef.current;
     const paymentRequestId = ++paymentHistoryRequestRef.current;
     const canViewPayments = auth.getSession()?.role !== 'doctor';
     setSelectedPatient(patient);
-    setLatestTreatmentBatch([]);
-    setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
-    setSelectedDoctorId('');
-    setSelectedTeeth([]);
+    if (!options.preserveDraft) {
+      setLatestTreatmentBatch([]);
+      setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
+      setSelectedDoctorId('');
+      setSelectedTeeth([]);
+    }
     setCurrentView('finance');
     setTreatmentHistory([]);
+    setPatientTreatmentError(null);
+    setPatientAppointments([]);
+    setPatientAppointmentsLoading(leanStaffStartup);
+    setPatientAppointmentsError(null);
+    setPatientProfileLoading(leanStaffStartup);
+    setPatientProfileError(null);
     setTreatmentHistoryLoading(true);
     setLoyaltyTransactions([]);
     setPatientFiles([]);
@@ -2549,6 +2786,22 @@ const App: React.FC = () => {
     setPatientPaymentHistoryError(null);
 
     const locationId = patient.location_id || currentLocationId;
+    if (leanStaffStartup) {
+      void api.patients.getById(patient.id, locationId)
+        .then((freshPatient) => {
+          if (requestId !== treatmentHistoryRequestRef.current) return;
+          if (!freshPatient) throw new Error('Patient is no longer available in this branch.');
+          const updated = { ...patient, ...freshPatient };
+          setSelectedPatient(updated);
+          setPatients((previous) => mergePatientsById(previous.map((row) => row.id === updated.id ? updated : row), [updated]));
+          setPatientProfileLoading(false);
+        })
+        .catch((err: any) => {
+          if (requestId !== treatmentHistoryRequestRef.current) return;
+          setPatientProfileError(err?.message || 'Could not refresh patient details.');
+          setPatientProfileLoading(false);
+        });
+    }
     // Clinical Focus does not render commission-ledger breakdowns. Skipping that
     // optional enrichment removes an extra database request from chart startup.
     void api.treatments.getHistory(patient.id, { includeCommissionEntries: false })
@@ -2561,8 +2814,23 @@ const App: React.FC = () => {
         if (requestId !== treatmentHistoryRequestRef.current) return;
         console.warn('Error fetching treatment history:', err);
         setTreatmentHistory([]);
+        setPatientTreatmentError(err?.message || 'Could not load treatment history. Reopen this patient to retry.');
         setTreatmentHistoryLoading(false);
       });
+
+    if (leanStaffStartup) {
+      void api.appointments.getAll(locationId, { patientId: patient.id, throwOnError: true })
+        .then((rows) => {
+          if (requestId !== treatmentHistoryRequestRef.current) return;
+          setPatientAppointments(rows);
+          setPatientAppointmentsLoading(false);
+        })
+        .catch((err: any) => {
+          if (requestId !== treatmentHistoryRequestRef.current) return;
+          setPatientAppointmentsError(err?.message || 'Could not load patient appointments. Reopen this patient to retry.');
+          setPatientAppointmentsLoading(false);
+        });
+    }
 
     void api.medicines.getSales(locationId, patient.id, { throwOnError: true })
       .then((patientSales) => {
@@ -2581,7 +2849,7 @@ const App: React.FC = () => {
       void api.finance.getPayments(locationId, { patientId: patient.id })
         .then((payments) => {
           if (paymentRequestId !== paymentHistoryRequestRef.current) return;
-          setPatientPaymentRecords(payments);
+          setPatientPaymentRecords(leanStaffStartup ? mergeLegacyPaymentRecords(payments, locationId, patient.id) : payments);
           setPatientPaymentHistoryLoading(false);
         })
         .catch((err: any) => {
@@ -2624,9 +2892,9 @@ const App: React.FC = () => {
     try {
       const { records, payments, rescheduleLogs } = await dataCache.getOrLoad(key, async () => {
         const [nextRecords, nextPayments, nextRescheduleLogs] = await Promise.all([
-          api.treatments.getAllRecords(locationId || undefined, { limit: null }),
-          safeLoad('Audit log payments', api.finance.getPayments(locationId || undefined), []),
-          safeLoad('Audit log reschedule logs', api.appointmentRescheduleLogs.getAll(locationId || undefined), [])
+          api.treatments.getAllRecords(locationId || undefined, { limit: null, throwOnError: true }),
+          api.finance.getPayments(locationId || undefined),
+          api.appointmentRescheduleLogs.getAll(locationId || undefined, { throwOnError: true })
         ]);
         return { records: nextRecords, payments: nextPayments, rescheduleLogs: nextRescheduleLogs };
       }, 30_000);
@@ -2643,6 +2911,7 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error(err);
+      if (leanStaffStartup && requestId === globalRecordsFetchRequestRef.current) setLazyViewError(err?.message || 'Could not refresh records. Retry.');
     }
   };
 
@@ -2992,11 +3261,11 @@ const App: React.FC = () => {
     }
 
     const today = toLocalISODate(new Date());
-    if (hasRecordedServiceFeeForVisit(paymentRecords, selectedPatient.id, today)) {
+    if (hasRecordedServiceFeeForVisit(leanStaffStartup ? patientPaymentRecords : paymentRecords, selectedPatient.id, today)) {
       return null;
     }
 
-    const hasPreviousCompletedAppointment = appointments.some((appointment) => {
+    const hasPreviousCompletedAppointment = (leanStaffStartup ? patientAppointments : appointments).some((appointment) => {
       const patientId = (appointment.patient_id || '').trim();
       return (
         patientId === selectedPatient.id &&
@@ -3005,7 +3274,7 @@ const App: React.FC = () => {
         appointment.date < today
       );
     });
-    const hasPreviousTreatment = [...treatmentHistory, ...globalRecords].some((record) => {
+    const hasPreviousTreatment = (leanStaffStartup ? treatmentHistory : [...treatmentHistory, ...globalRecords]).some((record) => {
       return (
         record.patient_id === selectedPatient.id &&
         typeof record.date === 'string' &&
@@ -3024,7 +3293,17 @@ const App: React.FC = () => {
     return { category, feeAmount };
   };
 
+  const patientPaymentNotReady = () => leanStaffStartup && (
+    patientProfileLoading || patientProfileError || treatmentHistoryLoading || patientPaymentHistoryLoading ||
+    patientMedicineHistoryLoading || patientAppointmentsLoading || patientTreatmentError ||
+    patientPaymentHistoryError || patientMedicineHistoryError || patientAppointmentsError
+  );
+
   const handleOpenPaymentModal = (_treatments: ClinicalRecord[]) => {
+    if (patientPaymentNotReady()) {
+      setToast({ message: 'Please wait for patient history to load. If loading failed, reopen the patient to retry before taking payment.', type: 'error', show: true });
+      return;
+    }
     const preview = resolvePaymentServiceFeePreview();
 
     if (preview) {
@@ -3038,6 +3317,10 @@ const App: React.FC = () => {
 
   const handleOpenServiceFeePayment = () => {
     if (!selectedPatient) return;
+    if (patientPaymentNotReady()) {
+      setToast({ message: 'Patient history must finish loading before payment. Reopen the patient if loading failed.', type: 'error', show: true });
+      return;
+    }
 
     if (Math.max(0, Number(selectedPatient.balance || 0)) > 0) {
       handleOpenPaymentModal(treatmentHistory);
@@ -3055,6 +3338,7 @@ const App: React.FC = () => {
   };
 
   const resetAppointmentForm = () => {
+    appointmentPatientSelectionRef.current += 1;
     setAppointmentPatientMode('registered');
     setNewAppointmentData({
       date: '',
@@ -3315,12 +3599,14 @@ const App: React.FC = () => {
   };
 
   const handleDoctorChange = (doctorId: string) => {
+    appointmentPatientSelectionRef.current += 1;
     const selectedDoctor = doctors.find((doctor) => doctor.id === doctorId);
     setNewAppointmentData({ ...newAppointmentData, doctor_id: doctorId || undefined });
     setDoctorSearchQuery(selectedDoctor ? selectedDoctor.name : '');
   };
 
   const handleAppointmentPatientChange = (patientId: string) => {
+    const selectionId = ++appointmentPatientSelectionRef.current;
     const trimmedPatientId = patientId.trim();
     const preferredDoctorId = trimmedPatientId ? recentDoctorByPatientId.get(trimmedPatientId) || '' : '';
     const selectedDoctor = doctors.find((doctor) => doctor.id === preferredDoctorId);
@@ -3331,6 +3617,21 @@ const App: React.FC = () => {
       doctor_id: preferredDoctorId || undefined
     });
     setDoctorSearchQuery(selectedDoctor ? selectedDoctor.name : '');
+    if (leanStaffStartup && trimmedPatientId) {
+      const scope = currentLocationId;
+      void api.appointments.getAll(scope, { patientId: trimmedPatientId, throwOnError: true })
+        .then((rows) => {
+          if (selectionId !== appointmentPatientSelectionRef.current || scope !== currentLocationIdRef.current) return;
+          const ordered = rows.filter((row) => row.status !== 'Cancelled' && row.doctor_id)
+            .sort((a, b) => `${b.date}T${b.time || '00:00'}`.localeCompare(`${a.date}T${a.time || '00:00'}`));
+          const preferred = ordered.find((row) => row.status === 'Completed') || ordered[0];
+          const doctor = doctors.find((row) => row.id === preferred?.doctor_id);
+          setNewAppointmentData((previous) => previous.patient_id === trimmedPatientId ? { ...previous, doctor_id: doctor?.id } : previous);
+          setDoctorSearchQuery(doctor?.name || '');
+        }).catch(() => {
+          if (selectionId === appointmentPatientSelectionRef.current) setToast({ message: 'Could not look up the previous doctor. Please select the doctor yourself.', type: 'error', show: true });
+        });
+    }
   };
 
   const handleDateChange = (date: string) => {
@@ -3826,6 +4127,10 @@ const App: React.FC = () => {
 
   const handleTreatmentSubmit = async (treatment: TreatmentType, chargeLines?: TreatmentChargeLine[]) => {
     if (!selectedPatient) return;
+    if (patientPaymentNotReady()) {
+      alert('Please wait for patient history to load. Reopen the patient if loading failed.');
+      return;
+    }
     if (!useFlatRate && selectedTeeth.length === 0) {
       alert('Please select at least one tooth, or enable ALL TEETH before recording this treatment.');
       return;
@@ -3882,6 +4187,9 @@ const App: React.FC = () => {
             ? { ...appointment, status: 'Completed', doctor_name: completedDoctorName || appointment.doctor_name }
             : appointment
         ));
+        setPatientAppointments(prev => prev.map(appointment => completedAppointmentIds.has(appointment.id)
+          ? { ...appointment, status: 'Completed', doctor_name: completedDoctorName || appointment.doctor_name }
+          : appointment));
         setDashboardAppointments(prev => prev.map(appointment =>
           completedAppointmentIds.has(appointment.id)
             ? { ...appointment, status: 'Completed', doctor_name: completedDoctorName || appointment.doctor_name }
@@ -4003,6 +4311,10 @@ const App: React.FC = () => {
 
   const handleAddMedicines = () => {
     if (!selectedPatient) return;
+    if (patientPaymentNotReady()) {
+      alert('Please wait for patient history to load. Reopen the patient if loading failed.');
+      return;
+    }
     setShowMedicineSelectionModal(true);
   };
 
@@ -4117,6 +4429,10 @@ const App: React.FC = () => {
     e.preventDefault();
     if (paymentSubmitInFlightRef.current || isSubmitting) return;
     if (!selectedPatient) return;
+    if (patientPaymentNotReady()) {
+      alert('Patient history is not ready. Reopen the patient and retry before taking payment.');
+      return;
+    }
     if (paymentOriginalAmount <= 0) {
       alert('This patient does not have an outstanding balance to collect.');
       return;
@@ -4137,8 +4453,8 @@ const App: React.FC = () => {
       const submissionKey = paymentSubmissionKeyRef.current || createPaymentSubmissionKey();
       paymentSubmissionKeyRef.current = submissionKey;
       const matchedMedicineSales = getUncapturedMedicineSalesForReceipt(
-        medicineSales,
-        paymentRecords,
+        leanStaffStartup ? patientMedicineSales : medicineSales,
+        leanStaffStartup ? patientPaymentRecords : paymentRecords,
         selectedPatient.id,
         selectedPaymentTreatments,
         paymentDate
@@ -4258,7 +4574,8 @@ const App: React.FC = () => {
       // Keep the existing non-blocking authoritative refresh so commission-
       // enriched reports converge with server state. It is intentionally not
       // awaited and therefore is outside the payment button's critical path.
-      void fetchInitialData();
+      if (leanStaffStartup) handlePatientSelect({ ...selectedPatient, balance: res.new_balance });
+      else void fetchInitialData();
     } catch (err: any) {
       paymentSubmitInFlightRef.current = false;
       alert(err.message);
@@ -4313,8 +4630,25 @@ const App: React.FC = () => {
     setShowTreatmentSelection(true);
   };
 
-  const handleViewAppointmentChart = (appointment: Appointment) => {
-    const patient = patients.find((item) => item.id === appointment.patient_id);
+  const resolveAppointmentPatient = async (appointment: Appointment) => {
+    const cached = patients.find((item) => item.id === appointment.patient_id);
+    if (cached || !leanStaffStartup || !appointment.patient_id) return cached;
+    const scope = currentLocationId;
+    const patient = await api.patients.getById(appointment.patient_id, scope);
+    if (scope !== currentLocationIdRef.current) return null;
+    if (patient) setPatients((previous) => mergePatientsById(previous, [patient]));
+    return patient;
+  };
+
+  const handleViewAppointmentChart = async (appointment: Appointment) => {
+    const selectionId = ++appointmentPatientSelectionRef.current;
+    let patient: Patient | null | undefined;
+    try { patient = await resolveAppointmentPatient(appointment); }
+    catch {
+      if (selectionId === appointmentPatientSelectionRef.current) setToast({ message: 'Could not load patient. Check your connection and retry.', type: 'error', show: true });
+      return;
+    }
+    if (selectionId !== appointmentPatientSelectionRef.current) return;
     if (!patient) {
       setToast({
         message: 'Patient chart is not available for this appointment.',
@@ -4327,8 +4661,15 @@ const App: React.FC = () => {
     handlePatientSelect(patient);
   };
 
-  const handleEditAppointmentPatientInfo = (appointment: Appointment) => {
-    const patient = patients.find((item) => item.id === appointment.patient_id);
+  const handleEditAppointmentPatientInfo = async (appointment: Appointment) => {
+    const selectionId = ++appointmentPatientSelectionRef.current;
+    let patient: Patient | null | undefined;
+    try { patient = await resolveAppointmentPatient(appointment); }
+    catch {
+      if (selectionId === appointmentPatientSelectionRef.current) setToast({ message: 'Could not load patient. Check your connection and retry.', type: 'error', show: true });
+      return;
+    }
+    if (selectionId !== appointmentPatientSelectionRef.current) return;
     if (!patient) {
       setToast({
         message: 'Patient profile is not available for this appointment.',
@@ -4471,12 +4812,20 @@ const App: React.FC = () => {
   };
 
   const handleClosePatient = () => {
+    appointmentPatientSelectionRef.current += 1;
     treatmentHistoryRequestRef.current += 1;
     medicineHistoryRequestRef.current += 1;
     paymentHistoryRequestRef.current += 1;
     setLatestTreatmentBatch([]);
     setPaymentDraft({ treatments: [], amountTendered: 0, previousBalance: 0, currentTreatmentTotal: 0, serviceFeeAmount: 0, serviceFeeCategory: null, paymentMethod: 'UNKNOWN', splitPayment: false, allocations: [] });
     setSelectedPatient(null);
+    setPatientToEditFromAppointment(null);
+    setPatientAppointments([]);
+    setPatientAppointmentsLoading(false);
+    setPatientAppointmentsError(null);
+    setPatientProfileLoading(false);
+    setPatientProfileError(null);
+    setPatientTreatmentError(null);
     setPatientMedicineSales([]);
     setPatientMedicineHistoryLoading(false);
     setPatientMedicineHistoryError(null);
@@ -4556,7 +4905,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (error) {
+  if (error && !leanStaffStartup) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-xl text-center border border-red-100">
@@ -4760,6 +5109,19 @@ const App: React.FC = () => {
       <main className={isDoctor ? "flex min-w-0 flex-1 flex-col p-0 pb-32" : isWorkspaceView ? "flex min-w-0 flex-1 flex-col p-0 lg:h-screen overflow-hidden" : "flex-1 min-w-0 p-3 md:p-5"}>
         <div className={isDoctor || isWorkspaceView ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
           <Suspense fallback={<div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600 w-10 h-10" /></div>}>
+            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`) ? (
+              <div className="flex flex-col items-center gap-3 p-12" role={lazyViewError || error ? 'alert' : 'status'}>
+                {lazyViewError || error ? <>
+                  <p className="text-red-700">{lazyViewError || error}</p>
+                  <button type="button" className="rounded-lg bg-indigo-600 px-4 py-2 text-white" onClick={() => {
+                    if (startupScope !== currentLocationId) void fetchInitialData(currentLocationId || undefined);
+                    else setLazyViewRevision((value) => value + 1);
+                  }}>Retry</button>
+                </> : <><Loader2 className="animate-spin text-indigo-600" /><p>Loading {currentView === 'finance' ? 'patient chart' : currentView}...</p></>}
+              </div>
+            ) : <>
+            {leanStaffStartup && error && <div role="alert" className="m-3 rounded-lg bg-amber-50 p-3 text-amber-900">{error}<button type="button" className="ml-3 underline" onClick={() => void fetchInitialData(currentLocationId || undefined)}>Refresh</button></div>}
+            {leanStaffStartup && currentView === 'finance' && (patientProfileError || patientAppointmentsError) && <div role="alert" className="m-3 rounded-lg bg-red-50 p-3 text-red-700">{patientProfileError || patientAppointmentsError}<button type="button" className="ml-3 underline" onClick={() => selectedPatient && handlePatientSelect(selectedPatient, { preserveDraft: true })}>Retry patient details</button></div>}
             {currentView === 'dashboard' && canAccessView('dashboard') && (
               isDoctor ? (
                 <DoctorHomeView
@@ -4855,6 +5217,10 @@ const App: React.FC = () => {
                 doctors={doctors}
                 treatmentTypes={treatmentTypes}
                 treatmentRecords={globalRecords}
+                historyReady={!leanStaffStartup || historyScope === currentLocationId}
+                historyLoading={historyLoading}
+                historyError={historyError}
+                onLoadHistory={loadDirectoryHistory}
                 onSelectPatient={handlePatientSelect} 
                 onAddPatient={() => {
                   setNewPatientData({
@@ -4923,6 +5289,7 @@ const App: React.FC = () => {
                 doctors={doctors}
                 treatmentTypes={treatmentTypes}
                 loading={appointmentPageLoading}
+                loadError={appointmentPageError}
                 totalAppointments={appointmentPageTotal}
                 onQueryChange={loadAppointmentPage}
                 onRefresh={() => setAppointmentPageRefreshKey((key) => key + 1)}
@@ -5158,6 +5525,9 @@ const App: React.FC = () => {
                 treatmentTypes={treatmentTypes} 
                 treatmentHistory={treatmentHistory}
                 treatmentHistoryLoading={treatmentHistoryLoading}
+                treatmentHistoryError={patientTreatmentError}
+                patientDetailsLoading={leanStaffStartup && (patientProfileLoading || patientAppointmentsLoading)}
+                patientDetailsError={leanStaffStartup ? patientProfileError || patientAppointmentsError : null}
                 medicineSales={patientMedicineSales}
                 medicineHistoryLoading={patientMedicineHistoryLoading}
                 medicineHistoryError={patientMedicineHistoryError}
@@ -5212,13 +5582,14 @@ const App: React.FC = () => {
                 }}
                 onCreateAppointment={handleCreateAppointmentFromClinical}
                 appointmentTypes={appointmentTypes}
-                appointments={appointments}
+                appointments={leanStaffStartup ? patientAppointments : appointments}
                 loyaltyEnabled={loyaltyEnabled}
                 compactToothSelector={true}
                 doctorMobileView={isDoctor}
                 loyaltyRules={loyaltyRules}
                 loyaltyTransactions={loyaltyTransactions}
             />}
+            </>}
           </Suspense>
         </div>
       </main>

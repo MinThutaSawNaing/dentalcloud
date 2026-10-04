@@ -154,3 +154,34 @@ describe('high-volume Supabase fetches', () => {
     ]));
   });
 });
+
+// Reuse the mock query recorder above: no real Supabase/backend access.
+describe('patient appointment history pagination', () => {
+  it('keeps patient, date and branch filters on every getAll page', async () => {
+    supabaseMock.rowsByTable = { appointments: rows('appointments') };
+    supabaseMock.rangesByTable = {};
+    supabaseMock.filtersByTable = {};
+    supabaseMock.from.mockClear();
+
+    const appointments = await api.appointments.getAll('location-1', {
+      patientId: 'patient-1',
+      dateFrom: '2026-08-01',
+      dateTo: '2026-08-31',
+      throwOnError: true
+    });
+
+    expect(appointments).toHaveLength(1001);
+    expect(appointments[0].id).toBe('appointments-0000');
+    expect(appointments[1000].id).toBe('appointments-1000');
+    expect(new Set(appointments.map((appointment) => appointment.id)).size).toBe(1001);
+    expect(supabaseMock.rangesByTable.appointments).toEqual([[0, 999], [1000, 1999]]);
+    const pageFilters = [
+      ['eq', 'location_id', 'location-1'],
+      ['gte', 'date', '2026-08-01'],
+      ['lte', 'date', '2026-08-31'],
+      ['eq', 'patient_id', 'patient-1']
+    ];
+    expect(supabaseMock.filtersByTable.appointments).toEqual([...pageFilters, ...pageFilters]);
+    expect(supabaseMock.from.mock.calls).toEqual([['appointments'], ['appointments']]);
+  });
+});

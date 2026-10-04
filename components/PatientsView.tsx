@@ -48,6 +48,10 @@ interface PatientsViewProps {
   doctors?: Pick<Doctor, 'id' | 'name'>[];
   treatmentTypes?: TreatmentType[];
   treatmentRecords?: ClinicalRecord[];
+  historyReady?: boolean;
+  historyLoading?: boolean;
+  historyError?: string | null;
+  onLoadHistory?: () => void | Promise<void>;
 }
 
 const PatientsView: React.FC<PatientsViewProps> = ({ 
@@ -76,7 +80,11 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   loyaltyRules = [],
   doctors = [],
   treatmentTypes = [],
-  treatmentRecords = []
+  treatmentRecords = [],
+  historyReady = true,
+  historyLoading = false,
+  historyError = null,
+  onLoadHistory
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
@@ -202,6 +210,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   };
 
   const formatAppointmentDate = (dateString?: string) => {
+    if (!historyReady) return 'Load history';
     if (!dateString) return '-';
 
     const isoDateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -351,7 +360,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     }
 
     // Apply visit date filter
-    if (visitDateQuickFilter !== 'all' || visitDateFilter || visitEndDateFilter) {
+    if (historyReady && (visitDateQuickFilter !== 'all' || visitDateFilter || visitEndDateFilter)) {
       const visitRangeStart = visitDateQuickFilter === 'today' ? todayVisitStr
         : visitDateQuickFilter === 'week' ? weekAgoStr
         : visitDateQuickFilter === 'month' ? monthAgoStr
@@ -371,7 +380,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     }
 
     // Apply doctor filter
-    if (doctorFilter) {
+    if (historyReady && doctorFilter) {
       const patientIdsWithDoctor = new Set<string>();
       const isDoctorIdFilter = doctorFilter.startsWith('id:');
       const doctorFilterValue = doctorFilter.replace(/^(id|name):/, '');
@@ -390,7 +399,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     }
 
     // Apply treatment filter
-    if (treatmentFilter) {
+    if (historyReady && treatmentFilter) {
       const patientIdsWithTreatment = new Set<string>();
       treatmentRecords.forEach((record) => {
         if (record.description?.trim() === treatmentFilter && record.patient_id) {
@@ -422,7 +431,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
         searchableRawCreatedDate.includes(term)
       );
     });
-  }, [patients, searchTerm, dateQuickFilter, dateFilter, endDateFilter, visitDateQuickFilter, visitDateFilter, visitEndDateFilter, doctorFilter, treatmentFilter, todayISO, treatmentRecords, doctorNameById, patientLastVisitMap, todayVisitStr, weekAgoStr, monthAgoStr]);
+  }, [patients, searchTerm, searchResults, historyReady, dateQuickFilter, dateFilter, endDateFilter, visitDateQuickFilter, visitDateFilter, visitEndDateFilter, doctorFilter, treatmentFilter, todayISO, treatmentRecords, doctorNameById, patientLastVisitMap, todayVisitStr, weekAgoStr, monthAgoStr]);
 
   const cityOptions = useMemo(
     () => getMyanmarCities().map((city) => ({ value: city, label: city })),
@@ -635,6 +644,18 @@ const PatientsView: React.FC<PatientsViewProps> = ({
         </div>
       </div>
     </div>
+    {!historyReady && (
+      <div role="status" className="px-4 md:px-6 py-3 border-b border-amber-200 bg-amber-50 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p>Patient history is not loaded yet. Load history to see all visit dates, treatments, and history filters.</p>
+          {historyError && <p role="alert" className="mt-1 text-red-700">{historyError}</p>}
+        </div>
+        <button type="button" onClick={() => void onLoadHistory?.()} disabled={historyLoading || !onLoadHistory}
+          className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">
+          {historyLoading ? 'Loading' : historyError ? 'Retry' : 'Load history'}
+        </button>
+      </div>
+    )}
     {/* Unified Filter Bar */}
     <div className="px-4 md:px-6 py-2.5 border-b border-gray-100 bg-white flex flex-col md:flex-row md:items-center gap-2">
       <div className="flex items-center gap-2 text-xs text-gray-500 font-medium min-w-[60px]">
@@ -697,6 +718,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
           />
         </div>
         {/* Visit Date Filter */}
+        <fieldset disabled={!historyReady} aria-label="Patient history filters" className="flex flex-wrap items-center gap-2 min-w-0 border-0 p-0 m-0 disabled:opacity-50">
         <select
           value={visitDateQuickFilter}
           onChange={(e) => {
@@ -744,6 +766,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
+        </fieldset>
         {/* Reset */}
         {(dateQuickFilter !== 'all' || dateFilter || endDateFilter || visitDateQuickFilter !== 'all' || visitDateFilter || visitEndDateFilter || doctorFilter || treatmentFilter) && (
           <button
@@ -812,7 +835,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Treatment and Diagnosis</p>
-                  {isTreatmentRecordsLoading ? (
+                  {!historyReady ? (
+                    <p className="mt-2 text-sm leading-6 text-gray-900">Load history</p>
+                  ) : isTreatmentRecordsLoading ? (
                     <p className="mt-2 text-sm leading-6 text-gray-900">Loading treatment records...</p>
                   ) : treatmentRecords.length === 0 ? (
                     <p className="mt-2 text-sm leading-6 text-gray-900">No Treatment and Diagnosis records available.</p>
@@ -951,7 +976,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                         {formatCreatedDate(patient.created_at)}
                       </td>
                       <td className="px-3 py-3 align-top whitespace-nowrap">
-                        {patientLastVisitMap.get(patient.id) ? (
+                        {!historyReady ? (
+                          <span className="text-xs text-gray-400">Load history</span>
+                        ) : patientLastVisitMap.get(patient.id) ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                             <Calendar size={10} className="text-teal-500" />
                             {formatDate(patientLastVisitMap.get(patient.id)!)}
@@ -972,8 +999,10 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                         </div>
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700 max-w-[200px]">
-                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={patientRecords.map(r => r.description).filter(Boolean).join(', ')}>
-                          {patientRecords.length > 0 ? (
+                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={historyReady ? patientRecords.map(r => r.description).filter(Boolean).join(', ') : 'Load history'}>
+                          {!historyReady ? (
+                            <span className="text-gray-400">Load history</span>
+                          ) : patientRecords.length > 0 ? (
                             patientRecords.slice(0, 4).map((r, i) => (
                               <div key={i} className="flex items-start gap-1">
                                 <span className="text-indigo-400 mt-0.5 shrink-0">•</span>
@@ -983,14 +1012,16 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                           ) : (
                             <span className="text-gray-400">-</span>
                           )}
-                          {patientRecords.length > 4 && (
+                          {historyReady && patientRecords.length > 4 && (
                             <div className="text-[10px] text-gray-400 font-medium mt-0.5">+{patientRecords.length - 4} more</div>
                           )}
                         </div>
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700">
                         <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5">
-                          {patientRecords.length > 0 ? (
+                          {!historyReady ? (
+                            <span className="text-gray-400">Load history</span>
+                          ) : patientRecords.length > 0 ? (
                             getUniquePatientDoctorNames(patientRecords).slice(0, 2).map((name, i) => (
                               <div key={i} className="flex items-start gap-1">
                                 <span className="text-gray-400 mt-0.5 shrink-0">•</span>
@@ -1000,7 +1031,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                           ) : (
                             <span className="text-gray-400">-</span>
                           )}
-                          {getUniquePatientDoctorNames(patientRecords).length > 2 && (
+                          {historyReady && getUniquePatientDoctorNames(patientRecords).length > 2 && (
                             <div className="text-[10px] text-gray-400 font-medium mt-0.5">+{getUniquePatientDoctorNames(patientRecords).length - 2} more</div>
                           )}
                         </div>
@@ -1116,7 +1147,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                     <div className="text-[11px] text-gray-400 mt-1">Created Date: {formatCreatedDate(patient.created_at)}</div>
                     <div className="text-[11px] text-gray-400 mt-1">
                       Last Visit:{' '}
-                      {patientLastVisitMap.get(patient.id) ? (
+                      {!historyReady ? (
+                        <span className="text-gray-400">Load history</span>
+                      ) : patientLastVisitMap.get(patient.id) ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                           <Calendar size={9} className="text-teal-500" />
                           {formatDate(patientLastVisitMap.get(patient.id)!)}

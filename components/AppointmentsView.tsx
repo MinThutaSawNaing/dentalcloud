@@ -19,6 +19,7 @@ interface AppointmentsViewProps {
   doctors?: Pick<Doctor, 'id' | 'name'>[];
   treatmentTypes?: TreatmentType[];
   loading: boolean;
+  loadError?: string | null;
   onAddAppointment: () => void;
   onEditAppointment: (appointment: Appointment) => void;
   onDeleteAppointment: (id: string) => void;
@@ -70,6 +71,7 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
   doctors = [],
   treatmentTypes = [],
   loading,
+  loadError,
   onAddAppointment,
   onEditAppointment,
   onDeleteAppointment,
@@ -883,7 +885,26 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
       </div>
     </div>
 
-      {loading ? (
+      {loadError ? (
+        <div role="alert" className="m-6 rounded-xl border border-red-200 bg-red-50 p-6 text-red-800">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-5 h-5" />
+            Unable to load appointments
+          </div>
+          <p className="mt-2 text-sm">{loadError}</p>
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={() => void onRefresh()}
+              disabled={loading}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Retrying...' : 'Retry'}
+            </button>
+          )}
+        </div>
+      ) : loading ? (
         <div className="flex-1 flex items-center justify-center p-12">
           <Loader2 className="animate-spin text-[var(--hover-600)] w-10 h-10" />
         </div>
