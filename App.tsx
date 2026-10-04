@@ -469,6 +469,7 @@ const App: React.FC = () => {
   const mlsAuthenticatedRef = useRef(isAuthenticated);
   mlsAuthenticatedRef.current = isAuthenticated;
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
+  const [mlsFinalizing, setMlsFinalizing] = useState(false);
   const [mlsRecords, setMlsRecords] = useState<ClinicalRecord[]>([]);
   const [mlsPayments, setMlsPayments] = useState<PaymentRecord[]>([]);
   const [mlsScope, setMlsScope] = useState('');
@@ -2624,27 +2625,39 @@ const App: React.FC = () => {
     const reads: HistoryReadProgress[] = [
       { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
     ];
+    const downloaded = [false, false];
+    const rowsDownloaded = (index: number) => {
+      if (!isCurrent()) return;
+      downloaded[index] = true;
+      if (downloaded.every(Boolean)) {
+        setMlsFinalizing(true);
+        setMlsSyncProgress(null);
+      }
+    };
     const progress = (index: number, loaded: number, total: number | null) => {
       if (!isCurrent()) return;
       reads[index] = { loaded, total, done: false };
-      setMlsSyncProgress(getHistorySyncPercentage(reads));
+      if (!downloaded.every(Boolean)) setMlsSyncProgress(getHistorySyncPercentage(reads));
     };
     const done = <T,>(index: number, value: T): T => {
       if (isCurrent()) {
         reads[index].done = true;
         const percentage = getHistorySyncPercentage(reads);
-        setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
+        if (!downloaded.every(Boolean)) setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
       }
       return value;
     };
     setMlsSyncProgress(null);
+    setMlsFinalizing(false);
     const load = async () => {
       try {
         const results = await Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+            onRowsDownloaded: () => rowsDownloaded(0),
             onProgress: (loaded, total) => progress(0, loaded, total)
           }).then((rows) => done(0, rows)),
           api.finance.getPayments(scope, {
+            onRowsDownloaded: () => rowsDownloaded(1),
             onProgress: (loaded, total) => progress(1, loaded, total)
           }).then((rows) => done(1, rows))
         ]);
@@ -2657,6 +2670,7 @@ const App: React.FC = () => {
         setMlsPayments(mergedPayments);
         setMlsSyncProgress(100);
         setMlsScope(scope);
+        setMlsFinalizing(false);
       } catch (err: any) {
         if (isCurrent()) setMlsSyncError(err?.message || 'Could not sync MLS. Please retry.');
       } finally {
@@ -5665,6 +5679,7 @@ const App: React.FC = () => {
               loading={loading || (leanStaffStartup && mlsScope !== currentLocationId && !mlsSyncError)}
               loadError={leanStaffStartup ? mlsSyncError : null}
               syncProgress={leanStaffStartup ? mlsSyncProgress : (!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null}
+              finalizing={leanStaffStartup && mlsFinalizing}
               currency={currency}
               canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)}
               onRefresh={async () => {

@@ -3862,6 +3862,7 @@ export const api = {
       includeCommissionEntries?: boolean;
       throwOnError?: boolean;
       onProgress?: (loaded: number, total: number | null) => void;
+      onRowsDownloaded?: () => void;
     }): Promise<ClinicalRecord[]> => {
       try {
         const limit = options?.limit === undefined ? 50 : options.limit;
@@ -3912,6 +3913,7 @@ export const api = {
           if (page.length < pageSize) break;
         }
 
+        options?.onRowsDownloaded?.();
         const entriesByTreatment = options?.includeCommissionEntries === false
           ? new Map<string, any[]>()
           : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id));
@@ -4765,6 +4767,7 @@ export const api = {
       dateTo?: string;
       patientId?: string;
       onProgress?: (loaded: number, total: number | null) => void;
+      onRowsDownloaded?: () => void;
     }): Promise<PaymentRecord[]> => {
       const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
         const source = supabase.from('payments');
@@ -4833,6 +4836,7 @@ export const api = {
 
       const payments = (data || []).map(mapPaymentRow);
       const paymentIds = payments.map((payment) => payment.id);
+      options?.onRowsDownloaded?.();
       const [entriesByPayment, costsByPayment] = await Promise.all([
         getDoctorEarningEntriesByPaymentIds(paymentIds),
         api.materialCosts.getTotalsByPaymentIds(paymentIds, { idBatchSize: 50 })

@@ -82,7 +82,7 @@ function harness(code = mlsCode) {
     getHistorySyncPercentage: vi.fn((reads: { done: boolean }[]) =>
       reads.every(read => read.done) ? 100 : 50),
     mergeLegacyPaymentRecords: vi.fn((rows: any[]) => rows),
-    setMlsRecords: vi.fn(), setMlsPayments: vi.fn(), setMlsSyncProgress: vi.fn(),
+    setMlsRecords: vi.fn(), setMlsPayments: vi.fn(), setMlsSyncProgress: vi.fn(), setMlsFinalizing: vi.fn(),
     setMlsScope: vi.fn((scope: string) => { context.mlsScope = scope; }),
     setMlsSyncError: vi.fn((error: string | null) => { context.mlsSyncError = error; }),
     setLoadedLazyView: vi.fn(), setLazyViewError: vi.fn(),
@@ -115,6 +115,29 @@ function harness(code = mlsCode) {
 
 // Cleanup runs on navigation so future cancellation regressions fail.
 describe('App MLS navigation runtime regression', () => {
+  it('finishes delayed financial enrichment without any navigation rerender', async () => {
+    const h = harness();
+    h.render('material-cost');
+    const treatmentOptions = h.context.api.treatments.getAllRecords.mock.calls[0][1];
+    const paymentOptions = h.context.api.finance.getPayments.mock.calls[0][1];
+    treatmentOptions.onProgress(100, 100);
+    paymentOptions.onProgress(100, 100);
+    treatmentOptions.onRowsDownloaded();
+    paymentOptions.onRowsDownloaded();
+    expect(h.context.setMlsFinalizing).toHaveBeenLastCalledWith(true);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(null);
+    expect(h.context.setMlsScope).not.toHaveBeenCalled();
+    h.treatmentReads[0].resolve(records);
+    await flush();
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(null);
+    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+    h.paymentReads[0].resolve(payments);
+    await flush();
+    expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
+    expect(h.context.setMlsFinalizing).toHaveBeenLastCalledWith(false);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
+    h.counts(1);
+  });
   it('deduplicates pending visits, completes away, and reuses ready data', async () => {
     const h = harness();
     h.render('patients');
@@ -123,9 +146,11 @@ describe('App MLS navigation runtime regression', () => {
     h.counts(1);
     expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
       limit: null, throwOnError: true, onProgress: expect.any(Function),
+      onRowsDownloaded: expect.any(Function),
     });
     expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
       onProgress: expect.any(Function),
+      onRowsDownloaded: expect.any(Function),
     });
     h.render('patients');
     h.render('material-cost');

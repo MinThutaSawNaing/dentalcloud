@@ -102,7 +102,7 @@ describe('MaterialCostView MLS sync UI (SSR)', () => {
     expect(markup).toContain(`aria-valuenow="${progress}"`);
     expect(markup).toContain(`>${progress}%</span>`);
     expect(markup).toContain(`style="width:${progress}%"`);
-    expect(markup).toContain('Syncing MLS payment rows…');
+    expect(markup).toContain('Downloading MLS records…');
     expect(markup).not.toContain('progress-indeterminate-stripe');
     expectFilters(markup);
     expectNoFinancialRows(markup);
@@ -141,6 +141,17 @@ describe('MaterialCostView MLS sync UI (SSR)', () => {
     expectFilters(markup);
     expect(markup).not.toContain('Syncing MLS payment rows…');
     expect(markup).not.toContain('Preparing MLS sync…');
+  });
+
+  it('replaces the misleading 99% with an explicit financial-check stage', () => {
+    const markup = render({ loading: true, syncProgress: 99, finalizing: true });
+    expect(markup).toContain('Loading doctor commissions and MLS cost totals');
+    expect(markup).toContain('progress-indeterminate-stripe');
+    expect(markup).not.toContain('aria-valuenow');
+    expect(markup).not.toContain('99%');
+    expect(markup).toContain('table will open automatically');
+    expectNoFinancialRows(markup);
+    expectReadyRows(render({ loading: false, syncProgress: 100, finalizing: false }));
   });
 
   it('defaults omitted sync/error props to ready rows with the Today filter', () => {

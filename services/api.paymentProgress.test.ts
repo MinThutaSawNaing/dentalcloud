@@ -162,6 +162,28 @@ describe('payment fallback progress', () => {
     expect(onProgress.mock.calls).toEqual([[count, count]]);
   });
 
+  it('signals downloaded rows before waiting for delayed MLS enrichment', async () => {
+    let finish!: (value: {}) => void;
+    const pending = new Promise<{}>((resolve) => { finish = resolve; });
+    vi.mocked(api.materialCosts.getTotalsByPaymentIds).mockReturnValueOnce(pending);
+    const onRowsDownloaded = vi.fn();
+    let completed = false;
+    const request = fetchPayments({ onRowsDownloaded }).then((rows) => { completed = true; return rows; });
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(onRowsDownloaded).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(false);
+    finish({});
+    expect(await request).toHaveLength(1001);
+    expect(completed).toBe(true);
+  });
+
+  it('does not signal downloaded rows when a later page fails', async () => {
+    mock.state.failFrom = 1000;
+    const onRowsDownloaded = vi.fn();
+    await expect(fetchPayments({ onRowsDownloaded })).rejects.toThrow('Later page unavailable');
+    expect(onRowsDownloaded).not.toHaveBeenCalled();
+  });
+
   it('preserves missing payment storage behavior without a completion event', async () => {
     mock.state.storageMissing = true;
     const onProgress = vi.fn();
