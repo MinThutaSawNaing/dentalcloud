@@ -3,6 +3,8 @@ import { Settings as SettingsIcon, DollarSign, MapPin, Award, Plus, Trash2, Rota
 import { BranchReceiptIdentity, Location, LoyaltyRule, S3Settings, SupabaseStorageSettings, ReceiptSize, PatientType, AppointmentType, ActiveStaffMonitorEntry } from '../types';
 import { Modal, Input } from './Shared';
 import { api } from '../services/api';
+import { auth } from '../services/auth';
+import { dataCache } from '../utils/dataCache';
 import { supabase } from '../services/supabase';
 import { EMAIL_SETTINGS_KEY, EmailSettings, loadEmailSettings, loadEmailSettingsAsync, saveEmailSettings as persistEmailSettings, saveEmailSettingsAsync } from '../utils/emailSettings';
 
@@ -358,6 +360,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         bucket: supabaseStorage.bucket.trim()
       };
       await api.appSettings.saveSupabaseStorage(nextSettings);
+      dataCache.invalidatePrefix('view-settings:');
       setSupabaseStorage(nextSettings);
       setSupabaseStorageMessage('Supabase Storage settings saved. Uploads will use the new bucket immediately.');
     } catch (error: any) {
@@ -376,6 +379,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         region: s3Settings.region.trim()
       };
       await api.appSettings.saveS3Settings(nextSettings);
+      dataCache.invalidatePrefix('view-settings:');
       setS3Settings(nextSettings);
       setS3SettingsMessage('S3 settings saved. Uploads will use the new bucket immediately.');
     } catch (error: any) {
@@ -753,10 +757,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({
 
   useEffect(() => {
     let isMounted = true;
-    
-    api.appSettings.getS3Settings()
+    const session = auth.getSession();
+    const scope = JSON.stringify([session?.userId, session?.role, session?.location_id]);
+    const isCurrent = () => isMounted && JSON.stringify([
+      auth.getSession()?.userId, auth.getSession()?.role, auth.getSession()?.location_id
+    ]) === scope;
+    dataCache.getOrLoad(`view-settings:${scope}:s3`, () => api.appSettings.getS3Settings(), Infinity)
       .then((settings) => {
-        if (isMounted) {
+        if (isCurrent()) {
           setS3Settings(settings);
         }
       })
@@ -764,9 +772,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         console.warn('Failed to load S3 settings:', error);
       });
     
-    api.appSettings.getSupabaseStorage()
+    dataCache.getOrLoad(`view-settings:${scope}:storage`, () => api.appSettings.getSupabaseStorage(), Infinity)
       .then((settings) => {
-        if (isMounted) {
+        if (isCurrent()) {
           setSupabaseStorage(settings);
         }
       })

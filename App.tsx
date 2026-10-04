@@ -454,6 +454,18 @@ const App: React.FC = () => {
   const [loadedLazyView, setLoadedLazyView] = useState('');
   const [lazyViewError, setLazyViewError] = useState<string | null>(null);
   const [lazyViewRevision, setLazyViewRevision] = useState(0);
+  const navigationCacheVersionRef = useRef(0);
+  const invalidateNavigationCache = () => {
+    navigationCacheVersionRef.current += 1;
+    dataCache.invalidatePrefix('navigation:');
+    dataCache.invalidatePrefix('appointment-page:');
+    dataCache.invalidatePrefix('view-settings:');
+    dataCache.invalidatePrefix(`${getClinicCacheKey('audit-range', currentLocationId)}:`);
+  };
+  const [mlsSyncError, setMlsSyncError] = useState<string | null>(null);
+  const mlsInFlightRef = useRef<{ scope: string; startupRequestId: number; cacheVersion: number } | null>(null);
+  const mlsAuthenticatedRef = useRef(isAuthenticated);
+  mlsAuthenticatedRef.current = isAuthenticated;
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
   const [mlsRecords, setMlsRecords] = useState<ClinicalRecord[]>([]);
   const [mlsPayments, setMlsPayments] = useState<PaymentRecord[]>([]);
@@ -461,6 +473,7 @@ const App: React.FC = () => {
   const [mlsCacheRevision, setMlsCacheRevision] = useState(0);
   const mlsCacheVersionRef = useRef(0);
   const invalidateMlsMemory = () => {
+    invalidateNavigationCache();
     mlsCacheVersionRef.current += 1;
     setMlsScope('');
     setMlsCacheRevision((value) => value + 1);
@@ -702,6 +715,7 @@ const App: React.FC = () => {
     setCurrency(newCurrency);
     try {
       await api.appSettings.saveReceiptPreferences({ currency: newCurrency });
+      invalidateNavigationCache();
     } catch (error) {
       setCurrency(previousCurrency);
       throw error;
@@ -722,6 +736,7 @@ const App: React.FC = () => {
   const handleUpdateLoyaltyRule = async (id: string, data: Partial<LoyaltyRule>) => {
     try {
       const updated = await api.loyalty.updateRule(id, data);
+      invalidateNavigationCache();
       setLoyaltyRules(prev => prev.map(rule => rule.id === id ? updated : rule));
     } catch (err: any) {
       alert(err.message);
@@ -731,6 +746,7 @@ const App: React.FC = () => {
   const handleCreateLoyaltyRule = async (data: Partial<LoyaltyRule>) => {
     try {
       const created = await api.loyalty.createRule({ ...data, location_id: currentLocationId || data.location_id });
+      invalidateNavigationCache();
       setLoyaltyRules(prev => [...prev, created]);
     } catch (err: any) {
       alert(err.message);
@@ -741,6 +757,7 @@ const App: React.FC = () => {
     if (!window.confirm('Delete this loyalty rule?')) return;
     try {
       await api.loyalty.deleteRule(id);
+      invalidateNavigationCache();
       setLoyaltyRules(prev => prev.filter(rule => rule.id !== id));
     } catch (err: any) {
       alert(err.message);
@@ -751,6 +768,7 @@ const App: React.FC = () => {
     if (!window.confirm('Reset all patient loyalty points? This cannot be undone.')) return;
     try {
       await api.loyalty.resetAllPoints(currentLocationId || undefined);
+      invalidateNavigationCache();
       setPatients(prev => prev.map(patient => ({ ...patient, loyalty_points: 0 })));
       setDashboardPatients(prev => prev.map(patient => ({ ...patient, loyalty_points: 0 })));
       setAssistantPatients(prev => prev.map(patient => ({ ...patient, loyalty_points: 0 })));
@@ -773,6 +791,7 @@ const App: React.FC = () => {
       newPatientAmount: normalizedNewPatientAmount,
       returningPatientAmount: normalizedReturningPatientAmount
     });
+    invalidateNavigationCache();
     setClinicalFeeEnabled(enabled);
     setClinicalFeeNewPatientAmount(normalizedNewPatientAmount);
     setClinicalFeeReturningPatientAmount(normalizedReturningPatientAmount);
@@ -780,16 +799,19 @@ const App: React.FC = () => {
 
   const handleUploadAppLogo = async (file: File) => {
     const logo = await api.appSettings.uploadAppLogo(file);
+    invalidateNavigationCache();
     setAppLogoUrl(logo.url);
   };
 
   const handleSaveAppName = async (name: string) => {
     await api.appSettings.saveAppName(name);
+    invalidateNavigationCache();
     setAppName(name.trim());
   };
 
   const handleDeleteAppLogo = async () => {
     await api.appSettings.deleteAppLogo();
+    invalidateNavigationCache();
     setAppLogoUrl('');
   };
 
@@ -851,6 +873,7 @@ const App: React.FC = () => {
     setHoverTheme(theme);
     try {
       await api.appSettings.saveHoverTheme(theme);
+      invalidateNavigationCache();
     } catch (error) {
       console.warn('Failed to persist hover theme:', error);
     }
@@ -861,6 +884,7 @@ const App: React.FC = () => {
     setReceiptSize(size);
     try {
       await api.appSettings.saveReceiptPreferences({ receiptSize: size });
+      invalidateNavigationCache();
     } catch (error) {
       setReceiptSize(previousSize);
       throw error;
@@ -874,6 +898,8 @@ const App: React.FC = () => {
       await api.appSettings.saveAutoOnpPatientTypeEnabled(enabled);
       if (enabled) {
         await fetchInitialData(currentLocationId || undefined);
+      } else {
+        invalidateNavigationCache();
       }
     } catch (error) {
       setAutoOnpPatientTypeEnabled(previousValue);
@@ -885,6 +911,7 @@ const App: React.FC = () => {
     if (window.confirm('Are you sure you want to remove ALL messages and conversations? This action cannot be undone.')) {
       try {
         await api.messages.removeAllMessages();
+        invalidateNavigationCache();
         alert('All messages and conversations have been removed successfully.');
         // Refresh the page or trigger a state update to reflect changes
         window.location.reload();
@@ -1238,6 +1265,8 @@ const App: React.FC = () => {
     setHistoryScope('');
     setLoadedLazyView('');
     invalidateMlsMemory();
+    setMlsSyncError(null);
+    setMlsSyncProgress(null);
     setMlsRecords([]);
     setMlsPayments([]);
     setIsAuthenticated(false);
@@ -1876,15 +1905,18 @@ const App: React.FC = () => {
     }
     setAppointmentPageLoading(true);
     try {
-      const result = await api.appointments.list(locationId, {
+      const cacheVersion = navigationCacheVersionRef.current;
+      const startupRequestId = initialDataFetchRequestRef.current;
+      const pageKey = `appointment-page:${getClinicCacheScope(locationId)}:${startupRequestId}:${cacheVersion}:${appointmentPageRefreshKey}:${JSON.stringify([date, query.page, query.search, doctorIds, query.treatment, session?.role, session?.doctor_id])}`;
+      const result = await dataCache.getOrLoad(pageKey, () => api.appointments.list(locationId, {
         date,
         page: query.page,
         pageSize: 100,
         search: query.search,
         doctorIds,
         treatment: query.treatment
-      });
-      if (requestId !== appointmentPageRequestRef.current) return;
+      }), Infinity);
+      if (requestId !== appointmentPageRequestRef.current || startupRequestId !== initialDataFetchRequestRef.current || cacheVersion !== navigationCacheVersionRef.current || currentLocationIdRef.current !== locationId) return;
       setAppointmentPageAppointments(filterAppointmentsForDoctor(result.appointments, session?.role, session?.doctor_id));
       setAppointmentPageTotal(result.total);
     } catch (err) {
@@ -1999,7 +2031,7 @@ const App: React.FC = () => {
           payments: scopedPayments,
           rescheduleLogs: rescheduleLogs as AppointmentRescheduleLog[]
         };
-      }, 30_000);
+      }, Infinity);
       if (requestId !== auditRequestRef.current) return;
 
       applyAuditBundle(bundle);
@@ -2037,6 +2069,8 @@ const App: React.FC = () => {
       setStartupScope('');
       setLoadedLazyView('');
       invalidateMlsMemory();
+      setMlsSyncError(null);
+      setMlsSyncProgress(null);
       setMlsRecords([]);
       setMlsPayments([]);
       lazyViewRequestRef.current += 1;
@@ -2530,11 +2564,14 @@ const App: React.FC = () => {
       for (const task of dueTasks) {
         try {
           await api.scheduledTasks.markProcessing(task.id);
+          invalidateNavigationCache();
           await processScheduledTask(task);
           await api.scheduledTasks.markCompleted(task.id);
+          invalidateNavigationCache();
         } catch (error: any) {
           console.error('Scheduled task processing failed:', error);
           await api.scheduledTasks.markFailed(task.id, error?.message || 'Failed to process scheduled task.');
+          invalidateNavigationCache();
         }
       }
     } finally {
@@ -2561,43 +2598,43 @@ const App: React.FC = () => {
     }
   }, [currentView, currentLocationId, allowedViews, leanStaffStartup]);
 
-  // Fetch only the selected screen's complete datasets. Do not mount that screen
-  // with empty/partial financial data while its requests are still running.
+  // MLS reads are owned by the branch/session, never by navigation cleanup.
   useEffect(() => {
-    if (!leanStaffStartup || !isAuthenticated || !currentLocationId || startupScope !== currentLocationId || initialSyncActive) return;
-    if (!canAccessView(currentView) && currentView !== 'finance') return;
+    if (!leanStaffStartup || !isAuthenticated || !currentLocationId
+      || startupScope !== currentLocationId || initialSyncActive
+      || currentView !== 'material-cost' || !canAccessView('material-cost')
+      || mlsScope === currentLocationId || mlsSyncError) return;
     const scope = currentLocationId;
-    const view = currentView;
-    const key = `${scope}:${view}`;
-    // Completed MLS reads belong to the branch/session, not the selected tab.
-    // Only explicit invalidation should require another full download.
-    if (view === 'material-cost' && mlsScope === scope) {
-      setLazyViewError(null);
-      setLoadedLazyView(key);
-      return;
-    }
-    const requestId = ++lazyViewRequestRef.current;
-    let cancelled = false;
-    setLazyViewError(null);
-    setLoadedLazyView('');
+    const startupRequestId = initialDataFetchRequestRef.current;
+    const cacheVersion = mlsCacheVersionRef.current;
+    const existing = mlsInFlightRef.current;
+    if (existing?.scope === scope && existing.startupRequestId === startupRequestId
+      && existing.cacheVersion === cacheVersion) return;
+    const flight = { scope, startupRequestId, cacheVersion };
+    mlsInFlightRef.current = flight;
+    const isCurrent = () => mlsInFlightRef.current === flight
+      && mlsAuthenticatedRef.current && currentLocationIdRef.current === scope
+      && initialDataFetchRequestRef.current === startupRequestId
+      && mlsCacheVersionRef.current === cacheVersion;
+    const reads: HistoryReadProgress[] = [
+      { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
+    ];
+    const progress = (index: number, loaded: number, total: number | null) => {
+      if (!isCurrent()) return;
+      reads[index] = { loaded, total, done: false };
+      setMlsSyncProgress(getHistorySyncPercentage(reads));
+    };
+    const done = <T,>(index: number, value: T): T => {
+      if (isCurrent()) {
+        reads[index].done = true;
+        const percentage = getHistorySyncPercentage(reads);
+        setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
+      }
+      return value;
+    };
+    setMlsSyncProgress(null);
     const load = async () => {
-      if (view === 'material-cost') {
-        const cacheVersion = mlsCacheVersionRef.current;
-        setMlsSyncProgress(null);
-        const reads: HistoryReadProgress[] = [
-          { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
-        ];
-        const progress = (index: number, loaded: number, total: number | null) => {
-          if (cancelled || requestId !== lazyViewRequestRef.current) return;
-          reads[index] = { loaded, total, done: false };
-          setMlsSyncProgress(getHistorySyncPercentage(reads));
-        };
-        const done = <T,>(index: number, value: T): T => {
-          reads[index].done = true;
-          const percentage = getHistorySyncPercentage(reads);
-          if (!cancelled && requestId === lazyViewRequestRef.current) setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
-          return value;
-        };
+      try {
         const results = await Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
             onProgress: (loaded, total) => progress(0, loaded, total)
@@ -2606,81 +2643,181 @@ const App: React.FC = () => {
             onProgress: (loaded, total) => progress(1, loaded, total)
           }).then((rows) => done(1, rows))
         ]);
-        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        if (!isCurrent()) return;
         const [records, payments] = results;
-        if (cacheVersion !== mlsCacheVersionRef.current) return;
         if (records.status === 'rejected') throw records.reason;
         if (payments.status === 'rejected') throw payments.reason;
+        const mergedPayments = mergeLegacyPaymentRecords(payments.value, scope);
         setMlsRecords(records.value);
-        setMlsPayments(mergeLegacyPaymentRecords(payments.value, scope));
+        setMlsPayments(mergedPayments);
         setMlsSyncProgress(100);
         setMlsScope(scope);
-      } else if (view === 'expenses') {
-        const [expenseData, sales, records] = await Promise.all([
+      } catch (err: any) {
+        if (isCurrent()) setMlsSyncError(err?.message || 'Could not sync MLS. Please retry.');
+      } finally {
+        if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null;
+      }
+    };
+    void load();
+    // No cleanup cancellation: tab switches must leave this flight running.
+  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated,
+    leanStaffStartup, allowedViews, mlsCacheRevision, mlsScope, mlsSyncError]);
+
+  // Fetch only the selected screen's complete datasets. Do not mount that screen
+  // with empty/partial financial data while its requests are still running.
+  useEffect(() => {
+    if (!leanStaffStartup || !isAuthenticated || !currentLocationId || startupScope !== currentLocationId || initialSyncActive) return;
+    if (!canAccessView(currentView) && currentView !== 'finance') return;
+    const scope = currentLocationId;
+    const view = currentView;
+    const key = `${scope}:${view}`;
+    // MLS has its own branch/session loader; navigation must not cancel its reads.
+    if (view === 'material-cost') {
+      setLoadedLazyView(key);
+      return;
+    }
+    const requestId = ++lazyViewRequestRef.current;
+    const startupRequestId = initialDataFetchRequestRef.current;
+    const cacheVersion = navigationCacheVersionRef.current;
+    const session = auth.getSession();
+    const permissionKey = JSON.stringify([session?.role, session?.doctor_id,
+      session?.location_id, [...allowedViews].sort()]);
+    const clinicScope = getClinicCacheScope(scope);
+    const restrictedScope = getSessionRestrictedLocationId(session);
+    const requestedDashboardScope = dashboardLocationId || scope;
+    const effectiveDashboardScope = !restrictedScope && requestedDashboardScope === ALL_BRANCHES_VALUE
+      ? ALL_BRANCHES_VALUE
+      : restrictedScope || (locations.some((location) => location.id === requestedDashboardScope)
+        ? requestedDashboardScope : locations[0]?.id || requestedDashboardScope);
+    const cacheKey = `navigation:${clinicScope}:${startupRequestId}:${cacheVersion}:${view}:${JSON.stringify([
+      view === 'dashboard' ? dashboardLocationId : '',
+      view === 'dashboard' ? effectiveDashboardScope : restrictedScope || scope,
+      permissionKey, lazyViewRevision
+    ])}`;
+    let cancelled = false;
+    const isCurrent = () => !cancelled && requestId === lazyViewRequestRef.current
+      && startupRequestId === initialDataFetchRequestRef.current
+      && cacheVersion === navigationCacheVersionRef.current
+      && currentLocationIdRef.current === scope && getClinicCacheScope(scope) === clinicScope
+      && JSON.stringify([auth.getSession()?.role, auth.getSession()?.doctor_id,
+        auth.getSession()?.location_id, [...allowedViews].sort()]) === permissionKey;
+    const cached = <T,>(loader: () => Promise<T>) => dataCache.getOrLoad(cacheKey, loader, Infinity);
+    setLazyViewError(null);
+    setLoadedLazyView('');
+    const load = async () => {
+      if (view === 'expenses') {
+        const [expenseData, sales, records] = await cached(() => Promise.all([
           api.expenses.getAll(scope, { throwOnError: true }),
           api.medicines.getSales(scope, undefined, { throwOnError: true }),
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true })
-        ]);
-        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        ]));
+        if (!isCurrent()) return;
         setExpenses(expenseData);
         setMedicineSales(sales);
         setGlobalRecords(records);
         setGlobalRecordsReady(true);
       } else if (view === 'inventory' || view === 'finance') {
-        if (view === 'finance' && selectedPatient) {
+        if (isCurrent() && view === 'finance' && selectedPatient) {
           if (selectedPatient.location_id && selectedPatient.location_id !== scope) handleClosePatient();
           else handlePatientSelect(selectedPatient, { preserveDraft: true });
         }
-        const [medicineData, topSelling] = await Promise.all([
+        const [medicineData, topSelling] = await cached(() => Promise.all([
           api.medicines.getAll(scope, { throwOnError: true }),
           view === 'inventory' ? api.medicines.getTopSelling(scope, 10) : Promise.resolve([])
-        ]);
-        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        ]));
+        if (!isCurrent()) return;
         setMedicines(medicineData);
         if (view === 'inventory') setTopSellingMedicines(topSelling);
         setMedicinesReady(true);
       } else if (view === 'dashboard') {
-        await fetchDashboardData(dashboardLocationId || scope);
+        // Cache data, not a helper completion flag: filters can replace these arrays.
+        const queryScope = effectiveDashboardScope === ALL_BRANCHES_VALUE ? undefined : effectiveDashboardScope;
+        const dashboardRequestId = ++dashboardFetchRequestRef.current;
+        const [patients, appointments, records, expenses, payments] = await cached(() => Promise.all([
+          api.patients.getAll(queryScope, { throwOnError: true }),
+          api.appointments.getAll(queryScope, { throwOnError: true }),
+          api.treatments.getAllRecords(queryScope, { limit: null, throwOnError: true }),
+          api.expenses.getAll(queryScope, { throwOnError: true }),
+          api.finance.getPayments(queryScope)
+        ]));
+        if (!isCurrent() || dashboardRequestId !== dashboardFetchRequestRef.current) return;
+        setDashboardPatients(patients);
+        setDashboardAppointments(appointments);
+        setDashboardRecords(records);
+        setDashboardExpenses(expenses);
+        setDashboardPayments(mergeLegacyPaymentRecords(payments, queryScope));
+        setDashboardLocationId(effectiveDashboardScope);
+        localStorage.setItem('dashboardLocationId', effectiveDashboardScope);
+        setDashboardLoading(false);
       } else if (view === 'ai-assistant') {
-        await fetchAssistantData();
+        const queryScope = restrictedScope || scope;
+        const [patients, appointments, doctors, types, records, medicines, expenses, sales, payments] = await cached(() => Promise.all([
+          api.patients.getAll(queryScope, { throwOnError: true }),
+          api.appointments.getAll(queryScope, { throwOnError: true }),
+          api.doctors.getAll(queryScope, { throwOnError: true }),
+          api.treatments.getTypes(queryScope, { throwOnError: true }),
+          api.treatments.getAllRecords(queryScope, { limit: null, throwOnError: true }),
+          api.medicines.getAll(queryScope, { throwOnError: true }),
+          api.expenses.getAll(queryScope, { throwOnError: true }),
+          api.medicines.getSales(queryScope, undefined, { throwOnError: true }),
+          api.finance.getPayments(queryScope)
+        ]));
+        if (!isCurrent()) return;
+        setAssistantPatients(patients);
+        setAssistantAppointments(appointments);
+        setAssistantDoctors(doctors);
+        setAssistantTreatmentTypes(types);
+        setAssistantRecords(records);
+        setAssistantMedicines(medicines);
+        setAssistantExpenses(expenses);
+        setAssistantMedicineSales(sales);
+        setAssistantPaymentRecords(mergeLegacyPaymentRecords(payments, queryScope));
       } else if (view === 'users') {
-        await fetchUsers();
+        if (!isAdmin || session?.role !== 'admin') return;
+        const rows = await cached(() => api.users.getAll(scope));
+        if (!isCurrent() || !auth.isAdmin()) return;
+        setUsers(rows);
       } else if (view === 'patients') {
-        const page = await api.patients.getPage(scope, 0, PATIENTS_INITIAL_LOAD_SIZE);
-        if (cancelled || requestId !== lazyViewRequestRef.current) return;
-        setPatients((previous) => {
-          const freshById = new Map(page.map((patient) => [patient.id, patient]));
-          return mergePatientsById(previous.map((patient) => freshById.get(patient.id) || patient), page);
-        });
-        setHistoryScope('');
+        const reusedPage = dataCache.get<Patient[]>(cacheKey) !== null;
+        const page = await cached(() => api.patients.getPage(scope, 0, PATIENTS_INITIAL_LOAD_SIZE));
+        if (!isCurrent()) return;
+        // Existing rows may include local edits or subsequent pages; do not overwrite them on re-entry.
+        setPatients((previous) => isCurrent() ? (reusedPage
+          ? mergePatientsById(previous, page)
+          : mergePatientsById(page, previous)) : previous);
+        // Refreshing the first patient page must not invalidate full history.
       } else if (view === 'doctors') {
-        const rows = await api.doctors.getAll(scope, { throwOnError: true });
-        if (cancelled || requestId !== lazyViewRequestRef.current) return;
+        const rows = await cached(() => api.doctors.getAll(scope, { throwOnError: true }));
+        if (!isCurrent()) return;
         setDoctors(rows);
       }
-      if (!cancelled && requestId === lazyViewRequestRef.current) setLoadedLazyView(key);
+      if (cancelled || requestId !== lazyViewRequestRef.current) return;
+      if (!cancelled && requestId === lazyViewRequestRef.current && isCurrent()) setLoadedLazyView(key);
     };
     void load().catch((err: any) => {
-      if (!cancelled && requestId === lazyViewRequestRef.current) {
+      if (!cancelled && requestId === lazyViewRequestRef.current && isCurrent()) {
         setLazyViewError(err?.message || 'Could not load this screen. Please retry.');
       }
     });
+    // Cancel publication only: getOrLoad keeps the bundle flight available across tab switches.
     return () => { cancelled = true; };
-  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup, lazyViewRevision, allowedViews, currentView === 'material-cost' ? mlsCacheRevision : 0]);
+  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup,
+    lazyViewRevision, allowedViews, dashboardLocationId, isAdmin]);
 
   useEffect(() => {
     if (!leanStaffStartup || !isAuthenticated) return;
     const refreshVisibleReads = () => {
       if (document.visibilityState === 'hidden' || initialSyncActive) return;
-      if (currentView === 'appointments') setAppointmentPageRefreshKey((key) => key + 1);
+      if (currentView === 'appointments' && appointmentPageError) setAppointmentPageRefreshKey((key) => key + 1);
       else if (currentView === 'patients' || currentView === 'doctors' || currentView === 'material-cost') {
         if (currentView === 'patients') setHistoryError(null);
+        // Returning to the browser is not a request to redownload complete history.
+        // Only retry failed MLS reads here; successful data stays cached.
         if (currentView === 'material-cost') {
-          invalidateMlsMemory();
-          setLoadedLazyView('');
-          setMlsSyncProgress(null);
+          if (mlsSyncError) setMlsSyncError(null);
+          return;
         }
-        setLazyViewRevision((key) => key + 1);
+        if (lazyViewError) setLazyViewRevision((key) => key + 1);
       }
     };
     document.addEventListener('visibilitychange', refreshVisibleReads);
@@ -2689,7 +2826,7 @@ const App: React.FC = () => {
       document.removeEventListener('visibilitychange', refreshVisibleReads);
       window.removeEventListener('online', refreshVisibleReads);
     };
-  }, [leanStaffStartup, isAuthenticated, currentView, initialSyncActive]);
+  }, [leanStaffStartup, isAuthenticated, currentView, initialSyncActive, mlsSyncError, lazyViewError, appointmentPageError]);
 
   const loadDirectoryHistory = async () => {
     const scope = currentLocationId;
@@ -2806,6 +2943,7 @@ const App: React.FC = () => {
       const inventoryKey = getClinicCacheKey('inventory', locationId);
       const topSellingKey = getClinicCacheKey('top-selling', locationId);
       if (force) {
+        invalidateNavigationCache();
         dataCache.invalidate(inventoryKey);
         dataCache.invalidate(topSellingKey);
       }
@@ -2831,7 +2969,7 @@ const App: React.FC = () => {
         return;
       }
       const key = getClinicCacheKey('expenses', locationId);
-      if (force) dataCache.invalidate(key);
+      if (force) { invalidateNavigationCache(); dataCache.invalidate(key); }
       const expenseData = await dataCache.getOrLoad(key, () => api.expenses.getAll(locationId, { throwOnError: leanStaffStartup }), 60_000);
       if (requestId !== expensesFetchRequestRef.current || currentLocationIdRef.current !== locationId) return;
       setExpenses(expenseData);
@@ -2850,7 +2988,7 @@ const App: React.FC = () => {
         return;
       }
       const key = getClinicCacheKey('medicine-sales', locationId);
-      if (force) dataCache.invalidate(key);
+      if (force) { invalidateNavigationCache(); dataCache.invalidate(key); }
       const salesData = await dataCache.getOrLoad(key, () => api.medicines.getSales(locationId, undefined, { throwOnError: leanStaffStartup }), 60_000);
       if (requestId !== medicineSalesFetchRequestRef.current || currentLocationIdRef.current !== locationId) return;
       setMedicineSales(salesData);
@@ -4014,6 +4152,7 @@ const App: React.FC = () => {
 
       if (editingUser) {
         const updatedUser = await api.users.update(editingUser.id, payload);
+        invalidateNavigationCache();
         await syncCurrentSessionUser(updatedUser);
       } else {
         if (!newUserData.password || newUserData.password === '') {
@@ -4022,6 +4161,7 @@ const App: React.FC = () => {
           return;
         }
         await api.users.create(payload);
+        invalidateNavigationCache();
       }
       setShowUserModal(false);
       setEditingUser(null);
@@ -4047,6 +4187,7 @@ const App: React.FC = () => {
   const handleDeleteUser = async (id: string) => {
     try {
       await api.users.delete(id);
+      invalidateNavigationCache();
       fetchUsers();
       setToast({
         message: 'User account deleted successfully.',
@@ -4150,6 +4291,7 @@ const App: React.FC = () => {
     completedLaterAppointmentId?: string | null
   ) => {
     await api.appointments.updateCancellationOutcome(id, outcome, completedLaterAppointmentId);
+    invalidateNavigationCache();
     await fetchDashboardData(dashboardLocationId, locations);
   };
 
@@ -4187,8 +4329,10 @@ const App: React.FC = () => {
     try {
       if (editingTreatmentType) {
         await api.treatments.updateType(editingTreatmentType.id, newTreatmentTypeData);
+        invalidateNavigationCache();
       } else {
         await api.treatments.createType({ ...newTreatmentTypeData, location_id: currentLocationId });
+        invalidateNavigationCache();
       }
       const updatedTypes = await api.treatments.getTypes(currentLocationId);
       setTreatmentTypes(updatedTypes);
@@ -4205,6 +4349,7 @@ const App: React.FC = () => {
   const handleDeleteTreatmentType = async (id: string) => {
     try {
       await api.treatments.deleteType(id);
+      invalidateNavigationCache();
       setTreatmentTypes(treatmentTypes.filter(t => t.id !== id));
       setServiceToDelete(null);
       setDeleteServiceConfirmOpen(false);
@@ -4218,6 +4363,7 @@ const App: React.FC = () => {
     if (!patient) return;
     try {
       const result = await api.loyalty.redeemPoints(patient.id, currentLocationId || patient.location_id, points, amount);
+      invalidateNavigationCache();
       const updatedPatient = {
         ...patient,
         balance: result.new_balance,
@@ -4274,6 +4420,7 @@ const App: React.FC = () => {
           discountAmount: treatmentDiscountAmount,
           pricingNote
         });
+        invalidateNavigationCache();
         recordedResponses.push(res);
         invalidateMlsMemory(); // Includes partial-success treatment batches.
       }
@@ -4335,6 +4482,7 @@ const App: React.FC = () => {
     try {
       const res = await api.treatments.undoRecord(record.id);
       invalidateMlsMemory();
+      invalidateNavigationCache();
       
       setSelectedPatient({
         ...selectedPatient,
@@ -4386,6 +4534,7 @@ const App: React.FC = () => {
 
     try {
       const result = await api.medicines.undoSale(sale.id);
+      invalidateNavigationCache();
       const updatePatient = (patient: Patient) => patient.id === result.patient_id ? { ...patient, balance: result.new_balance, loyalty_points: result.new_points } : patient;
       const removeSale = (candidate: MedicineSale) => candidate.id !== result.medicine_sale_id;
       const updateStock = (medicine: Medicine) => medicine.id === result.medicine_id ? { ...medicine, stock: result.new_stock } : medicine;
@@ -4613,6 +4762,7 @@ const App: React.FC = () => {
         createdByUserId: null,
         createdByUserName: currentUser || session?.username || null
       });
+      if (leanStaffStartup) invalidateNavigationCache();
       invalidateMlsMemory();
       let paymentRecord: PaymentRecord = {
         ...res.payment,
@@ -4639,6 +4789,7 @@ const App: React.FC = () => {
 
       try {
         const savedSnapshot = await api.finance.saveReceiptSnapshot(paymentRecord.id, paymentSnapshot);
+        invalidateNavigationCache();
         paymentRecord = {
           ...paymentRecord,
           receiptSnapshot: savedSnapshot
@@ -4849,6 +5000,7 @@ const App: React.FC = () => {
     setUploading(true);
     try {
       const uploaded = await Promise.all(uploadList.map(f => api.files.upload(selectedPatient.id, f)));
+      invalidateNavigationCache();
       setPatientFiles(prev => [...uploaded, ...prev]);
     } catch (err: any) {
       alert(err.message || 'Upload failed');
@@ -4895,6 +5047,7 @@ const App: React.FC = () => {
           }
         );
         
+        invalidateNavigationCache();
         console.log(`[Upload Handler] Completed file ${i + 1}/${files.length}: ${file.name}`);
       }
 
@@ -4916,6 +5069,7 @@ const App: React.FC = () => {
     if (!selectedPatient) return;
     try {
       await api.files.remove(path);
+      invalidateNavigationCache();
       setPatientFiles(prev => prev.filter(f => f.path !== path));
     } catch (err: any) {
       alert(err.message || 'Failed to delete file');
@@ -5503,8 +5657,8 @@ const App: React.FC = () => {
               records={leanStaffStartup ? mlsRecords : globalRecords}
               doctors={doctors}
               paymentRecords={leanStaffStartup ? mlsPayments : paymentRecords}
-              loading={loading || (leanStaffStartup && mlsScope !== currentLocationId && !lazyViewError)}
-              loadError={leanStaffStartup ? lazyViewError : null}
+              loading={loading || (leanStaffStartup && mlsScope !== currentLocationId && !mlsSyncError)}
+              loadError={leanStaffStartup ? mlsSyncError : null}
               syncProgress={leanStaffStartup ? mlsSyncProgress : (!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null}
               currency={currency}
               canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)}
@@ -5512,7 +5666,7 @@ const App: React.FC = () => {
                 invalidateMaterialCostCaches();
                 if (leanStaffStartup) {
                   setLoadedLazyView('');
-                  setLazyViewError(null);
+                  setMlsSyncError(null);
                   setMlsSyncProgress(null);
                   setLazyViewRevision((value) => value + 1);
                 } else await fetchGlobalRecords(true);
@@ -5521,7 +5675,7 @@ const App: React.FC = () => {
                 invalidateMaterialCostCaches();
                 if (leanStaffStartup) {
                   setLoadedLazyView('');
-                  setLazyViewError(null);
+                  setMlsSyncError(null);
                   setMlsSyncProgress(null);
                   setLazyViewRevision((value) => value + 1);
                 } else {
@@ -5591,6 +5745,7 @@ const App: React.FC = () => {
                     appointmentTypes={appointmentTypes}
                     onCreatePatientType={async (data) => {
                       await api.patientTypes.create(data);
+                      invalidateNavigationCache();
                       setPatientTypes(await api.patientTypes.getAll());
                     }}
                     onUpdatePatientType={async (id, data) => {
@@ -5600,18 +5755,22 @@ const App: React.FC = () => {
                     }}
                     onDeletePatientType={async (id) => {
                       await api.patientTypes.delete(id);
+                      invalidateNavigationCache();
                       setPatientTypes(await api.patientTypes.getAll());
                     }}
                     onCreateAppointmentType={async (data) => {
                       await api.appointmentTypes.create(data);
+                      invalidateNavigationCache();
                       setAppointmentTypes(await api.appointmentTypes.getAll());
                     }}
                     onUpdateAppointmentType={async (id, data) => {
                       await api.appointmentTypes.update(id, data);
+                      invalidateNavigationCache();
                       setAppointmentTypes(await api.appointmentTypes.getAll());
                     }}
                     onDeleteAppointmentType={async (id) => {
                       await api.appointmentTypes.delete(id);
+                      invalidateNavigationCache();
                       setAppointmentTypes(await api.appointmentTypes.getAll());
                     }}
                     isAdmin={isAdmin}

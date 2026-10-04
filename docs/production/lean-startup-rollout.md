@@ -1,10 +1,10 @@
 # MLS automatic sync
 
-Completed MLS treatment/payment data is retained in memory for the current branch and session. Switching tabs alone reuses that data without another full sync. Refresh, financial writes (including new payments, treatments and undo), reconnecting and app visibility refresh invalidate it. Startup/branch reload and logout clear readiness and records. An unfinished download is not cached; leaving before completion can require another download. This is session memory, not persistent/offline storage.
+Completed MLS treatment/payment data is retained in memory for the current branch and session. Switching tabs reuses it without another full sync; an in-flight MLS download continues across navigation and is deduplicated when returning. Refresh and financial writes (including new payments, treatments and undo) invalidate it. Startup/branch reload and logout clear readiness and records. Returning to the browser or reconnecting retries failed MLS reads but does not invalidate successful data. This is session memory, not persistent/offline storage or changed-row synchronization.
 
 MLS automatically fetches branch treatments and payments when opened. Its filters remain available while downloads run. The shared progress bar uses first-page counts and page completions; unknown counts show “Preparing MLS sync…”. Percentage stays below 100 until both reads and their enrichment finish. This is download progress, not a Supabase Realtime subscription or elapsed-time estimate.
 
-Financial rows and editing are hidden during sync or errors. Separate MLS datasets prevent Patients background sync from overwriting financial records. Refresh, saved MLS costs, reconnecting, and returning to the visible app trigger fresh reads. Branch/session changes discard stale responses. Failed downloads offer Retry, after both requests settle. No schema migration is required.
+Financial rows and editing are hidden during sync or errors. Separate MLS datasets prevent Patients background sync from overwriting financial records. Refresh and saved MLS costs trigger fresh reads. Branch/session changes discard stale responses. Failed downloads offer Retry, after both requests settle. Refreshing the first patient page no longer invalidates completed Patients history. No schema migration is required.
 
 # Lean staff startup rollout
 
@@ -49,6 +49,12 @@ Test in a preview/staging environment with synthetic records. Do not use real pa
 Set the build environment variable `VITE_LEAN_STAFF_STARTUP=false`, rebuild, and deploy that build to restore the legacy startup download path. Vite embeds this setting at build time; changing it on an already-built deployment is insufficient. Keep the previous production build available for a complete rollback.
 
 ## Automated checks
+
+### Consistent navigation caching
+
+Staff tab navigation now shares in-flight reads and retains complete bundles for the current session for Patients, Doctors, Inventory, Expenses, Dashboard, AI Assistant and Users. Appointment pages are keyed by branch, permissions, resolved date, filters, page and refresh revision; Records retains complete range bundles. Storage configuration uses session-scoped memory, not persistent browser storage. Live messaging, presence, monitoring and settings subscriptions remain active; these are not bulk-history downloads.
+
+Switching tabs and returning to the browser do not invalidate successful reads. Manual refresh, local successful mutations, branch/session changes and permission changes invalidate or isolate cached bundles. Patient charts still fetch patient-specific financial details on entry. Failed reads remain retryable and partial bundles are never cached. This is navigation caching, not incremental row synchronization: another device's changes require explicit Refresh. Reloading the page clears memory.
 
 - `npx tsc --noEmit`
 - `npm test -- --maxWorkers=2`
