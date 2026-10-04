@@ -457,6 +457,14 @@ const App: React.FC = () => {
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
   const [mlsRecords, setMlsRecords] = useState<ClinicalRecord[]>([]);
   const [mlsPayments, setMlsPayments] = useState<PaymentRecord[]>([]);
+  const [mlsScope, setMlsScope] = useState('');
+  const [mlsCacheRevision, setMlsCacheRevision] = useState(0);
+  const mlsCacheVersionRef = useRef(0);
+  const invalidateMlsMemory = () => {
+    mlsCacheVersionRef.current += 1;
+    setMlsScope('');
+    setMlsCacheRevision((value) => value + 1);
+  };
   const lazyViewRequestRef = useRef(0);
   const [patientAppointments, setPatientAppointments] = useState<Appointment[]>([]);
   const [patientAppointmentsLoading, setPatientAppointmentsLoading] = useState(false);
@@ -576,6 +584,7 @@ const App: React.FC = () => {
     `clinic:${getClinicCacheScope(locationId)}:${domain}`;
 
   const invalidateMaterialCostCaches = (locationId = currentLocationId) => {
+    invalidateMlsMemory();
     const scope = getClinicCacheScope(locationId);
     dataCache.invalidatePrefix(`mls-treatments:${scope}:`);
     dataCache.invalidate(getClinicCacheKey('expenses', locationId));
@@ -1228,6 +1237,9 @@ const App: React.FC = () => {
     setStartupScope('');
     setHistoryScope('');
     setLoadedLazyView('');
+    invalidateMlsMemory();
+    setMlsRecords([]);
+    setMlsPayments([]);
     setIsAuthenticated(false);
     setIsAdmin(false);
     setIsDoctor(false);
@@ -2024,6 +2036,9 @@ const App: React.FC = () => {
       setMedicinesReady(false);
       setStartupScope('');
       setLoadedLazyView('');
+      invalidateMlsMemory();
+      setMlsRecords([]);
+      setMlsPayments([]);
       lazyViewRequestRef.current += 1;
       globalRecordsFetchRequestRef.current += 1;
       medicinesFetchRequestRef.current += 1;
@@ -2554,12 +2569,20 @@ const App: React.FC = () => {
     const scope = currentLocationId;
     const view = currentView;
     const key = `${scope}:${view}`;
+    // Completed MLS reads belong to the branch/session, not the selected tab.
+    // Only explicit invalidation should require another full download.
+    if (view === 'material-cost' && mlsScope === scope) {
+      setLazyViewError(null);
+      setLoadedLazyView(key);
+      return;
+    }
     const requestId = ++lazyViewRequestRef.current;
     let cancelled = false;
     setLazyViewError(null);
     setLoadedLazyView('');
     const load = async () => {
       if (view === 'material-cost') {
+        const cacheVersion = mlsCacheVersionRef.current;
         setMlsSyncProgress(null);
         const reads: HistoryReadProgress[] = [
           { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
@@ -2585,11 +2608,13 @@ const App: React.FC = () => {
         ]);
         if (cancelled || requestId !== lazyViewRequestRef.current) return;
         const [records, payments] = results;
+        if (cacheVersion !== mlsCacheVersionRef.current) return;
         if (records.status === 'rejected') throw records.reason;
         if (payments.status === 'rejected') throw payments.reason;
         setMlsRecords(records.value);
         setMlsPayments(mergeLegacyPaymentRecords(payments.value, scope));
         setMlsSyncProgress(100);
+        setMlsScope(scope);
       } else if (view === 'expenses') {
         const [expenseData, sales, records] = await Promise.all([
           api.expenses.getAll(scope, { throwOnError: true }),
@@ -2641,7 +2666,7 @@ const App: React.FC = () => {
       }
     });
     return () => { cancelled = true; };
-  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup, lazyViewRevision, allowedViews]);
+  }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup, lazyViewRevision, allowedViews, currentView === 'material-cost' ? mlsCacheRevision : 0]);
 
   useEffect(() => {
     if (!leanStaffStartup || !isAuthenticated) return;
@@ -2651,6 +2676,7 @@ const App: React.FC = () => {
       else if (currentView === 'patients' || currentView === 'doctors' || currentView === 'material-cost') {
         if (currentView === 'patients') setHistoryError(null);
         if (currentView === 'material-cost') {
+          invalidateMlsMemory();
           setLoadedLazyView('');
           setMlsSyncProgress(null);
         }
@@ -2965,6 +2991,7 @@ const App: React.FC = () => {
   };
 
   const fetchGlobalRecords = async (force = false) => {
+    if (force) invalidateMlsMemory();
     const locationId = currentLocationId;
     const requestId = ++globalRecordsFetchRequestRef.current;
     const key = getClinicCacheKey('audit', locationId);
@@ -2999,6 +3026,7 @@ const App: React.FC = () => {
   // Refresh both treatment and payment rows for that patient so the MLS table
   // receives the new typed totals immediately without a clinic-wide reload.
   const refreshGlobalRecordsForPatient = async (patientId?: string | null) => {
+    invalidateMlsMemory();
     if (!patientId) {
       await fetchGlobalRecords(true);
       return;
@@ -4247,6 +4275,7 @@ const App: React.FC = () => {
           pricingNote
         });
         recordedResponses.push(res);
+        invalidateMlsMemory(); // Includes partial-success treatment batches.
       }
 
       const latestResponse = recordedResponses[recordedResponses.length - 1];
@@ -4305,6 +4334,7 @@ const App: React.FC = () => {
     
     try {
       const res = await api.treatments.undoRecord(record.id);
+      invalidateMlsMemory();
       
       setSelectedPatient({
         ...selectedPatient,
@@ -4583,6 +4613,7 @@ const App: React.FC = () => {
         createdByUserId: null,
         createdByUserName: currentUser || session?.username || null
       });
+      invalidateMlsMemory();
       let paymentRecord: PaymentRecord = {
         ...res.payment,
         patient_name: res.payment.patient_name || selectedPatient.name
@@ -5472,7 +5503,7 @@ const App: React.FC = () => {
               records={leanStaffStartup ? mlsRecords : globalRecords}
               doctors={doctors}
               paymentRecords={leanStaffStartup ? mlsPayments : paymentRecords}
-              loading={loading || (leanStaffStartup && loadedLazyView !== `${currentLocationId}:material-cost` && !lazyViewError)}
+              loading={loading || (leanStaffStartup && mlsScope !== currentLocationId && !lazyViewError)}
               loadError={leanStaffStartup ? lazyViewError : null}
               syncProgress={leanStaffStartup ? mlsSyncProgress : (!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null}
               currency={currency}

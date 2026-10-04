@@ -62,6 +62,8 @@ const section = (source: string, start: string, end: string) => {
     expect(mls).toContain('setMlsRecords(records.value)');
     expect(mls).toContain('setMlsPayments(mergeLegacyPaymentRecords(payments.value, scope))');
     expect(mls).toContain('setMlsSyncProgress(100)');
+    expect(mls).toContain('setMlsScope(scope)');
+    expect(mls).toContain('if (cacheVersion !== mlsCacheVersionRef.current) return;');
     expect(mls).not.toContain('setGlobalRecords(');
     expect(mls).not.toContain('setPaymentRecords(');
     const component = section(app, "{currentView === 'material-cost' &&", "{currentView === 'records' &&");
@@ -69,6 +71,34 @@ const section = (source: string, start: string, end: string) => {
     expect(component).toContain('loadError={leanStaffStartup ? lazyViewError : null}');
     expect(component).toContain("setLoadedLazyView('')");
     expect(component).toContain('setLazyViewRevision((value) => value + 1)');
+  });
+
+  it('reuses complete branch MLS data before clearing lazy readiness or starting requests', () => {
+    const lazy = section(app, 'const key = `${scope}:${view}`;', "const reads: HistoryReadProgress[]");
+    const cached = section(lazy, "if (view === 'material-cost' && mlsScope === scope)", 'const requestId =');
+    expect(cached).toContain('setLazyViewError(null)');
+    expect(cached).toContain('setLoadedLazyView(key)');
+    expect(cached).toContain('return;');
+    expect(cached).not.toContain('setMlsScope');
+    expect(lazy.indexOf('return;')).toBeLessThan(lazy.indexOf("setLoadedLazyView('')"));
+    const component = section(app, "{currentView === 'material-cost' &&", "{currentView === 'records' &&");
+    expect(component).toContain('mlsScope !== currentLocationId && !lazyViewError');
+  });
+
+  it('invalidates retained MLS data for session, branch, refresh and financial writes', () => {
+    const reset = section(app, 'const resetStaffSession =', 'const canAccessView =');
+    expect(reset).toContain('invalidateMlsMemory()');
+    expect(reset).toContain('setMlsRecords([])');
+    expect(reset).toContain('setMlsPayments([])');
+    expect(app).toMatch(/setStartupScope\(''\);\s*setLoadedLazyView\(''\);\s*invalidateMlsMemory\(\)/);
+    expect(app).toMatch(/recordedResponses.push\(res\);\s*invalidateMlsMemory\(\)/);
+    expect(app).toMatch(/await api.treatments.undoRecord\(record.id\);\s*invalidateMlsMemory\(\)/);
+    const payment = section(app, 'const res = await api.finance.processPayment({', 'let paymentRecord: PaymentRecord');
+    expect(payment).toContain('invalidateMlsMemory()');
+    expect(app).toContain('if (force) invalidateMlsMemory();');
+    expect(app).toMatch(/const refreshGlobalRecordsForPatient = [^\n]+\n\s*invalidateMlsMemory\(\)/);
+    expect(app).toMatch(/const invalidateMaterialCostCaches = [^\n]+\n\s*invalidateMlsMemory\(\)/);
+    expect(app).toContain("currentView === 'material-cost' ? mlsCacheRevision : 0");
   });
 
   it('places screen content behind the branch/loading/error gate with a retry action', () => {

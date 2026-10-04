@@ -1,5 +1,7 @@
 # MLS automatic sync
 
+Completed MLS treatment/payment data is retained in memory for the current branch and session. Switching tabs alone reuses that data without another full sync. Refresh, financial writes (including new payments, treatments and undo), reconnecting and app visibility refresh invalidate it. Startup/branch reload and logout clear readiness and records. An unfinished download is not cached; leaving before completion can require another download. This is session memory, not persistent/offline storage.
+
 MLS automatically fetches branch treatments and payments when opened. Its filters remain available while downloads run. The shared progress bar uses first-page counts and page completions; unknown counts show “Preparing MLS sync…”. Percentage stays below 100 until both reads and their enrichment finish. This is download progress, not a Supabase Realtime subscription or elapsed-time estimate.
 
 Financial rows and editing are hidden during sync or errors. Separate MLS datasets prevent Patients background sync from overwriting financial records. Refresh, saved MLS costs, reconnecting, and returning to the visible app trigger fresh reads. Branch/session changes discard stale responses. Failed downloads offer Retry, after both requests settle. No schema migration is required.
