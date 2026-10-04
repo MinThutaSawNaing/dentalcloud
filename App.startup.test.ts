@@ -53,9 +53,27 @@ const section = (source: string, start: string, end: string) => {
     expect(lazy).toContain('return () => { cancelled = true; };');
   });
 
+  it('keeps MLS progress guarded and independent from other datasets', () => {
+    const mls = section(app, "if (view === 'material-cost') {", "} else if (view === 'expenses')");
+    expect(mls).toContain('await Promise.allSettled');
+    expect(mls).toContain('requestId !== lazyViewRequestRef.current');
+    expect(mls).toContain("if (records.status === 'rejected') throw records.reason");
+    expect(mls).toContain("if (payments.status === 'rejected') throw payments.reason");
+    expect(mls).toContain('setMlsRecords(records.value)');
+    expect(mls).toContain('setMlsPayments(mergeLegacyPaymentRecords(payments.value, scope))');
+    expect(mls).toContain('setMlsSyncProgress(100)');
+    expect(mls).not.toContain('setGlobalRecords(');
+    expect(mls).not.toContain('setPaymentRecords(');
+    const component = section(app, "{currentView === 'material-cost' &&", "{currentView === 'records' &&");
+    expect(component).toContain('key={currentLocationId}');
+    expect(component).toContain('loadError={leanStaffStartup ? lazyViewError : null}');
+    expect(component).toContain("setLoadedLazyView('')");
+    expect(component).toContain('setLazyViewRevision((value) => value + 1)');
+  });
+
   it('places screen content behind the branch/loading/error gate with a retry action', () => {
     const gate = section(app, '{leanStaffStartup && (startupScope !== currentLocationId', "{currentView === 'dashboard'");
-    expect(gate).toContain('initialSyncActive || lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`');
+    expect(gate).toContain("initialSyncActive || (currentView !== 'material-cost' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))");
     expect(gate).toContain("role={lazyViewError || error ? 'alert' : 'status'}");
     expect(gate).toContain('setLazyViewRevision((value) => value + 1)');
     expect(gate).toContain('}>Retry</button>');
@@ -101,5 +119,28 @@ const section = (source: string, start: string, end: string) => {
       expect(handler).toContain('if (selectionId !== appointmentPatientSelectionRef.current) return;');
     }
     expect(section(app, 'const handlePatientSelect =', '// Clinical Focus')).toContain('appointmentPatientSelectionRef.current += 1;');
+  });
+  it('starts directory history automatically only after the allowed Patients screen is ready', () => {
+    const auto = section(app, "if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId", "if (currentView !== 'finance')");
+    expect(auto).toContain("currentView !== 'patients'");
+    expect(auto).toContain("!canAccessView('patients')");
+    expect(auto).toContain('loadedLazyView !== `${currentLocationId}:patients`');
+    expect(auto).toContain('historyScope === currentLocationId || historyLoading || historyError) return;');
+    expect(auto).toContain('void loadDirectoryHistory();');
+  });
+  it('guards background progress and publishes complete datasets together', () => {
+    const sync = section(app, 'const loadDirectoryHistory =', "if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId");
+    expect(sync).toContain('historyInFlightRef.current?.scope === scope');
+    expect(sync).toContain('currentLocationIdRef.current === scope');
+    expect(sync).toContain('if (!isCurrent()) return;');
+    expect(sync).toContain('await Promise.allSettled(');
+    expect(sync).toContain('setDirectoryHistoryRecords(records.value)');
+    expect(sync).toContain('setDirectoryHistoryAppointments(allAppointments.value)');
+    expect(sync).not.toContain('setGlobalRecords(');
+    expect(sync).not.toContain('setAppointments(');
+    expect(sync).toContain('onProgress: (loaded, total) => report(0, loaded, total)');
+    expect(sync).toContain('onProgress: (loaded, total) => report(1, loaded, total)');
+    expect(sync.indexOf('setHistoryProgress(100)')).toBeGreaterThan(sync.indexOf('setHistoryScope(scope)'));
+    expect(sync).toContain('historyRequestRef.current += 1; // Ignore the other parallel read after a failure.');
   });
 });

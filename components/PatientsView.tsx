@@ -50,6 +50,7 @@ interface PatientsViewProps {
   treatmentRecords?: ClinicalRecord[];
   historyReady?: boolean;
   historyLoading?: boolean;
+  historyProgress?: number | null;
   historyError?: string | null;
   onLoadHistory?: () => void | Promise<void>;
 }
@@ -83,6 +84,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   treatmentRecords = [],
   historyReady = true,
   historyLoading = false,
+  historyProgress = null,
   historyError = null,
   onLoadHistory
 }) => {
@@ -210,7 +212,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   };
 
   const formatAppointmentDate = (dateString?: string) => {
-    if (!historyReady) return 'Load history';
+    if (!historyReady) return historyError ? 'History unavailable' : 'Syncing history';
     if (!dateString) return '-';
 
     const isoDateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -647,13 +649,23 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     {!historyReady && (
       <div role="status" className="px-4 md:px-6 py-3 border-b border-amber-200 bg-amber-50 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p>Patient history is not loaded yet. Load history to see all visit dates, treatments, and history filters.</p>
+          <p>{historyError ? 'Patient history sync failed.' : 'Patient history syncs automatically in the background. You can keep using the patient list.'}</p>
+          {!historyError && <div className="mt-2 flex items-center gap-3">
+            <div role="progressbar" aria-label="Patient history sync" aria-valuemin={0} aria-valuemax={100}
+              aria-valuenow={historyProgress ?? undefined}
+              aria-valuetext={historyProgress === null ? 'Preparing history sync' : `${historyProgress}% downloaded`}
+              className="h-2 w-40 overflow-hidden rounded-full bg-amber-200">
+              <div className={`h-full bg-amber-700 ${historyProgress === null ? 'w-1/3 motion-safe:animate-pulse' : ''}`}
+                style={historyProgress === null ? undefined : { width: `${historyProgress}%` }} />
+            </div>
+            <span className="text-xs font-semibold">{historyProgress === null ? 'Preparing sync…' : `${historyProgress}%`}</span>
+          </div>}
           {historyError && <p role="alert" className="mt-1 text-red-700">{historyError}</p>}
         </div>
-        <button type="button" onClick={() => void onLoadHistory?.()} disabled={historyLoading || !onLoadHistory}
+        {historyError && <button type="button" onClick={() => void onLoadHistory?.()} disabled={historyLoading || !onLoadHistory}
           className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">
-          {historyLoading ? 'Loading' : historyError ? 'Retry' : 'Load history'}
-        </button>
+          {historyLoading ? 'Retrying…' : 'Retry'}
+        </button>}
       </div>
     )}
     {/* Unified Filter Bar */}
@@ -836,7 +848,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                 <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Treatment and Diagnosis</p>
                   {!historyReady ? (
-                    <p className="mt-2 text-sm leading-6 text-gray-900">Load history</p>
+                    <p className="mt-2 text-sm leading-6 text-gray-900">{historyError ? 'History unavailable' : 'Syncing history'}</p>
                   ) : isTreatmentRecordsLoading ? (
                     <p className="mt-2 text-sm leading-6 text-gray-900">Loading treatment records...</p>
                   ) : treatmentRecords.length === 0 ? (
@@ -977,7 +989,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                       </td>
                       <td className="px-3 py-3 align-top whitespace-nowrap">
                         {!historyReady ? (
-                          <span className="text-xs text-gray-400">Load history</span>
+                          <span className="text-xs text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
                         ) : patientLastVisitMap.get(patient.id) ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                             <Calendar size={10} className="text-teal-500" />
@@ -999,9 +1011,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                         </div>
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700 max-w-[200px]">
-                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={historyReady ? patientRecords.map(r => r.description).filter(Boolean).join(', ') : 'Load history'}>
+                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={historyReady ? patientRecords.map(r => r.description).filter(Boolean).join(', ') : historyError ? 'History unavailable' : 'Syncing history'}>
                           {!historyReady ? (
-                            <span className="text-gray-400">Load history</span>
+                            <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
                           ) : patientRecords.length > 0 ? (
                             patientRecords.slice(0, 4).map((r, i) => (
                               <div key={i} className="flex items-start gap-1">
@@ -1020,7 +1032,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                       <td className="px-3 py-3 align-top text-gray-700">
                         <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5">
                           {!historyReady ? (
-                            <span className="text-gray-400">Load history</span>
+                            <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
                           ) : patientRecords.length > 0 ? (
                             getUniquePatientDoctorNames(patientRecords).slice(0, 2).map((name, i) => (
                               <div key={i} className="flex items-start gap-1">
@@ -1148,7 +1160,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                     <div className="text-[11px] text-gray-400 mt-1">
                       Last Visit:{' '}
                       {!historyReady ? (
-                        <span className="text-gray-400">Load history</span>
+                        <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
                       ) : patientLastVisitMap.get(patient.id) ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                           <Calendar size={9} className="text-teal-500" />

@@ -1,3 +1,9 @@
+# MLS automatic sync
+
+MLS automatically fetches branch treatments and payments when opened. Its filters remain available while downloads run. The shared progress bar uses first-page counts and page completions; unknown counts show “Preparing MLS sync…”. Percentage stays below 100 until both reads and their enrichment finish. This is download progress, not a Supabase Realtime subscription or elapsed-time estimate.
+
+Financial rows and editing are hidden during sync or errors. Separate MLS datasets prevent Patients background sync from overwriting financial records. Refresh, saved MLS costs, reconnecting, and returning to the visible app trigger fresh reads. Branch/session changes discard stale responses. Failed downloads offer Retry, after both requests settle. No schema migration is required.
+
 # Lean staff startup rollout
 
 ## What changed
@@ -6,7 +12,8 @@
 - Initial branch reads: first 100 patients, local today/tomorrow appointments, doctors, treatment types, loyalty rules, plus existing branch/type settings.
 - Remaining patient rows still load in the background. This deliberately preserves existing directory pagination, QR scanning, and appointment patient selectors. This is not yet full server-side directory pagination.
 - Clinical/financial history, expenses and medicine sales no longer load automatically at staff startup.
-- Patient directory history is explicitly requested with **Load history**. History-dependent values show placeholders, and history filters are disabled until successful completion.
+- Patient directory history sync starts automatically in the background after the Patients screen is ready. History-dependent values show sync placeholders, and history filters stay disabled until both datasets finish successfully. Failed syncs offer **Retry**.
+- The live percentage uses downloaded rows against first-page exact totals, with equal weight for treatments and appointments. It is indeterminate while totals are unknown and capped at 99% until both reads finish. This is download progress, not a time estimate or Supabase Realtime subscription.
 - Appointment screen already queries the selected day/filter/page from Supabase. Older dates remain accessible; failures show Retry.
 - Opening a patient loads that patient's details, treatment history, appointments, payments and medicine sales. Payment opening/submission is blocked while these prerequisites are loading or failed. Receipt matching uses patient-scoped records.
 - Reports/overview/AI/material-cost/expense screens load their complete required datasets when opened. These screens can still be slow: no incomplete totals are substituted to make them look fast.
@@ -26,7 +33,7 @@ Test in a preview/staging environment with synthetic records. Do not use real pa
 1. Staff/admin login opens Patients; first rows and Doctors appear without downloading clinic-wide financial history. Confirm with browser Network tools.
 2. Search an old patient not in the first 100. Open an appointment for such a patient before background patient loading completes; chart/profile must still open.
 3. Today/tomorrow appointment filters work. Custom dates, all dates, search, doctor filters and later pages remain available.
-4. Directory initially says history is not loaded. Load history, verify Last Visit, upcoming appointment, treatment previews and historical filters against the old version.
+4. Directory automatically syncs history without blocking patient search. Verify progress, Last Visit, upcoming appointment, treatment previews and historical filters against the old version.
 5. Disconnect during a fetch. Check Retry, and ensure failure is not shown as no records/zero totals. Reconnect and retry.
 6. On device B, add/edit a synthetic appointment. On device A, Refresh/reopen/return to the appointment screen; confirm the change appears. Repeat patient search/details and doctors.
 7. Switch branches quickly during slow reads. Previous branch results must not appear in the new branch.

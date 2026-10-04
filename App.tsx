@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
+import { getHistorySyncPercentage, type HistoryReadProgress } from './utils/historySyncProgress';
 import {
   Home,
   LayoutDashboard,
@@ -440,7 +441,11 @@ const App: React.FC = () => {
   const [appointmentPageLoading, setAppointmentPageLoading] = useState(false);
   const [appointmentPageError, setAppointmentPageError] = useState<string | null>(null);
   const [historyScope, setHistoryScope] = useState('');
+  const [directoryHistoryRecords, setDirectoryHistoryRecords] = useState<ClinicalRecord[]>([]);
+  const [directoryHistoryAppointments, setDirectoryHistoryAppointments] = useState<Appointment[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyProgress, setHistoryProgress] = useState<number | null>(null);
+  const historyInFlightRef = useRef<{ scope: string; startupRequestId: number } | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const historyRequestRef = useRef(0);
   const [startupScope, setStartupScope] = useState('');
@@ -449,6 +454,9 @@ const App: React.FC = () => {
   const [loadedLazyView, setLoadedLazyView] = useState('');
   const [lazyViewError, setLazyViewError] = useState<string | null>(null);
   const [lazyViewRevision, setLazyViewRevision] = useState(0);
+  const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
+  const [mlsRecords, setMlsRecords] = useState<ClinicalRecord[]>([]);
+  const [mlsPayments, setMlsPayments] = useState<PaymentRecord[]>([]);
   const lazyViewRequestRef = useRef(0);
   const [patientAppointments, setPatientAppointments] = useState<Appointment[]>([]);
   const [patientAppointmentsLoading, setPatientAppointmentsLoading] = useState(false);
@@ -2027,6 +2035,7 @@ const App: React.FC = () => {
       setHistoryScope('');
       setHistoryError(null);
       setHistoryLoading(false);
+      setHistoryProgress(null);
       historyRequestRef.current += 1;
       appointmentPageRequestRef.current += 1;
       setAppointmentPageAppointments([]);
@@ -2551,14 +2560,36 @@ const App: React.FC = () => {
     setLoadedLazyView('');
     const load = async () => {
       if (view === 'material-cost') {
-        const [records, payments] = await Promise.all([
-          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true }),
-          api.finance.getPayments(scope)
+        setMlsSyncProgress(null);
+        const reads: HistoryReadProgress[] = [
+          { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
+        ];
+        const progress = (index: number, loaded: number, total: number | null) => {
+          if (cancelled || requestId !== lazyViewRequestRef.current) return;
+          reads[index] = { loaded, total, done: false };
+          setMlsSyncProgress(getHistorySyncPercentage(reads));
+        };
+        const done = <T,>(index: number, value: T): T => {
+          reads[index].done = true;
+          const percentage = getHistorySyncPercentage(reads);
+          if (!cancelled && requestId === lazyViewRequestRef.current) setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
+          return value;
+        };
+        const results = await Promise.allSettled([
+          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+            onProgress: (loaded, total) => progress(0, loaded, total)
+          }).then((rows) => done(0, rows)),
+          api.finance.getPayments(scope, {
+            onProgress: (loaded, total) => progress(1, loaded, total)
+          }).then((rows) => done(1, rows))
         ]);
         if (cancelled || requestId !== lazyViewRequestRef.current) return;
-        setGlobalRecords(records);
-        setPaymentRecords(mergeLegacyPaymentRecords(payments, scope));
-        setGlobalRecordsReady(true);
+        const [records, payments] = results;
+        if (records.status === 'rejected') throw records.reason;
+        if (payments.status === 'rejected') throw payments.reason;
+        setMlsRecords(records.value);
+        setMlsPayments(mergeLegacyPaymentRecords(payments.value, scope));
+        setMlsSyncProgress(100);
       } else if (view === 'expenses') {
         const [expenseData, sales, records] = await Promise.all([
           api.expenses.getAll(scope, { throwOnError: true }),
@@ -2617,7 +2648,14 @@ const App: React.FC = () => {
     const refreshVisibleReads = () => {
       if (document.visibilityState === 'hidden' || initialSyncActive) return;
       if (currentView === 'appointments') setAppointmentPageRefreshKey((key) => key + 1);
-      else if (currentView === 'patients' || currentView === 'doctors') setLazyViewRevision((key) => key + 1);
+      else if (currentView === 'patients' || currentView === 'doctors' || currentView === 'material-cost') {
+        if (currentView === 'patients') setHistoryError(null);
+        if (currentView === 'material-cost') {
+          setLoadedLazyView('');
+          setMlsSyncProgress(null);
+        }
+        setLazyViewRevision((key) => key + 1);
+      }
     };
     document.addEventListener('visibilitychange', refreshVisibleReads);
     window.addEventListener('online', refreshVisibleReads);
@@ -2629,26 +2667,68 @@ const App: React.FC = () => {
 
   const loadDirectoryHistory = async () => {
     const scope = currentLocationId;
-    const requestId = ++historyRequestRef.current;
     const startupRequestId = initialDataFetchRequestRef.current;
+    if (!scope || !isAuthenticated || !leanStaffStartup || startupScope !== scope || initialSyncActive) return;
+    if (historyInFlightRef.current?.scope === scope && historyInFlightRef.current.startupRequestId === startupRequestId) return;
+    const requestId = ++historyRequestRef.current;
+    const flight = { scope, startupRequestId };
+    historyInFlightRef.current = flight;
+    const isCurrent = () => requestId === historyRequestRef.current
+      && startupRequestId === initialDataFetchRequestRef.current && currentLocationIdRef.current === scope;
+    const reads: HistoryReadProgress[] = [
+      { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
+    ];
+    const report = (index: number, loaded: number, total: number | null) => {
+      if (!isCurrent()) return;
+      reads[index] = { loaded, total, done: false };
+      setHistoryProgress(getHistorySyncPercentage(reads));
+    };
+    const finished = <T,>(index: number, value: T): T => {
+      reads[index].done = true;
+      const percentage = getHistorySyncPercentage(reads);
+      if (isCurrent()) setHistoryProgress(percentage === null ? null : Math.min(99, percentage));
+      return value;
+    };
     setHistoryLoading(true);
     setHistoryError(null);
+    setHistoryProgress(null);
     try {
-      const [records, allAppointments] = await Promise.all([
-        api.treatments.getAllRecords(scope, { limit: null, throwOnError: true }),
-        api.appointments.getAll(scope, { throwOnError: true })
+      const results = await Promise.allSettled([
+        api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+          includeCommissionEntries: false, onProgress: (loaded, total) => report(0, loaded, total)
+        }).then((rows) => finished(0, rows)),
+        api.appointments.getAll(scope, { throwOnError: true,
+          onProgress: (loaded, total) => report(1, loaded, total)
+        }).then((rows) => finished(1, rows))
       ]);
-      if (requestId !== historyRequestRef.current || startupRequestId !== initialDataFetchRequestRef.current || currentLocationIdRef.current !== scope) return;
-      setGlobalRecords(records);
-      setGlobalRecordsReady(true);
-      setAppointments(allAppointments);
+      if (!isCurrent()) return;
+      const [records, allAppointments] = results;
+      if (records.status === 'rejected') throw records.reason;
+      if (allAppointments.status === 'rejected') throw allAppointments.reason;
+      setDirectoryHistoryRecords(records.value);
+      setDirectoryHistoryAppointments(allAppointments.value);
       setHistoryScope(scope);
+      setHistoryProgress(100);
     } catch (err: any) {
-      if (requestId === historyRequestRef.current && startupRequestId === initialDataFetchRequestRef.current) setHistoryError(err?.message || 'Could not load history. Please retry.');
+      if (isCurrent()) {
+        historyRequestRef.current += 1; // Ignore the other parallel read after a failure.
+        setHistoryError(err?.message || 'Could not sync history. Please retry.');
+        setHistoryLoading(false);
+      }
     } finally {
-      if (requestId === historyRequestRef.current) setHistoryLoading(false);
+      if (historyInFlightRef.current === flight) historyInFlightRef.current = null;
+      if (isCurrent()) setHistoryLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId
+      || startupScope !== currentLocationId || currentView !== 'patients'
+      || !canAccessView('patients') || loadedLazyView !== `${currentLocationId}:patients`
+      || historyScope === currentLocationId || historyLoading || historyError) return;
+    void loadDirectoryHistory();
+  }, [leanStaffStartup, isAuthenticated, initialSyncActive, currentLocationId, startupScope,
+    currentView, allowedViews, loadedLazyView, historyScope, historyLoading, historyError]);
 
   useEffect(() => {
     if (currentView !== 'finance') {
@@ -5109,7 +5189,7 @@ const App: React.FC = () => {
       <main className={isDoctor ? "flex min-w-0 flex-1 flex-col p-0 pb-32" : isWorkspaceView ? "flex min-w-0 flex-1 flex-col p-0 lg:h-screen overflow-hidden" : "flex-1 min-w-0 p-3 md:p-5"}>
         <div className={isDoctor || isWorkspaceView ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
           <Suspense fallback={<div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600 w-10 h-10" /></div>}>
-            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`) ? (
+            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || (currentView !== 'material-cost' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))) ? (
               <div className="flex flex-col items-center gap-3 p-12" role={lazyViewError || error ? 'alert' : 'status'}>
                 {lazyViewError || error ? <>
                   <p className="text-red-700">{lazyViewError || error}</p>
@@ -5204,7 +5284,7 @@ const App: React.FC = () => {
                 patients={patients} 
                 patientTypes={patientTypes}
                 locations={locations}
-                appointments={appointments}
+                appointments={leanStaffStartup ? directoryHistoryAppointments : appointments}
                 loading={loading} 
                 backgroundLoading={patientsBackgroundLoading}
                 searchResults={patientSearchResults}
@@ -5216,9 +5296,10 @@ const App: React.FC = () => {
                 loyaltyRules={loyaltyRules}
                 doctors={doctors}
                 treatmentTypes={treatmentTypes}
-                treatmentRecords={globalRecords}
+                treatmentRecords={leanStaffStartup ? directoryHistoryRecords : globalRecords}
                 historyReady={!leanStaffStartup || historyScope === currentLocationId}
                 historyLoading={historyLoading}
+                historyProgress={historyProgress}
                 historyError={historyError}
                 onLoadHistory={loadDirectoryHistory}
                 onSelectPatient={handlePatientSelect} 
@@ -5386,7 +5467,41 @@ const App: React.FC = () => {
             />}
             {currentView === 'doctors' && canAccessView('doctors') && <DoctorsView doctors={doctors} loading={loading || initialSyncActive} syncProgress={initialSyncActive ? initialSyncProgress : null} currency={currency} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingDoctor(null); setNewDoctorData({ name: '', email: '', phone: '', specialization: 'General', commission_type: 'percentage', password: '', commission_percentage: 0, commission_per_visit: 0, schedules: [], location_id: currentLocationId || '', location_ids: currentLocationId ? [currentLocationId] : [] }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onEdit={(doc) => {setEditingDoctor(doc); setNewDoctorData({ ...doc, location_ids: doc.location_ids || [doc.location_id].filter(Boolean), specialization: doc.specialization || 'General', password: '' }); resetDoctorCommissionEditor(); setShowDoctorModal(true)}} onDelete={handleDeleteDoctor} />}
             {currentView === 'treatments' && canAccessView('treatments') && <TreatmentConfigView treatmentTypes={treatmentTypes} currency={currency} loading={loading} syncProgress={(!treatmentTypesReady && initialSyncActive) ? initialSyncProgress : null} onRefresh={async () => { await fetchInitialData(currentLocationId || undefined); }} onAdd={() => {setEditingTreatmentType(null); setNewTreatmentTypeData({ name: '', cost: 0, category: '' }); setShowTreatmentTypeModal(true)}} onEdit={(t) => {setEditingTreatmentType(t); setNewTreatmentTypeData(t); setShowTreatmentTypeModal(true)}} onDelete={(id) => { const treatment = treatmentTypes.find(t => t.id === id); if (treatment) { setServiceToDelete({ id: treatment.id, name: treatment.name }); setDeleteServiceConfirmOpen(true); } }} />}
-            {currentView === 'material-cost' && canAccessView('material-cost') && <MaterialCostView records={globalRecords} doctors={doctors} paymentRecords={paymentRecords} loading={loading} syncProgress={(!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)} onRefresh={async () => { invalidateMaterialCostCaches(); await fetchGlobalRecords(true); }} onCostsSaved={async (patientId) => { invalidateMaterialCostCaches(); await refreshGlobalRecordsForPatient(patientId); void fetchExpenses(true); void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => { console.warn('Dashboard refresh after MLS cost save needs a manual refresh.'); }); }} />}
+            {currentView === 'material-cost' && canAccessView('material-cost') && <MaterialCostView
+              key={currentLocationId}
+              records={leanStaffStartup ? mlsRecords : globalRecords}
+              doctors={doctors}
+              paymentRecords={leanStaffStartup ? mlsPayments : paymentRecords}
+              loading={loading || (leanStaffStartup && loadedLazyView !== `${currentLocationId}:material-cost` && !lazyViewError)}
+              loadError={leanStaffStartup ? lazyViewError : null}
+              syncProgress={leanStaffStartup ? mlsSyncProgress : (!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null}
+              currency={currency}
+              canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)}
+              onRefresh={async () => {
+                invalidateMaterialCostCaches();
+                if (leanStaffStartup) {
+                  setLoadedLazyView('');
+                  setLazyViewError(null);
+                  setMlsSyncProgress(null);
+                  setLazyViewRevision((value) => value + 1);
+                } else await fetchGlobalRecords(true);
+              }}
+              onCostsSaved={async (patientId) => {
+                invalidateMaterialCostCaches();
+                if (leanStaffStartup) {
+                  setLoadedLazyView('');
+                  setLazyViewError(null);
+                  setMlsSyncProgress(null);
+                  setLazyViewRevision((value) => value + 1);
+                } else {
+                  await refreshGlobalRecordsForPatient(patientId);
+                  void fetchExpenses(true);
+                }
+                void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => {
+                  console.warn('Dashboard refresh after MLS cost save needs a manual refresh.');
+                });
+              }}
+            />}
             {currentView === 'records' && canAccessView('records') && <RecordsView records={auditRecords} appointments={auditAppointments} rescheduleLogs={auditRescheduleLogs} payments={auditPayments} loading={auditLoading} loadError={auditLoadError} onQueryChange={loadAuditLog} onRefresh={() => setAuditRefreshKey((key) => key + 1)} onDeleteAll={isDoctor ? () => alert('Doctor accounts cannot delete patient records.') : handleDeleteAllRecords} currency={currency} isDoctor={isDoctor} initialFilter={recordsInitialFilter} onOpenPaymentReceipt={handleOpenStoredPaymentReceipt} canEditPayments={isAdmin && !isDoctor} onPaymentCorrected={handlePaymentCorrected} cacheScope={getClinicCacheScope()} cacheRevision={materialCostCacheRevision} />}
             {currentView === 'inventory' && canAccessView('inventory') && <InventoryView medicines={medicines} topSelling={topSellingMedicines} loading={loading} syncProgress={(!medicinesReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} onRefresh={() => fetchMedicines(true)} onAdd={() => {setEditingMedicine(null); setNewMedicineData({ name: '', description: '', unit: 'pack', item_type: 'Medicine', price: 0, stock: 0, min_stock: 0, quantity_step: 1, category: '' }); setShowMedicineModal(true)}} onEdit={(med) => {setEditingMedicine(med); setNewMedicineData(med); setShowMedicineModal(true)}} onDelete={handleDeleteMedicine} />}
             {currentView === 'expenses' && canAccessView('expenses') && (

@@ -21,11 +21,12 @@ interface MaterialCostViewProps {
   onRefresh: () => void | Promise<void>;
   onCostsSaved?: (patientId?: string | null) => Promise<void> | void;
   syncProgress?: number | null;
+  loadError?: string | null;
 }
 
 type MaterialCostFilter = 'all' | 'tomorrow' | 'today' | 'custom';
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null }) => {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showAll, setShowAll] = useState(false);
@@ -38,12 +39,18 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   const [editingRow, setEditingRow] = useState<MaterialCostPaymentRow | null>(null);
   const [recoveryWarning, setRecoveryWarning] = useState<string | null>(null);
   const recoveryAttempted = React.useRef(false);
+  const refreshRef = React.useRef(onRefresh);
+  React.useEffect(() => { refreshRef.current = onRefresh; }, [onRefresh]);
   const todayKey = useMemo(() => toLocalISODate(new Date()), []);
   const tomorrowKey = useMemo(() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); return toLocalISODate(tomorrow); }, []);
   const [dateFrom, setDateFrom] = useState(todayKey);
   const [dateTo, setDateTo] = useState(todayKey);
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
   const itemsPerPage = 10;
+
+  React.useEffect(() => {
+    if (loading || loadError) setEditingRow(null);
+  }, [loading, loadError]);
 
   const paymentRows = useMemo(() => buildMaterialCostPaymentRows(records, paymentRecords), [records, paymentRecords]);
   const filteredRows = useMemo(() => {
@@ -64,7 +71,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
 
   React.useEffect(() => { setCurrentPage(1); }, [paymentRecords, patientSearchTerm, doctorSearchTerm, treatmentSearchTerm, dateFrom, dateTo, materialFilter]);
   React.useEffect(() => {
-    if (!canManageMaterials || recoveryAttempted.current) return;
+    if (loading || loadError || !canManageMaterials || recoveryAttempted.current) return;
     const session = auth.getSession();
     if (!session?.userId || !session.staffAuthToken) return;
     recoveryAttempted.current = true;
@@ -75,12 +82,12 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
     }).then(async (result) => {
       if (cancelled) return;
       if (result.failed > 0) setRecoveryWarning(`${result.failed} doctor commission update(s) still need retry.`);
-      if (result.processed > 0) await onRefresh();
+      if (result.processed > 0) await refreshRef.current();
     }).catch((error) => {
       if (!cancelled) setRecoveryWarning(error instanceof Error ? error.message : 'Pending doctor commissions could not be refreshed.');
     });
     return () => { cancelled = true; };
-  }, [canManageMaterials, onRefresh]);
+  }, [canManageMaterials, loading, loadError]);
   React.useEffect(() => {
     if (loading) { setIsTableScrollable(false); return; }
     const container = tableScrollRef.current;
@@ -153,7 +160,14 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
     </div>
 
     {recoveryWarning && <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 sm:px-6">{recoveryWarning}</div>}
-    {(loading || typeof syncProgress === 'number') ? <div className="px-4 py-10 sm:px-6"><ProgressBar progress={typeof syncProgress === 'number' ? syncProgress : null} label={loading ? 'Refreshing MLS payment rows…' : 'Loading MLS payment rows…'} /></div> : <>
+    {loadError ? <div role="alert" className="px-4 py-8 text-red-700 sm:px-6">
+      <p className="font-semibold">Could not sync MLS data.</p>
+      <p className="mt-2 text-sm">{loadError}</p>
+      <button type="button" disabled={isRefreshing} onClick={() => void handleRefresh()} className="mt-3 min-h-11 rounded-lg border border-red-200 px-4 py-2 font-semibold">Retry</button>
+    </div> : loading ? <div className="px-4 py-10 sm:px-6">
+      <p className="mb-3 text-sm text-slate-600">MLS syncs automatically. You can set filters or use another tab while it loads. Financial rows appear when the sync is complete.</p>
+      <ProgressBar progress={syncProgress} label={syncProgress === null ? 'Preparing MLS sync…' : 'Syncing MLS payment rows…'} />
+    </div> : <>
       <div className="hidden xl:block">{isTableScrollable && <div className="flex items-center justify-between gap-3 border-b border-[var(--hover-100)] bg-[var(--hover-50)] px-6 py-2.5 text-xs font-semibold text-[var(--hover-800)]"><span className="flex items-center gap-2"><ArrowLeftRight size={16} />Scroll sideways to view all columns.</span><span>The Action column stays visible</span></div>}
         <div ref={tableScrollRef} role="region" aria-label="Payment MLS cost table" className="overflow-x-auto"><table className="min-w-[1480px] w-full">
           <thead className="border-b border-slate-200 bg-slate-50"><tr>{['Payment Date', 'Patient', 'Clinician', 'Clinical Activity'].map((label) => <th key={label} className="px-6 py-4 text-left text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</th>)}{['Patient Balance', 'Collected Payment', 'Material Cost', 'Lab Cost', 'Special Doctor Cost', 'Total Cost', 'Net Receive', 'Doctor Earned', 'Net Profit', 'Action'].map((label) => <th key={label} className={`${label === 'Action' ? 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50' : ''} px-6 py-4 text-right text-[11px] font-black uppercase tracking-[0.18em] text-slate-500`}>{label}</th>)}</tr></thead>
@@ -168,8 +182,8 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
         {canManageMaterials ? <button type="button" onClick={() => setEditingRow(row)} className="mt-3 flex min-h-10 w-full items-center justify-center gap-1 rounded-xl border border-[var(--hover-200)] bg-[var(--hover-50)] px-3 py-2 text-sm font-bold text-[var(--hover-700)]"><Package size={15} /><Plus size={13} />MLS Costs</button> : <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-center text-xs text-slate-400">No access to manage costs</p>}
       </div></article>)}</div>
     </>}
-    {!loading && filteredRows.length > 0 && <Pagination totalItems={filteredRows.length} itemsPerPage={itemsPerPage} currentPage={currentPage} onPageChange={setCurrentPage} showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} />}
-    <PaymentMlsCostModal payment={editingRow?.payment || null} treatments={editingRow?.treatments || []} doctors={doctors} currency={currency} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
+    {!loading && !loadError && filteredRows.length > 0 && <Pagination totalItems={filteredRows.length} itemsPerPage={itemsPerPage} currentPage={currentPage} onPageChange={setCurrentPage} showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} />}
+    <PaymentMlsCostModal payment={!loading && !loadError ? editingRow?.payment || null : null} treatments={!loading && !loadError ? editingRow?.treatments || [] : []} doctors={doctors} currency={currency} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
   </div>;
 };
 

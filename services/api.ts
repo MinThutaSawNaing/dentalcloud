@@ -36,14 +36,20 @@ const autoOnpRefreshInFlight = new Map<string, Promise<void>>();
 const autoOnpLastCompletedAt = new Map<string, number>();
 
 const fetchAllRows = async <T,>(
-  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any; count?: number | null }>,
+  onProgress?: (loaded: number, total: number | null) => void
 ): Promise<{ data: T[] | null; error: any }> => {
   const rows: T[] = [];
+  let total: number | null = null;
   for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
     const result = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
     if (result.error) return { data: null, error: result.error };
     const page = result.data || [];
     rows.push(...page);
+    if (onProgress) {
+      if (from === 0) total = result.count ?? null;
+      onProgress(rows.length, total);
+    }
     if (page.length < SUPABASE_PAGE_SIZE) return { data: rows, error: null };
   }
 };
@@ -2550,16 +2556,20 @@ export const api = {
       doctorId?: string;
       patientId?: string;
       throwOnError?: boolean;
+      onProgress?: (loaded: number, total: number | null) => void;
     }): Promise<Appointment[]> => {
       try {
         const pageSize = 1000;
         const appointments: any[] = [];
+        let total: number | null = null;
 
         for (let offset = 0; ; offset += pageSize) {
           const buildQuery = (withRelations: boolean) => {
-            let query = supabase
-              .from('appointments')
-              .select(withRelations ? '*, patients!appointments_patient_id_fkey(name, balance), doctors(name)' : '*')
+            const columns = withRelations ? '*, patients!appointments_patient_id_fkey(name, balance), doctors(name)' : '*';
+            const table = supabase.from('appointments');
+            let query = (options?.onProgress && offset === 0
+              ? table.select(columns, { count: 'exact' })
+              : table.select(columns))
               .order('date')
               .order('id')
               .range(offset, offset + pageSize - 1);
@@ -2572,14 +2582,16 @@ export const api = {
             return query;
           };
 
-          let { data, error } = await buildQuery(true);
+          let { data, error, count } = await buildQuery(true);
           if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
-            ({ data, error } = await buildQuery(false));
+            ({ data, error, count } = await buildQuery(false));
           }
           if (error) throw error;
 
+          if (offset === 0) total = count ?? null;
           const page = data || [];
           appointments.push(...page);
+          options?.onProgress?.(appointments.length, total);
           if (page.length < pageSize) break;
         }
         const completedAppointments = appointments.filter(
@@ -3849,16 +3861,20 @@ export const api = {
       patientId?: string;
       includeCommissionEntries?: boolean;
       throwOnError?: boolean;
+      onProgress?: (loaded: number, total: number | null) => void;
     }): Promise<ClinicalRecord[]> => {
       try {
         const limit = options?.limit === undefined ? 50 : options.limit;
         const effectiveLimit = typeof limit === 'number' && limit > 0 ? limit : null;
         const records: any[] = [];
+        let total: number | null = null;
         for (let offset = 0; effectiveLimit === null || records.length < effectiveLimit; offset += SUPABASE_PAGE_SIZE) {
           const pageSize = effectiveLimit === null ? SUPABASE_PAGE_SIZE : Math.min(SUPABASE_PAGE_SIZE, effectiveLimit - records.length);
-          let query = supabase
-            .from('treatments')
-            .select('*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)')
+          const columns = '*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)';
+          const table = supabase.from('treatments');
+          let query = (options?.onProgress && offset === 0
+            ? table.select(columns, { count: 'exact' })
+            : table.select(columns))
             .order('date', { ascending: false })
             .order('id')
             .range(offset, offset + pageSize - 1);
@@ -3867,12 +3883,13 @@ export const api = {
           if (options?.dateTo) query = query.lte('date', options.dateTo);
           if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
           if (options?.patientId) query = query.eq('patient_id', options.patientId);
-          let { data, error } = await query;
+          let { data, error, count } = await query;
 
           if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
-            let fallbackQuery = supabase
-              .from('treatments')
-              .select('*')
+            const fallbackTable = supabase.from('treatments');
+            let fallbackQuery = (options?.onProgress && offset === 0
+              ? fallbackTable.select('*', { count: 'exact' })
+              : fallbackTable.select('*'))
               .order('date', { ascending: false })
               .order('id')
               .range(offset, offset + pageSize - 1);
@@ -3884,11 +3901,14 @@ export const api = {
             const fallback = await fallbackQuery;
             data = fallback.data;
             error = fallback.error;
+            count = fallback.count;
           }
 
           if (error) throw error;
+          if (offset === 0) total = count ?? null;
           const page = data || [];
           records.push(...page);
+          options?.onProgress?.(records.length, total);
           if (page.length < pageSize) break;
         }
 
@@ -4744,11 +4764,13 @@ export const api = {
       dateFrom?: string;
       dateTo?: string;
       patientId?: string;
+      onProgress?: (loaded: number, total: number | null) => void;
     }): Promise<PaymentRecord[]> => {
       const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
-        let query = supabase
-          .from('payments')
-          .select(columns)
+        const source = supabase.from('payments');
+        let query = (options?.onProgress && from === 0
+          ? source.select(columns, { count: 'exact' })
+          : source.select(columns))
           .order('created_at', { ascending: false })
           .order('id')
           .range(from, to);
@@ -4781,22 +4803,22 @@ export const api = {
           )
         `;
 
-      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(fullColumns));
+      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(fullColumns), options?.onProgress);
       if (error && isOptionalRelationAccessError(error, ['payment_allocations'])) {
         const fallback = await fetchAllRows<any>(buildPaymentQuery(
           '*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))'
-        ));
+        ), options?.onProgress);
         data = fallback.data;
         error = fallback.error;
       }
       if (error && isMissingRelationError(error, 'payment_corrections')) {
-        const fallback = await fetchAllRows<any>(buildPaymentQuery('*, patients(name, balance, patient_type)'));
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*, patients(name, balance, patient_type)'), options?.onProgress);
         data = fallback.data;
         error = fallback.error;
       }
 
       if (error && isOptionalRelationAccessError(error, ['patients', 'payment_allocations', 'payment_corrections', 'users'])) {
-        const fallback = await fetchAllRows<any>(buildPaymentQuery('*'));
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*'), options?.onProgress);
         data = fallback.data;
         error = fallback.error;
       }
