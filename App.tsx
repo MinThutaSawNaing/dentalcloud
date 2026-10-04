@@ -449,6 +449,8 @@ const App: React.FC = () => {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const historyRequestRef = useRef(0);
   const [startupScope, setStartupScope] = useState('');
+  // Capture before authentication effects can persist a temporary fallback view.
+  const restoredStartupViewRef = useRef(localStorage.getItem('currentView'));
   const startupNavigationDoneRef = useRef(false);
   const leanStaffStartup = import.meta.env.VITE_LEAN_STAFF_STARTUP !== 'false' && !isDoctor;
   const [loadedLazyView, setLoadedLazyView] = useState('');
@@ -1252,6 +1254,7 @@ const App: React.FC = () => {
   const resetStaffSession = () => {
     handleClosePatient();
     startupNavigationDoneRef.current = false;
+    restoredStartupViewRef.current = null;
     setShowPaymentModal(false);
     setShowTreatmentSelection(false);
     initialDataFetchRequestRef.current += 1;
@@ -2160,7 +2163,9 @@ const App: React.FC = () => {
           if (!startupNavigationDoneRef.current && session) {
             startupNavigationDoneRef.current = true;
             const tabs = resolveAllowedTabs(session.role, session.allowed_tabs);
-            if (tabs.includes('patients')) setCurrentView('patients');
+            const restoredView = restoredStartupViewRef.current;
+            if (restoredView && restoredView !== 'branch-switching' && tabs.includes(restoredView as ViewState)) setCurrentView(restoredView as ViewState);
+            else if (tabs.includes('patients')) setCurrentView('patients');
             else if (tabs.includes('appointments')) setCurrentView('appointments');
           }
           const startup = await loadStaffStartup(api, locId);
