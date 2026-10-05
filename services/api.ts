@@ -506,7 +506,32 @@ const isOptionalRelationAccessError = (error: any, relationNames: string[]): boo
   ));
 };
 
-const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[]) => {
+// Keep each GET URL small; MLS can overlap up to three independent batches.
+// Catch failures per batch so consumers retain their existing ordered fallbacks.
+const loadCommissionEntryBatches = async (
+  ids: string[], column: 'treatment_id' | 'payment_id', columns: string, concurrency = 1
+) => {
+  let firstFailedIndex = Infinity;
+  return mapWithConcurrency(
+    chunkUniqueIds(ids, 50),
+    Number.isFinite(concurrency) ? Math.min(REPORT_REQUEST_CONCURRENCY, Math.max(1, Math.floor(concurrency))) : 1,
+    async (idBatch, index) => {
+      // Do not issue more optional reads once their results cannot be used.
+      // Earlier in-flight batches still settle to preserve payment prefix order.
+      if (index > firstFailedIndex) return { data: [], error: null };
+      try {
+        const result = await supabase.from('doctor_commission_entries').select(columns).in(column, idBatch);
+        if (result.error) firstFailedIndex = Math.min(firstFailedIndex, index);
+        return result;
+      } catch (error) {
+        firstFailedIndex = Math.min(firstFailedIndex, index);
+        return { data: null, error };
+      }
+    }
+  );
+};
+
+const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], concurrency = 1) => {
   const uniqueIds = Array.from(new Set(treatmentIds.filter(Boolean)));
   const entriesByTreatment = new Map<string, any[]>();
   if (uniqueIds.length === 0) return entriesByTreatment;
@@ -515,36 +540,23 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[]) => 
   // below common Cloudflare/Kong request-line limits used by our custom domains.
   // A 200-UUID batch is roughly 8 KB before the select list and URL escaping and
   // has produced gateway 502 responses (surfaced by browsers as a CORS failure).
-  const requestBatchSize = 50;
   // This lookup only enriches treatment rows with commission-ledger breakdown details.
   // It must never block or blank out the primary treatments list (e.g. the Audit Log's
   // Treatments filter), so any failure here is logged and treated as "no entries" rather
   // than propagated to the caller's outer try/catch.
-  for (let index = 0; index < uniqueIds.length; index += requestBatchSize) {
-    try {
-      const { data, error } = await supabase
-        .from('doctor_commission_entries')
-        .select('id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, material_deduction, commission_rate, earnings')
-        .in('treatment_id', uniqueIds.slice(index, index + requestBatchSize));
-
-      if (error) {
-        // Commission entries enrich dashboard period totals, but they must never
-        // make core treatment/audit records disappear. Network/proxy failures and
-        // partially deployed schemas fall back to persisted treatments.doctor_earnings.
-        const errorSummary = String(error.message || error)
-          .replace(/\s+/g, ' ')
-          .slice(0, 240);
-        console.warn('Unable to load doctor commission ledger entries; using stored treatment earnings.', errorSummary);
-        return entriesByTreatment;
-      }
-      rows.push(...(data || []));
-    } catch (err) {
-      const errorSummary = String((err as any)?.message || err)
+  const batches = await loadCommissionEntryBatches(uniqueIds, 'treatment_id',
+    'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, material_deduction, commission_rate, earnings',
+    concurrency);
+  for (const { data, error } of batches) {
+    if (error) {
+      // Do not publish a partially enriched treatment ledger.
+      const errorSummary = String(error.message || error)
         .replace(/\s+/g, ' ')
         .slice(0, 240);
       console.warn('Unable to load doctor commission ledger entries; using stored treatment earnings.', errorSummary);
       return entriesByTreatment;
     }
+    rows.push(...(data || []));
   }
 
   rows.forEach((row: any) => {
@@ -566,42 +578,38 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[]) => 
   return entriesByTreatment;
 };
 
-const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[]) => {
+const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[], concurrency = 1) => {
   const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
   const entriesByPayment = new Map<string, any[]>();
-  for (let index = 0; index < uniqueIds.length; index += 50) {
-    try {
-      const { data, error } = await supabase
-        .from('doctor_commission_entries')
-        .select('id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings')
-        .in('payment_id', uniqueIds.slice(index, index + 50));
-      if (error) {
-        if (!isMissingRelationError(error, 'doctor_commission_entries')) {
-          console.warn('Unable to load payment commission entries.', String(error.message || error).slice(0, 240));
-        }
-        return entriesByPayment;
+  const batches = await loadCommissionEntryBatches(uniqueIds, 'payment_id',
+    'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings',
+    concurrency);
+  // Merge in input order, not completion order, preserving the successful prefix
+  // returned by the legacy sequential reader if a later optional batch fails.
+  for (const { data, error } of batches) {
+    if (error) {
+      if (!isMissingRelationError(error, 'doctor_commission_entries')) {
+        console.warn('Unable to load payment commission entries.', String(error.message || error).slice(0, 240));
       }
-      (data || []).forEach((row: any) => {
-        const entries = entriesByPayment.get(row.payment_id) || [];
-        entries.push({
-          id: row.id,
-          paymentId: row.payment_id,
-          treatmentId: row.treatment_id,
-          doctorId: row.doctor_id,
-          paymentDate: row.payment_date,
-          treatmentDate: row.treatment_date,
-          calculationMode: row.calculation_mode,
-          allocatedPayment: Number(row.allocated_payment || 0),
-          mlsDeduction: Number(row.material_deduction || 0),
-          commissionRate: Number(row.commission_rate || 0),
-          earnings: Number(row.earnings || 0)
-        });
-        entriesByPayment.set(row.payment_id, entries);
-      });
-    } catch (error) {
-      console.warn('Unable to load payment commission entries.', String((error as any)?.message || error).slice(0, 240));
       return entriesByPayment;
     }
+    (data || []).forEach((row: any) => {
+      const entries = entriesByPayment.get(row.payment_id) || [];
+      entries.push({
+        id: row.id,
+        paymentId: row.payment_id,
+        treatmentId: row.treatment_id,
+        doctorId: row.doctor_id,
+        paymentDate: row.payment_date,
+        treatmentDate: row.treatment_date,
+        calculationMode: row.calculation_mode,
+        allocatedPayment: Number(row.allocated_payment || 0),
+        mlsDeduction: Number(row.material_deduction || 0),
+        commissionRate: Number(row.commission_rate || 0),
+        earnings: Number(row.earnings || 0)
+      });
+      entriesByPayment.set(row.payment_id, entries);
+    });
   }
   return entriesByPayment;
 };
@@ -3861,6 +3869,7 @@ export const api = {
       patientId?: string;
       includeCommissionEntries?: boolean;
       throwOnError?: boolean;
+      commissionRequestConcurrency?: number;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<ClinicalRecord[]> => {
@@ -3916,7 +3925,7 @@ export const api = {
         options?.onRowsDownloaded?.();
         const entriesByTreatment = options?.includeCommissionEntries === false
           ? new Map<string, any[]>()
-          : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id));
+          : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id), options?.commissionRequestConcurrency);
 
         return records.map((rec: any) => ({
           ...rec,
@@ -4766,6 +4775,7 @@ export const api = {
       dateFrom?: string;
       dateTo?: string;
       patientId?: string;
+      commissionRequestConcurrency?: number;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<PaymentRecord[]> => {
@@ -4838,7 +4848,7 @@ export const api = {
       const paymentIds = payments.map((payment) => payment.id);
       options?.onRowsDownloaded?.();
       const [entriesByPayment, costsByPayment] = await Promise.all([
-        getDoctorEarningEntriesByPaymentIds(paymentIds),
+        getDoctorEarningEntriesByPaymentIds(paymentIds, options?.commissionRequestConcurrency),
         api.materialCosts.getTotalsByPaymentIds(paymentIds, { idBatchSize: 50 })
       ]);
       return payments.map((payment) => ({

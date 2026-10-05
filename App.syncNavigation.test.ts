@@ -146,9 +146,11 @@ describe('App MLS navigation runtime regression', () => {
     h.counts(1);
     expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
       limit: null, throwOnError: true, onProgress: expect.any(Function),
+      commissionRequestConcurrency: 3,
       onRowsDownloaded: expect.any(Function),
     });
     expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
+      commissionRequestConcurrency: 3,
       onProgress: expect.any(Function),
       onRowsDownloaded: expect.any(Function),
     });

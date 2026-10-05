@@ -2653,10 +2653,12 @@ const App: React.FC = () => {
       try {
         const results = await Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+            commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(0),
             onProgress: (loaded, total) => progress(0, loaded, total)
           }).then((rows) => done(0, rows)),
           api.finance.getPayments(scope, {
+            commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(1),
             onProgress: (loaded, total) => progress(1, loaded, total)
           }).then((rows) => done(1, rows))
