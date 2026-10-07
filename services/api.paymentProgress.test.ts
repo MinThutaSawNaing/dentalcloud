@@ -117,6 +117,24 @@ describe('finance payment pagination progress', () => {
 
 
 describe('payment fallback progress', () => {
+  it('supports lightweight MLS reads without exact counts or correction history', async () => {
+    const onProgress = vi.fn();
+    const result = await fetchPayments({ onProgress, countMode: 'planned', includeCorrections: false });
+    expect(result).toHaveLength(1001);
+    expect(onProgress.mock.calls).toEqual([[1000, 1001], [1001, 1001]]);
+    expect(paymentCalls()[0].selectArgs[1]).toEqual({ count: 'planned' });
+    expect(paymentCalls().every(call => !call.columns.includes('payment_corrections'))).toBe(true);
+    expect(paymentCalls()[0].columns).toContain('payment_allocations');
+    expect(result[0]).toMatchObject({ amount: 100, mlsTotal: 10, netRevenue: 90 });
+  });
+
+  it('keeps lightweight MLS options when an optional allocation join fails', async () => {
+    mock.state.relation = 'payment_allocations';
+    await fetchPayments({ onProgress: vi.fn(), countMode: 'planned', includeCorrections: false });
+    expect(paymentCalls()[1].selectArgs[1]).toEqual({ count: 'planned' });
+    expect(paymentCalls().every(call => !call.columns.includes('payment_corrections'))).toBe(true);
+  });
+
   it.each(['payment_allocations', 'payment_corrections', 'patients', 'users'])('preserves filters and first-page-only counts for %s fallback', async (relation) => {
     mock.state.relation = relation;
     const onProgress = vi.fn();

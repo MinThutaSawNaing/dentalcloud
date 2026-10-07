@@ -116,6 +116,7 @@ export const allocateCommissionablePayments = (
   treatmentsByPatient.forEach((rows) => rows.sort(byTreatmentOrder));
 
   const allocations: TreatmentPaymentAllocation[] = [];
+  const allocatedByPayment = new Map<string, number>();
   [...payments].sort(byPaymentOrder).forEach((payment) => {
     let amountLeft = Math.max(0, Number(payment.commissionableAmount || 0));
     if (amountLeft <= 0) return;
@@ -143,9 +144,7 @@ export const allocateCommissionablePayments = (
       eligible.forEach((treatment, index) => {
         const remaining = remainingByTreatment.get(treatment.id) || 0;
         const proportional = totalRemaining > 0 ? allocatable * (remaining / totalRemaining) : 0;
-        const alreadyAllocated = allocations
-          .filter((row) => row.paymentId === payment.id)
-          .reduce((sum, row) => sum + row.amount, 0);
+        const alreadyAllocated = allocatedByPayment.get(payment.id) || 0;
         const share = index === eligible.length - 1
           ? Math.min(remaining, allocatable - alreadyAllocated)
           : Math.min(remaining, roundMoney(proportional));
@@ -159,6 +158,7 @@ export const allocateCommissionablePayments = (
           paymentCreatedAt: payment.createdAt,
           amount: roundMoney(share)
         });
+        allocatedByPayment.set(payment.id, alreadyAllocated + roundMoney(share));
       });
       amountLeft = roundMoney(amountLeft - allocatable);
       if (amountLeft <= 0) return;
@@ -183,6 +183,7 @@ export const allocateCommissionablePayments = (
         paymentCreatedAt: payment.createdAt,
         amount: roundMoney(share)
       });
+      allocatedByPayment.set(payment.id, (allocatedByPayment.get(payment.id) || 0) + roundMoney(share));
     }
   });
 

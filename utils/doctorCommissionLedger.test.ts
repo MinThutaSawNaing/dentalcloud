@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   allocateCommissionablePayments,
   calculateCommissionLedgerEntries,
@@ -20,6 +20,30 @@ const treatment = (overrides: Partial<CommissionTreatmentInput> = {}): Commissio
 });
 
 describe('doctor commission ledger', () => {
+  it('allocates large histories without rescanning earlier payment allocations', () => {
+    const treatments = Array.from({ length: 1000 }, (_, index) => treatment({
+      id: `t-${index}`, patientId: `p-${index}`, cost: 100
+    }));
+    const payments = treatments.map(row => ({
+      id: `pay-${row.id}`, patientId: row.patientId, date: '2026-07-01',
+      commissionableAmount: 100, treatmentIds: [row.id]
+    }));
+    const originalFilter = Array.prototype.filter;
+    let allocationRowsScanned = 0;
+    const filter = vi.spyOn(Array.prototype, 'filter').mockImplementation(function (this: any[], callback: any, thisArg?: any) {
+      if (this[0]?.paymentId && this[0]?.treatmentId && 'amount' in this[0]) {
+        allocationRowsScanned += this.length;
+      }
+      return originalFilter.call(this, callback, thisArg);
+    });
+    let rows;
+    try { rows = allocateCommissionablePayments(treatments, payments); }
+    finally { filter.mockRestore(); }
+    expect(rows).toHaveLength(1000);
+    expect(rows!.reduce((sum, row) => sum + row.amount, 0)).toBe(100_000);
+    expect(allocationRowsScanned).toBeLessThanOrEqual(2000);
+  });
+
   it('uses only the selected method when a doctor stores both percentage and fixed values', () => {
     const payment = {
       id: 'payment-1', patientId: 'patient-1', date: '2026-07-01',

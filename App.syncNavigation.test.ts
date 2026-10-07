@@ -115,6 +115,29 @@ function harness(code = mlsCode) {
 
 // Cleanup runs on navigation so future cancellation regressions fail.
 describe('App MLS navigation runtime regression', () => {
+  it('leaves preparing with a retryable error when a read never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.render('material-cost');
+      h.treatmentReads[0].resolve(records);
+      await flush();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.context.setMlsSyncError).toHaveBeenCalledWith(expect.stringMatching(/timed out.*retry/i));
+      expect(h.context.mlsInFlightRef.current).toBeNull();
+      expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+      h.context.setMlsSyncError(null);
+      h.render('material-cost');
+      h.counts(2);
+      await h.settle(1);
+      h.paymentReads[0].resolve([{ id: 'stale-payment' }]);
+      await flush();
+      expect(h.context.setMlsPayments).toHaveBeenCalledExactlyOnceWith(payments);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('finishes delayed financial enrichment without any navigation rerender', async () => {
     const h = harness();
     h.render('material-cost');
@@ -146,10 +169,12 @@ describe('App MLS navigation runtime regression', () => {
     h.counts(1);
     expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
       limit: null, throwOnError: true, onProgress: expect.any(Function),
+      countMode: 'planned',
       commissionRequestConcurrency: 3,
       onRowsDownloaded: expect.any(Function),
     });
     expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
+      countMode: 'planned', includeCorrections: false,
       commissionRequestConcurrency: 3,
       onProgress: expect.any(Function),
       onRowsDownloaded: expect.any(Function),

@@ -40,7 +40,9 @@ describe('MLS branch/session lifecycle source guards', () => {
 
   it('publishes only after both complete reads succeed and caps intermediate progress', () => {
     const source = loader();
-    expect(source).toContain('await Promise.allSettled');
+    expect(source).toContain('Promise.allSettled');
+    expect(source).toContain('await Promise.race');
+    expect(source).toContain('clearTimeout(timeout)');
     expect(source).toContain('Math.min(99, percentage)');
     const publication = source.indexOf('setMlsRecords(records.value)');
     expect(source.indexOf("if (records.status === 'rejected') throw records.reason")).toBeLessThan(publication);

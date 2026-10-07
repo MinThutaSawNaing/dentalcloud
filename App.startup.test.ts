@@ -111,7 +111,8 @@ const section = (source: string, start: string, end: string) => {
 
   it('keeps MLS progress guarded and independent from other datasets', () => {
     const mls = section(app, '// MLS reads are owned by the branch/session', '// Fetch only the selected screen');
-    expect(mls).toContain('await Promise.allSettled');
+    expect(mls).toContain('Promise.allSettled');
+    expect(mls).toContain('await Promise.race');
     expect(mls).toContain('if (!isCurrent()) return;');
     expect(mls).toContain("if (records.status === 'rejected') throw records.reason");
     expect(mls).toContain("if (payments.status === 'rejected') throw payments.reason");

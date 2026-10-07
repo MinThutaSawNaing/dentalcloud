@@ -40,8 +40,8 @@ const supabaseMock = vi.hoisted(() => {
   };
 
   state.from = vi.fn((table: string) => ({
-    select: vi.fn((columns: string) => {
-      state.calls.push({ table, action: 'select', columns });
+    select: vi.fn((columns: string, options?: any) => {
+      state.calls.push({ table, action: 'select', columns, ...(options ? { options } : {}) });
       return createTreatmentQuery(table);
     })
   }));
@@ -70,6 +70,17 @@ describe('treatments.getAllRecords', () => {
     await api.treatments.getAllRecords('location-1');
 
     expect(supabaseMock.calls).toContainEqual({ action: 'range', from: 0, to: 49 });
+  });
+
+  it('uses estimated counts for MLS progress instead of an exact table count', async () => {
+    await api.treatments.getAllRecords('location-1', {
+      limit: null, onProgress: vi.fn(), countMode: 'planned'
+    });
+    expect(supabaseMock.calls).toContainEqual({
+      table: 'treatments', action: 'select',
+      columns: '*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)',
+      options: { count: 'planned' }
+    });
   });
 
   it('keeps commission-ledger GET URLs below custom gateway limits', async () => {

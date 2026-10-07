@@ -3870,6 +3870,7 @@ export const api = {
       includeCommissionEntries?: boolean;
       throwOnError?: boolean;
       commissionRequestConcurrency?: number;
+      countMode?: 'exact' | 'planned';
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<ClinicalRecord[]> => {
@@ -3883,7 +3884,7 @@ export const api = {
           const columns = '*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)';
           const table = supabase.from('treatments');
           let query = (options?.onProgress && offset === 0
-            ? table.select(columns, { count: 'exact' })
+            ? table.select(columns, { count: options?.countMode ?? 'exact' })
             : table.select(columns))
             .order('date', { ascending: false })
             .order('id')
@@ -3898,7 +3899,7 @@ export const api = {
           if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
             const fallbackTable = supabase.from('treatments');
             let fallbackQuery = (options?.onProgress && offset === 0
-              ? fallbackTable.select('*', { count: 'exact' })
+              ? fallbackTable.select('*', { count: options?.countMode ?? 'exact' })
               : fallbackTable.select('*'))
               .order('date', { ascending: false })
               .order('id')
@@ -4776,13 +4777,15 @@ export const api = {
       dateTo?: string;
       patientId?: string;
       commissionRequestConcurrency?: number;
+      countMode?: 'exact' | 'planned';
+      includeCorrections?: boolean;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<PaymentRecord[]> => {
       const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
         const source = supabase.from('payments');
         let query = (options?.onProgress && from === 0
-          ? source.select(columns, { count: 'exact' })
+          ? source.select(columns, { count: options?.countMode ?? 'exact' })
           : source.select(columns))
           .order('created_at', { ascending: false })
           .order('id')
@@ -4816,10 +4819,17 @@ export const api = {
           )
         `;
 
-      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(fullColumns), options?.onProgress);
+      // MLS needs current payment values and allocations, not the correction
+      // audit trail/editor join. Keep the full default for receipts and Records.
+      const columns = options?.includeCorrections === false
+        ? '*, patients(name, balance, patient_type), payment_allocations(id, payment_id, payment_method, amount, reference)'
+        : fullColumns;
+      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(columns), options?.onProgress);
       if (error && isOptionalRelationAccessError(error, ['payment_allocations'])) {
         const fallback = await fetchAllRows<any>(buildPaymentQuery(
-          '*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))'
+          options?.includeCorrections === false
+            ? '*, patients(name, balance, patient_type)'
+            : '*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))'
         ), options?.onProgress);
         data = fallback.data;
         error = fallback.error;

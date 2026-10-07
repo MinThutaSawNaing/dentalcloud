@@ -2650,19 +2650,27 @@ const App: React.FC = () => {
     setMlsSyncProgress(null);
     setMlsFinalizing(false);
     const load = async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        const results = await Promise.allSettled([
+        // Bound the entire read/enrichment flight. A hung proxy request must not
+        // leave this tab preparing forever; late results cannot publish after retry.
+        const deadline = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('MLS loading timed out. Please retry.')), 60_000);
+        });
+        const results = await Promise.race([deadline, Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+            countMode: 'planned',
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(0),
             onProgress: (loaded, total) => progress(0, loaded, total)
           }).then((rows) => done(0, rows)),
           api.finance.getPayments(scope, {
+            countMode: 'planned', includeCorrections: false,
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(1),
             onProgress: (loaded, total) => progress(1, loaded, total)
           }).then((rows) => done(1, rows))
-        ]);
+        ])]);
         if (!isCurrent()) return;
         const [records, payments] = results;
         if (records.status === 'rejected') throw records.reason;
@@ -2676,6 +2684,7 @@ const App: React.FC = () => {
       } catch (err: any) {
         if (isCurrent()) setMlsSyncError(err?.message || 'Could not sync MLS. Please retry.');
       } finally {
+        clearTimeout(timeout);
         if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null;
       }
     };
