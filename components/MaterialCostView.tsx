@@ -167,7 +167,8 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
       <button type="button" disabled={isRefreshing} onClick={() => void handleRefresh()} className="mt-3 min-h-11 rounded-lg border border-red-200 px-4 py-2 font-semibold">Retry</button>
     </div> : loading ? <div className="px-4 py-10 sm:px-6">
       <p className="mb-3 text-sm text-slate-600">MLS syncs automatically. You can set filters or use another tab while it loads. Financial rows appear when the sync is complete.</p>
-      <ProgressBar progress={finalizing ? null : syncProgress} label={finalizing ? 'Records downloaded. Loading doctor commissions and MLS cost totals…' : syncProgress === null ? 'Preparing MLS sync…' : 'Downloading MLS records…'} />
+      <ProgressBar progress={syncProgress} label={finalizing ? 'Records downloaded. Loading doctor commissions and MLS cost totals…' : syncProgress === null ? 'Preparing MLS sync…' : 'Downloading MLS records…'} />
+      <p className="mt-2 text-xs text-slate-500">Percentage measures completed sync stages, not time remaining. Downloading and financial checks can run at different speeds.</p>
       {finalizing && <p role="status" className="mt-3 text-sm text-slate-600">Still working. This may take longer on a slow connection. The table will open automatically when financial checks finish.</p>}
     </div> : <>
       <div className="hidden xl:block">{isTableScrollable && <div className="flex items-center justify-between gap-3 border-b border-[var(--hover-100)] bg-[var(--hover-50)] px-6 py-2.5 text-xs font-semibold text-[var(--hover-800)]"><span className="flex items-center gap-2"><ArrowLeftRight size={16} />Scroll sideways to view all columns.</span><span>The Action column stays visible</span></div>}

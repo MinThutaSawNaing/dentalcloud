@@ -143,3 +143,27 @@ remain installed; it does not alter data semantics.
   MLS smoke test, financial test write, or frontend hosting deployment was made
   as part of this database verification. Source is ready for the requested Git
   push; live browser readiness remains a post-frontend-deployment check.
+
+## Follow-up: measured MLS sync percentage
+
+MLS now keeps numeric progress visible during downloads and financial enrichment.
+The overall value is the equal-weight average of six stages: treatment rows,
+payment rows, treatment commissions, payment commissions, payment cost-audit
+lookups, and cost-item lookups. Row stages use exact first-page counts; enrichment
+stages report completed batches against their actual batch totals. Empty stages
+complete immediately. Financial queries retain their existing concurrency limits,
+fallbacks, selected fields and accounting results. The percentage is capped at
+99 until both complete datasets are successfully published, then becomes 100.
+
+This supersedes the planned-count choice described above for the MLS caller only;
+the generic APIs still support planned counts. Exact counts add database work,
+so this is an explicit accuracy/performance tradeoff. Counts are as of the first
+page, not a transactional snapshot across concurrent writes; they may become
+stale if another device changes records during sync. Optional relation fallback
+restarts can move download progress backwards to reflect the repeated work.
+
+The bar reports **stage completion, not time remaining**. Stages have different
+costs and network speed can vary; there is no exact seconds-remaining claim or
+timer-driven artificial progress. The existing 60-second timeout and Retry remain
+active, and stale row/batch callbacks cannot update another branch/session/flight.
+No new database migration is required for this follow-up.

@@ -22,6 +22,7 @@ import { chunkMonthlyReportPatientIds, type MonthlyReportSourceRecord } from '..
 import { chunkUniqueIds, mapWithConcurrency, REPORT_REQUEST_CONCURRENCY } from '../utils/reportBatching';
 import { normalizeMaterialCostPresetInputs, sortMaterialCostPresets } from '../utils/materialCostPresets';
 import { normalizeBranchReceiptIdentity } from '../utils/branchReceiptIdentity';
+import type { MlsEnrichmentProgress } from '../utils/mlsSyncProgress';
 
 let usersAllowedTabsSupport: boolean | null = null;
 let usersDoctorIdSupport: boolean | null = null;
@@ -509,11 +510,14 @@ const isOptionalRelationAccessError = (error: any, relationNames: string[]): boo
 // Keep each GET URL small; MLS can overlap up to three independent batches.
 // Catch failures per batch so consumers retain their existing ordered fallbacks.
 const loadCommissionEntryBatches = async (
-  ids: string[], column: 'treatment_id' | 'payment_id', columns: string, concurrency = 1
+  ids: string[], column: 'treatment_id' | 'payment_id', columns: string, concurrency = 1,
+  onProgress?: (completed: number, total: number) => void
 ) => {
   let firstFailedIndex = Infinity;
+  const batches = chunkUniqueIds(ids, 50);
+  onProgress?.(0, batches.length);
   return mapWithConcurrency(
-    chunkUniqueIds(ids, 50),
+    batches,
     Number.isFinite(concurrency) ? Math.min(REPORT_REQUEST_CONCURRENCY, Math.max(1, Math.floor(concurrency))) : 1,
     async (idBatch, index) => {
       // Do not issue more optional reads once their results cannot be used.
@@ -527,14 +531,14 @@ const loadCommissionEntryBatches = async (
         firstFailedIndex = Math.min(firstFailedIndex, index);
         return { data: null, error };
       }
-    }
+    }, onProgress
   );
 };
 
-const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], concurrency = 1) => {
+const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void) => {
   const uniqueIds = Array.from(new Set(treatmentIds.filter(Boolean)));
   const entriesByTreatment = new Map<string, any[]>();
-  if (uniqueIds.length === 0) return entriesByTreatment;
+  if (uniqueIds.length === 0) { onProgress?.(0, 0); return entriesByTreatment; }
   const rows: any[] = [];
   // PostgREST encodes `.in()` filters in the GET request URL. Keep UUID batches
   // below common Cloudflare/Kong request-line limits used by our custom domains.
@@ -546,7 +550,7 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], con
   // than propagated to the caller's outer try/catch.
   const batches = await loadCommissionEntryBatches(uniqueIds, 'treatment_id',
     'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, material_deduction, commission_rate, earnings',
-    concurrency);
+    concurrency, onProgress);
   for (const { data, error } of batches) {
     if (error) {
       // Do not publish a partially enriched treatment ledger.
@@ -578,12 +582,12 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], con
   return entriesByTreatment;
 };
 
-const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[], concurrency = 1) => {
+const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void) => {
   const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
   const entriesByPayment = new Map<string, any[]>();
   const batches = await loadCommissionEntryBatches(uniqueIds, 'payment_id',
     'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings',
-    concurrency);
+    concurrency, onProgress);
   // Merge in input order, not completion order, preserving the successful prefix
   // returned by the legacy sequential reader if a later optional batch fails.
   for (const { data, error } of batches) {
@@ -3308,13 +3312,15 @@ export const api = {
 
     getTotalsByPaymentIds: async (
       paymentIds: string[],
-      options?: { idBatchSize?: number }
+      options?: { idBatchSize?: number; onProgress?: MlsEnrichmentProgress }
     ): Promise<Record<string, TreatmentCostSummary>> => {
       const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
-      if (uniqueIds.length === 0) return {};
+      const auditIds = chunkUniqueIds(uniqueIds, options?.idBatchSize);
+      options?.onProgress?.('cost-audits', 0, auditIds.length);
+      if (uniqueIds.length === 0) { options?.onProgress?.('cost-items', 0, 0); return {}; }
 
       const auditBatches = await mapWithConcurrency(
-        chunkUniqueIds(uniqueIds, options?.idBatchSize),
+        auditIds,
         REPORT_REQUEST_CONCURRENCY,
         async (idBatch) => {
           const { data, error } = await supabase
@@ -3327,13 +3333,15 @@ export const api = {
             throw new Error(error.message);
           }
           return data || [];
-        }
+        }, (completed, total) => options?.onProgress?.('cost-audits', completed, total)
       );
       const auditRows: any[] = auditBatches.flat();
+      const costIds = chunkUniqueIds(auditRows.map((row) => row.id), options?.idBatchSize);
+      options?.onProgress?.('cost-items', 0, costIds.length);
       if (auditRows.length === 0) return {};
 
       const costBatches = await mapWithConcurrency(
-        chunkUniqueIds(auditRows.map((row) => row.id), options?.idBatchSize),
+        costIds,
         REPORT_REQUEST_CONCURRENCY,
         async (idBatch) => {
           const { data, error } = await supabase
@@ -3342,7 +3350,7 @@ export const api = {
             .in('audit_log_id', idBatch);
           if (error) throw new Error(error.message);
           return data || [];
-        }
+        }, (completed, total) => options?.onProgress?.('cost-items', completed, total)
       );
       const sourceByAuditId = new Map(auditRows.map((row) => [row.id, row.source_id]));
       const summaries = summarizeTreatmentCostRows(costBatches.flat(), sourceByAuditId);
@@ -3871,6 +3879,7 @@ export const api = {
       throwOnError?: boolean;
       commissionRequestConcurrency?: number;
       countMode?: 'exact' | 'planned';
+      onEnrichmentProgress?: MlsEnrichmentProgress;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<ClinicalRecord[]> => {
@@ -3926,7 +3935,9 @@ export const api = {
         options?.onRowsDownloaded?.();
         const entriesByTreatment = options?.includeCommissionEntries === false
           ? new Map<string, any[]>()
-          : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id), options?.commissionRequestConcurrency);
+          : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id), options?.commissionRequestConcurrency,
+            (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total));
+        if (options?.includeCommissionEntries === false) options?.onEnrichmentProgress?.('commission', 0, 0);
 
         return records.map((rec: any) => ({
           ...rec,
@@ -4779,6 +4790,7 @@ export const api = {
       commissionRequestConcurrency?: number;
       countMode?: 'exact' | 'planned';
       includeCorrections?: boolean;
+      onEnrichmentProgress?: MlsEnrichmentProgress;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
     }): Promise<PaymentRecord[]> => {
@@ -4858,8 +4870,11 @@ export const api = {
       const paymentIds = payments.map((payment) => payment.id);
       options?.onRowsDownloaded?.();
       const [entriesByPayment, costsByPayment] = await Promise.all([
-        getDoctorEarningEntriesByPaymentIds(paymentIds, options?.commissionRequestConcurrency),
-        api.materialCosts.getTotalsByPaymentIds(paymentIds, { idBatchSize: 50 })
+        getDoctorEarningEntriesByPaymentIds(paymentIds, options?.commissionRequestConcurrency,
+          (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total)),
+        api.materialCosts.getTotalsByPaymentIds(paymentIds, {
+          idBatchSize: 50, ...(options?.onEnrichmentProgress ? { onProgress: options.onEnrichmentProgress } : {})
+        })
       ]);
       return payments.map((payment) => ({
         ...payment,

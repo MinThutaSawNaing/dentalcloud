@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMaterialCostPaymentRows } from '../utils/materialCostPaymentRows';
 
 const mock = vi.hoisted(() => {
-  const state = { active: 0, peak: 0, calls: [] as any[], failId: '', throwFailure: false, outOfOrder: false };
+  const state = { active: 0, peak: 0, calls: [] as any[], failId: '', throwFailure: false, outOfOrder: false, withCosts: false };
   const records = Array.from({ length: 300 }, (_, index) => ({
     id: `treatment-${index}`, patient_id: `patient-${index}`, location_id: 'branch-1',
     date: '2026-10-05', cost: 100, doctor_id: 'doctor-1', doctor_earnings: 10,
@@ -30,7 +30,13 @@ const mock = vi.hoisted(() => {
       in: (column: string, value: string[]) => { call.filters.push(['in', column, value]); return query; },
       then: (resolve: any, reject: any) => {
         const load = async () => {
-          let rows: any[] = table === 'treatments' ? records : table === 'payments' ? payments : entries;
+          let rows: any[] = table === 'treatments' ? records : table === 'payments' ? payments
+            : table === 'doctor_commission_entries' ? entries
+            : table === 'audit_logs' && state.withCosts ? payments.map(payment => ({
+              id: `audit-${payment.id}`, source_id: payment.id, source_type: 'payment'
+            })) : table === 'patient_material_costs' && state.withCosts ? payments.map(payment => ({
+              audit_log_id: `audit-${payment.id}`, cost_type: 'material', total_amount: 5
+            })) : [];
           for (const [operator, column, value] of call.filters) {
             rows = rows.filter((row: any) => operator === 'eq' ? row[column] === value : value.includes(row[column]));
           }
@@ -70,7 +76,7 @@ const readMls = (concurrency: number) => Promise.all([
 
 beforeEach(() => {
   vi.useFakeTimers();
-  Object.assign(mock.state, { active: 0, peak: 0, calls: [], failId: '', throwFailure: false, outOfOrder: false });
+  Object.assign(mock.state, { active: 0, peak: 0, calls: [], failId: '', throwFailure: false, outOfOrder: false, withCosts: false });
   vi.spyOn(api.materialCosts, 'getTotalsByPaymentIds').mockResolvedValue({});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -110,6 +116,33 @@ describe('MLS bounded commission loading', () => {
         call.filters.some(([op, column, value]: any[]) => op === 'eq' && column === 'location_id' && value === 'branch-1')
       )).toBe(true);
     }
+  });
+
+  it.each([false, true])('reports actual completion of commission and both cost lookup stages (costs=%s)', async (withCosts) => {
+    vi.mocked(api.materialCosts.getTotalsByPaymentIds).mockRestore();
+    mock.state.withCosts = withCosts;
+    const treatmentProgress = vi.fn();
+    const paymentProgress = vi.fn();
+    const request = Promise.all([
+      api.treatments.getAllRecords('branch-1', {
+        limit: null, throwOnError: true, commissionRequestConcurrency: 3,
+        onEnrichmentProgress: treatmentProgress
+      }),
+      api.finance.getPayments('branch-1', {
+        commissionRequestConcurrency: 3, onEnrichmentProgress: paymentProgress
+      })
+    ]);
+    await vi.runAllTimersAsync();
+    const [, payments] = await request;
+    for (const progress of [treatmentProgress, paymentProgress]) {
+      expect(progress.mock.calls.filter(([stage]) => stage === 'commission')).toEqual(
+        Array.from({ length: 7 }, (_, completed) => ['commission', completed, 6])
+      );
+    }
+    expect(paymentProgress).toHaveBeenCalledWith('cost-audits', 6, 6);
+    expect(paymentProgress).toHaveBeenCalledWith('cost-items', withCosts ? 6 : 0, withCosts ? 6 : 0);
+    expect(payments[0].mlsTotal).toBe(withCosts ? 5 : 0);
+    expect(payments[0].netRevenue).toBe(withCosts ? 95 : 100);
   });
 
   it.each([false, true])('preserves optional ledger fallbacks when a batch fails (throws=%s)', async (throwFailure) => {

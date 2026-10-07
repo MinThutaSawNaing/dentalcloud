@@ -143,12 +143,13 @@ describe('MaterialCostView MLS sync UI (SSR)', () => {
     expect(markup).not.toContain('Preparing MLS sync…');
   });
 
-  it('replaces the misleading 99% with an explicit financial-check stage', () => {
-    const markup = render({ loading: true, syncProgress: 99, finalizing: true });
+  it('keeps measured percentage visible throughout financial checks', () => {
+    const markup = render({ loading: true, syncProgress: 75, finalizing: true });
     expect(markup).toContain('Loading doctor commissions and MLS cost totals');
-    expect(markup).toContain('progress-indeterminate-stripe');
-    expect(markup).not.toContain('aria-valuenow');
-    expect(markup).not.toContain('99%');
+    expect(markup).not.toContain('progress-indeterminate-stripe');
+    expect(markup).toContain('aria-valuenow="75"');
+    expect(markup).toContain('75%');
+    expect(markup).toContain('not time remaining');
     expect(markup).toContain('table will open automatically');
     expectNoFinancialRows(markup);
     expectReadyRows(render({ loading: false, syncProgress: 100, finalizing: false }));

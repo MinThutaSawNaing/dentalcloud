@@ -4,6 +4,7 @@ import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dataCache } from './utils/dataCache';
 import { mergePatientsById } from './utils/patientMerge';
+import { getMlsSyncPercentage, getMlsStageFraction } from './utils/mlsSyncProgress';
 
 beforeEach(() => dataCache.clear());
 
@@ -90,6 +91,7 @@ function harness(code = mlsCode) {
     patients: [{ id: 'existing', name: 'Old' }],
     setPatients: vi.fn((update: (previous: any[]) => any[]) => { context.patients = update(context.patients); }),
     mergePatientsById,
+    getMlsSyncPercentage, getMlsStageFraction,
     dataCache, navigationCacheVersionRef: { current: 0 },
     auth: { getSession: vi.fn(() => ({ role: 'admin', location_id: 'branch-a' })), isAdmin: vi.fn(() => true) },
     isAdmin: true, getClinicCacheScope: (scope: string) => `tenant-a:${scope}`,
@@ -148,11 +150,16 @@ describe('App MLS navigation runtime regression', () => {
     treatmentOptions.onRowsDownloaded();
     paymentOptions.onRowsDownloaded();
     expect(h.context.setMlsFinalizing).toHaveBeenLastCalledWith(true);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(null);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(33);
     expect(h.context.setMlsScope).not.toHaveBeenCalled();
+    treatmentOptions.onEnrichmentProgress('commission', 1, 2);
+    paymentOptions.onEnrichmentProgress('commission', 1, 2);
+    paymentOptions.onEnrichmentProgress('cost-audits', 2, 2);
+    paymentOptions.onEnrichmentProgress('cost-items', 1, 2);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(75);
     h.treatmentReads[0].resolve(records);
     await flush();
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(null);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(83);
     expect(h.context.setMlsRecords).not.toHaveBeenCalled();
     h.paymentReads[0].resolve(payments);
     await flush();
@@ -169,12 +176,12 @@ describe('App MLS navigation runtime regression', () => {
     h.counts(1);
     expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
       limit: null, throwOnError: true, onProgress: expect.any(Function),
-      countMode: 'planned',
+      countMode: 'exact', onEnrichmentProgress: expect.any(Function),
       commissionRequestConcurrency: 3,
       onRowsDownloaded: expect.any(Function),
     });
     expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
-      countMode: 'planned', includeCorrections: false,
+      countMode: 'exact', includeCorrections: false, onEnrichmentProgress: expect.any(Function),
       commissionRequestConcurrency: 3,
       onProgress: expect.any(Function),
       onRowsDownloaded: expect.any(Function),
@@ -234,8 +241,9 @@ describe('App MLS navigation runtime regression', () => {
     h.render('material-cost');
     const treatmentProgress = h.context.api.treatments.getAllRecords.mock.calls[0][1].onProgress;
     const paymentProgress = h.context.api.finance.getPayments.mock.calls[0][1].onProgress;
+    const financialProgress = h.context.api.finance.getPayments.mock.calls[0][1].onEnrichmentProgress;
     treatmentProgress(1, 10);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(50);
+    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(1);
     if (change === 'cache version') h.context.mlsCacheVersionRef.current++;
     if (change === 'session') h.context.initialDataFetchRequestRef.current++;
     if (change === 'branch') {
@@ -251,6 +259,8 @@ describe('App MLS navigation runtime regression', () => {
     h.context.setMlsSyncProgress.mockClear();
     treatmentProgress(10, 10);
     paymentProgress(10, 10);
+    financialProgress('commission', 1, 1);
+    financialProgress('cost-items', 1, 1);
     await h.settle();
     expect(h.context.setMlsSyncProgress).not.toHaveBeenCalled();
     expect(h.context.setMlsRecords).not.toHaveBeenCalled();

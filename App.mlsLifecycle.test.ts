@@ -43,7 +43,7 @@ describe('MLS branch/session lifecycle source guards', () => {
     expect(source).toContain('Promise.allSettled');
     expect(source).toContain('await Promise.race');
     expect(source).toContain('clearTimeout(timeout)');
-    expect(source).toContain('Math.min(99, percentage)');
+    expect(source).toContain('getMlsSyncPercentage(fractions)');
     const publication = source.indexOf('setMlsRecords(records.value)');
     expect(source.indexOf("if (records.status === 'rejected') throw records.reason")).toBeLessThan(publication);
     expect(source.indexOf("if (payments.status === 'rejected') throw payments.reason")).toBeLessThan(publication);

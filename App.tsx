@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
 import { getHistorySyncPercentage, type HistoryReadProgress } from './utils/historySyncProgress';
+import { getMlsSyncPercentage, getMlsStageFraction, type MlsEnrichmentStage } from './utils/mlsSyncProgress';
 import {
   Home,
   LayoutDashboard,
@@ -2622,32 +2623,43 @@ const App: React.FC = () => {
       && mlsAuthenticatedRef.current && currentLocationIdRef.current === scope
       && initialDataFetchRequestRef.current === startupRequestId
       && mlsCacheVersionRef.current === cacheVersion;
-    const reads: HistoryReadProgress[] = [
-      { loaded: 0, total: null, done: false }, { loaded: 0, total: null, done: false }
-    ];
+    const fractions = [0, 0, 0, 0, 0, 0];
+    const updateProgress = () => {
+      if (!isCurrent()) return;
+      setMlsSyncProgress(getMlsSyncPercentage(fractions));
+    };
     const downloaded = [false, false];
     const rowsDownloaded = (index: number) => {
       if (!isCurrent()) return;
       downloaded[index] = true;
+      fractions[index] = 1;
       if (downloaded.every(Boolean)) {
         setMlsFinalizing(true);
-        setMlsSyncProgress(null);
       }
+      updateProgress();
     };
     const progress = (index: number, loaded: number, total: number | null) => {
       if (!isCurrent()) return;
-      reads[index] = { loaded, total, done: false };
-      if (!downloaded.every(Boolean)) setMlsSyncProgress(getHistorySyncPercentage(reads));
+      // A join fallback restarts its download; reflect the actual new work.
+      fractions[index] = getMlsStageFraction(loaded, total);
+      updateProgress();
+    };
+    const enrichmentProgress = (index: number, stage: MlsEnrichmentStage, completed: number, total: number) => {
+      if (!isCurrent()) return;
+      const slot = stage === 'commission' ? index + 2 : stage === 'cost-audits' ? 4 : 5;
+      fractions[slot] = getMlsStageFraction(completed, total);
+      updateProgress();
     };
     const done = <T,>(index: number, value: T): T => {
       if (isCurrent()) {
-        reads[index].done = true;
-        const percentage = getHistorySyncPercentage(reads);
-        if (!downloaded.every(Boolean)) setMlsSyncProgress(percentage === null ? null : Math.min(99, percentage));
+        fractions[index] = 1;
+        fractions[index + 2] = 1;
+        if (index === 1) { fractions[4] = 1; fractions[5] = 1; }
+        updateProgress();
       }
       return value;
     };
-    setMlsSyncProgress(null);
+    setMlsSyncProgress(0);
     setMlsFinalizing(false);
     const load = async () => {
       let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -2659,13 +2671,15 @@ const App: React.FC = () => {
         });
         const results = await Promise.race([deadline, Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
-            countMode: 'planned',
+            countMode: 'exact',
+            onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(0, stage, completed, total),
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(0),
             onProgress: (loaded, total) => progress(0, loaded, total)
           }).then((rows) => done(0, rows)),
           api.finance.getPayments(scope, {
-            countMode: 'planned', includeCorrections: false,
+            countMode: 'exact', includeCorrections: false,
+            onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(1, stage, completed, total),
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(1),
             onProgress: (loaded, total) => progress(1, loaded, total)
