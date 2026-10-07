@@ -5,7 +5,7 @@
  * model to confuse with older Dental Cloud behavior. Action schemas remain
  * in AIAssistantView because they are only exposed in Agent Mode.
  */
-export const ASSISTANT_PRODUCT_KNOWLEDGE_VERSION = '2026-07-30';
+export const ASSISTANT_PRODUCT_KNOWLEDGE_VERSION = '2026-10-07';
 
 export const ASSISTANT_PRODUCT_KNOWLEDGE = `
 CURRENT DENTAL CLOUD WORKFLOW KNOWLEDGE (verified ${ASSISTANT_PRODUCT_KNOWLEDGE_VERSION}):
@@ -67,10 +67,23 @@ CLINICAL FOCUS AND PATIENT SUMMARY:
 - Appointment cards can open a registered patient's chart. Unregistered lead appointments have no patient chart until staff converts/registers the lead.
 
 MLS COSTS:
-- The MLS tab (Material, Lab & Special Cost) reports costs against treatment/audit visits. It keeps material, lab, and special doctor items/totals separate and also shows their combined cost, collected amount, doctor earned amount, and net profit. Legacy cost rows without a type are treated as material.
+- The MLS tab (Material, Lab & Special Cost) shows one row per collected payment, including payments with no linked treatment. Open that payment's MLS Costs button to manage its costs. Linked treatments provide clinical context; do not assume a treatment visit and a payment row are interchangeable. It keeps material, lab, and special doctor items/totals separate and also shows their combined cost, collected amount, doctor earned amount, and net profit. Legacy cost rows without a type are treated as material.
 - Authorized staff can add, edit, or remove multiple lines in all three categories with a name, unit cost, and quantity. They can also create shared frequently used cost presets with a Material, Lab, or Special Doctor category, custom label, and amount. Selecting a preset adds a normal editable row with quantity 1; it does not save automatically, and manual entry remains available. The workflow does not ask them to re-enter an admin password inside the cost window; access comes from their signed-in role.
 - Saving treatment costs synchronizes the corresponding Material Cost, Lab Cost, or Special Doctor Cost expense records and refreshes payment-based doctor commission reporting. All three categories are deducted from profitability and the percentage-commission base. Do not count the same cost twice or call Patient Balance an MLS cost.
 - Users without management access may see reporting but cannot change these costs. Do not claim that Loli saved an MLS cost because no assistant action for that workflow is currently exposed.
+- Doctor Earned includes commission plus special doctor fees assigned to a doctor; unassigned special doctor costs are not attributed to a doctor's earnings. Special doctor fees are already included in MLS costs: subtract only commission from Net Revenue when explaining the MLS Net Profit, not the combined Doctor Earned amount again.
+- MLS syncs automatically when opened. Filters remain usable and an in-flight sync continues while staff use another tab. Financial rows and editing stay hidden during sync or errors. After records download, doctor commissions and MLS cost totals still need financial checks; progress measures completed sync stages, not time remaining. That label alone does not prove the table is frozen; do not promise an estimated completion time or dismiss a reported stall. Failed syncs offer Retry.
+
+DOCTOR COMMISSION SETTINGS:
+- The doctor editor selects one commission method: Percentage (%) or a fixed per-visit amount. The explicit saved method takes precedence over specialty; do not assume every Ortho, Implant, or Surgery doctor must use fixed commission.
+- Applicable rates use the enabled per-treatment override first, then the specialty-category override, then the doctor default. Disabling a treatment rule allows the category/default to apply. A blank fixed override falls back; an explicit zero is a real override, not a missing value. Category selection supports search.
+- Changing methods opens "Change Commission Method?". Confirming resets the default and all treatment/category commission amounts in the form; saving clears the old method's values. Cancelling keeps the current method. Existing treatment records and payout snapshots are not rewritten, even when an old treatment is paid later. Never recommend changing current rates to retroactively repair a historical payout.
+
+LOADING, NAVIGATION, AND REFRESH:
+- Supported tabs reuse complete datasets and in-flight reads for the current branch/session. This is session memory, not offline storage or incremental synchronization. Switching tabs or returning to the browser does not invalidate successful cached reads; another device's changes require explicit Refresh. Local successful changes invalidate affected data, and branch/session or permission changes isolate or invalidate cached data. Reloading the page clears memory.
+- Staff startup restores the last-open permitted tab when valid, otherwise Patients or Appointments when permitted. The initial patient page loads before the remaining directory rows. Patients history sync runs in the background; history-dependent fields show placeholders and history filters remain disabled until the required datasets succeed. Search can remain available during sync.
+- Opening a patient chart loads patient-specific details and histories. Payment opening/submission and patient report opening/export are blocked while their required reads are loading or failed. Reports and AI screens load their required datasets on entry; never substitute incomplete financial totals to hide loading delays.
+- Never interpret loading, restricted, partial, or failed data as zero or no records. Explain unavailable data and the relevant Refresh or Retry workflow instead. Session caching does not provide instant cross-device synchronization or offline writes.
 
 BRANCH WORKSPACE:
 - A normal staff account can be granted the dedicated Branch Switching permission without receiving full Settings access. The sidebar entry is "Change Branch"; admins continue to use their Settings branch controls.

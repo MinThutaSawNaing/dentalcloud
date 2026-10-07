@@ -6,7 +6,7 @@ import {
 
 describe('assistant product knowledge', () => {
   it('documents the current payment and immutable receipt workflow', () => {
-    expect(ASSISTANT_PRODUCT_KNOWLEDGE_VERSION).toBe('2026-07-30');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE_VERSION).toBe('2026-10-07');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Every payment requires one supported payment type');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('split across multiple distinct supported payment types');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('allocations must exactly equal the amount received');
@@ -83,6 +83,33 @@ describe('assistant product knowledge', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Material Cost, Lab Cost, or Special Doctor Cost expense records');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('dedicated Branch Switching permission without receiving full Settings access');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('previous branch remains active');
+  });
+
+  it('documents payment-bound MLS and avoids double-counting assigned doctor fees', () => {
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('one row per collected payment');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('including payments with no linked treatment');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('special doctor fees assigned to a doctor');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('subtract only commission from Net Revenue');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).not.toContain('reports costs against treatment/audit visits');
+  });
+
+  it('documents commission precedence, method changes, and historical snapshots', () => {
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('enabled per-treatment override first');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('then the specialty-category override');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('then the doctor default');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('blank fixed override falls back');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('explicit zero is a real override');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Change Commission Method?');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Existing treatment records and payout snapshots are not rewritten');
+  });
+
+  it('documents session caching and honest loading and refresh guidance', () => {
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('session memory, not offline storage');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain("another device's changes require explicit Refresh");
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('last-open permitted tab');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Financial rows and editing stay hidden during sync or errors');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('progress measures completed sync stages, not time remaining');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Never interpret loading, restricted, partial, or failed data as zero');
   });
 
   it('prevents unsupported action claims and financial category confusion', () => {
