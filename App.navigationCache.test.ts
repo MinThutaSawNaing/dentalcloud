@@ -23,7 +23,7 @@ describe('tab navigation cache integration guards', () => {
     const source = app.slice(app.indexOf('const refreshVisibleReads ='), app.indexOf('const fetchMedicines ='));
     expect(source).toContain("currentView === 'appointments' && appointmentPageError");
     expect(source).toContain('if (lazyViewError) setLazyViewRevision');
-    expect(source).toContain('if (mlsSyncError) setMlsSyncError(null)');
+    expect(source).not.toContain('setMlsSyncError(null)');
   });
   it('keeps storage configuration in session-scoped memory and invalidates after save', () => {
     expect(settings).toContain('JSON.stringify([session?.userId, session?.role, session?.location_id])');

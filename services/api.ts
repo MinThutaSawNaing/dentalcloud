@@ -36,14 +36,23 @@ const AUTO_ONP_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
 const autoOnpRefreshInFlight = new Map<string, Promise<void>>();
 const autoOnpLastCompletedAt = new Map<string, number>();
 
+// PostgREST may resolve fetch aborts as error results instead of rejecting.
+const throwIfReadAborted = (signal?: AbortSignal, error?: any) => {
+  signal?.throwIfAborted();
+  if (error?.name === 'AbortError' || /^AbortError\b/.test(String(error?.message || ''))) throw error;
+};
+
 const fetchAllRows = async <T,>(
   buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any; count?: number | null }>,
-  onProgress?: (loaded: number, total: number | null) => void
+  onProgress?: (loaded: number, total: number | null) => void,
+  signal?: AbortSignal
 ): Promise<{ data: T[] | null; error: any }> => {
   const rows: T[] = [];
   let total: number | null = null;
   for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    signal?.throwIfAborted();
     const result = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    throwIfReadAborted(signal, result.error);
     if (result.error) return { data: null, error: result.error };
     const page = result.data || [];
     rows.push(...page);
@@ -511,8 +520,10 @@ const isOptionalRelationAccessError = (error: any, relationNames: string[]): boo
 // Catch failures per batch so consumers retain their existing ordered fallbacks.
 const loadCommissionEntryBatches = async (
   ids: string[], column: 'treatment_id' | 'payment_id', columns: string, concurrency = 1,
-  onProgress?: (completed: number, total: number) => void
+  onProgress?: (completed: number, total: number) => void,
+  signal?: AbortSignal
 ) => {
+  signal?.throwIfAborted();
   let firstFailedIndex = Infinity;
   const batches = chunkUniqueIds(ids, 50);
   onProgress?.(0, batches.length);
@@ -522,12 +533,17 @@ const loadCommissionEntryBatches = async (
     async (idBatch, index) => {
       // Do not issue more optional reads once their results cannot be used.
       // Earlier in-flight batches still settle to preserve payment prefix order.
+      signal?.throwIfAborted();
       if (index > firstFailedIndex) return { data: [], error: null };
       try {
-        const result = await supabase.from('doctor_commission_entries').select(columns).in(column, idBatch);
+        let query = supabase.from('doctor_commission_entries').select(columns).in(column, idBatch);
+        if (signal) query = query.abortSignal(signal);
+        const result = await query;
+        throwIfReadAborted(signal, result.error);
         if (result.error) firstFailedIndex = Math.min(firstFailedIndex, index);
         return result;
       } catch (error) {
+        throwIfReadAborted(signal, error);
         firstFailedIndex = Math.min(firstFailedIndex, index);
         return { data: null, error };
       }
@@ -535,7 +551,8 @@ const loadCommissionEntryBatches = async (
   );
 };
 
-const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void) => {
+const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void, signal?: AbortSignal) => {
+  signal?.throwIfAborted();
   const uniqueIds = Array.from(new Set(treatmentIds.filter(Boolean)));
   const entriesByTreatment = new Map<string, any[]>();
   if (uniqueIds.length === 0) { onProgress?.(0, 0); return entriesByTreatment; }
@@ -546,12 +563,14 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], con
   // has produced gateway 502 responses (surfaced by browsers as a CORS failure).
   // This lookup only enriches treatment rows with commission-ledger breakdown details.
   // It must never block or blank out the primary treatments list (e.g. the Audit Log's
-  // Treatments filter), so any failure here is logged and treated as "no entries" rather
-  // than propagated to the caller's outer try/catch.
+  // Treatments filter), so non-abort failures are logged and treated as "no entries"
+  // rather than propagated to the caller's outer try/catch.
   const batches = await loadCommissionEntryBatches(uniqueIds, 'treatment_id',
     'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, material_deduction, commission_rate, earnings',
-    concurrency, onProgress);
+    concurrency, onProgress, signal);
+  signal?.throwIfAborted();
   for (const { data, error } of batches) {
+    throwIfReadAborted(signal, error);
     if (error) {
       // Do not publish a partially enriched treatment ledger.
       const errorSummary = String(error.message || error)
@@ -582,15 +601,18 @@ const getDoctorEarningEntriesByTreatmentIds = async (treatmentIds: string[], con
   return entriesByTreatment;
 };
 
-const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void) => {
+const getDoctorEarningEntriesByPaymentIds = async (paymentIds: string[], concurrency = 1, onProgress?: (completed: number, total: number) => void, signal?: AbortSignal) => {
+  signal?.throwIfAborted();
   const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
   const entriesByPayment = new Map<string, any[]>();
   const batches = await loadCommissionEntryBatches(uniqueIds, 'payment_id',
     'id, payment_id, treatment_id, doctor_id, payment_date, treatment_date, calculation_mode, allocated_payment, commission_rate, earnings',
-    concurrency, onProgress);
+    concurrency, onProgress, signal);
+  signal?.throwIfAborted();
   // Merge in input order, not completion order, preserving the successful prefix
   // returned by the legacy sequential reader if a later optional batch fails.
   for (const { data, error } of batches) {
+    throwIfReadAborted(signal, error);
     if (error) {
       if (!isMissingRelationError(error, 'doctor_commission_entries')) {
         console.warn('Unable to load payment commission entries.', String(error.message || error).slice(0, 240));
@@ -3312,22 +3334,33 @@ export const api = {
 
     getTotalsByPaymentIds: async (
       paymentIds: string[],
-      options?: { idBatchSize?: number; onProgress?: MlsEnrichmentProgress }
+      options?: { idBatchSize?: number; onProgress?: MlsEnrichmentProgress; signal?: AbortSignal }
     ): Promise<Record<string, TreatmentCostSummary>> => {
+      const signal = options?.signal;
+      signal?.throwIfAborted();
       const uniqueIds = Array.from(new Set(paymentIds.filter(Boolean)));
       const auditIds = chunkUniqueIds(uniqueIds, options?.idBatchSize);
       options?.onProgress?.('cost-audits', 0, auditIds.length);
-      if (uniqueIds.length === 0) { options?.onProgress?.('cost-items', 0, 0); return {}; }
+      signal?.throwIfAborted();
+      if (uniqueIds.length === 0) {
+        options?.onProgress?.('cost-items', 0, 0);
+        signal?.throwIfAborted();
+        return {};
+      }
 
       const auditBatches = await mapWithConcurrency(
         auditIds,
         REPORT_REQUEST_CONCURRENCY,
         async (idBatch) => {
-          const { data, error } = await supabase
+          signal?.throwIfAborted();
+          let query = supabase
             .from('audit_logs')
             .select('id, source_id')
             .eq('source_type', 'payment')
             .in('source_id', idBatch);
+          if (signal) query = query.abortSignal(signal);
+          const { data, error } = await query;
+          throwIfReadAborted(signal, error);
           if (error) {
             if (isMissingRelationError(error, 'audit_logs')) return [];
             throw new Error(error.message);
@@ -3335,23 +3368,30 @@ export const api = {
           return data || [];
         }, (completed, total) => options?.onProgress?.('cost-audits', completed, total)
       );
+      signal?.throwIfAborted();
       const auditRows: any[] = auditBatches.flat();
       const costIds = chunkUniqueIds(auditRows.map((row) => row.id), options?.idBatchSize);
       options?.onProgress?.('cost-items', 0, costIds.length);
+      signal?.throwIfAborted();
       if (auditRows.length === 0) return {};
 
       const costBatches = await mapWithConcurrency(
         costIds,
         REPORT_REQUEST_CONCURRENCY,
         async (idBatch) => {
-          const { data, error } = await supabase
+          signal?.throwIfAborted();
+          let query = supabase
             .from('patient_material_costs')
             .select('audit_log_id, cost_type, total_amount, doctor_id')
             .in('audit_log_id', idBatch);
+          if (signal) query = query.abortSignal(signal);
+          const { data, error } = await query;
+          throwIfReadAborted(signal, error);
           if (error) throw new Error(error.message);
           return data || [];
         }, (completed, total) => options?.onProgress?.('cost-items', completed, total)
       );
+      signal?.throwIfAborted();
       const sourceByAuditId = new Map(auditRows.map((row) => [row.id, row.source_id]));
       const summaries = summarizeTreatmentCostRows(costBatches.flat(), sourceByAuditId);
 
@@ -3882,13 +3922,17 @@ export const api = {
       onEnrichmentProgress?: MlsEnrichmentProgress;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
+      signal?: AbortSignal;
     }): Promise<ClinicalRecord[]> => {
+      const signal = options?.signal;
       try {
+        signal?.throwIfAborted();
         const limit = options?.limit === undefined ? 50 : options.limit;
         const effectiveLimit = typeof limit === 'number' && limit > 0 ? limit : null;
         const records: any[] = [];
         let total: number | null = null;
         for (let offset = 0; effectiveLimit === null || records.length < effectiveLimit; offset += SUPABASE_PAGE_SIZE) {
+          signal?.throwIfAborted();
           const pageSize = effectiveLimit === null ? SUPABASE_PAGE_SIZE : Math.min(SUPABASE_PAGE_SIZE, effectiveLimit - records.length);
           const columns = '*, patients(name, patient_unique_id, balance, patient_type), doctors(name, specialization, commission_type, commission_percentage, commission_per_visit)';
           const table = supabase.from('treatments');
@@ -3903,9 +3947,12 @@ export const api = {
           if (options?.dateTo) query = query.lte('date', options.dateTo);
           if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
           if (options?.patientId) query = query.eq('patient_id', options.patientId);
+          if (signal) query = query.abortSignal(signal);
           let { data, error, count } = await query;
+          throwIfReadAborted(signal, error);
 
           if (error && isOptionalRelationAccessError(error, ['patients', 'doctors'])) {
+            signal?.throwIfAborted();
             const fallbackTable = supabase.from('treatments');
             let fallbackQuery = (options?.onProgress && offset === 0
               ? fallbackTable.select('*', { count: options?.countMode ?? 'exact' })
@@ -3918,7 +3965,9 @@ export const api = {
             if (options?.dateTo) fallbackQuery = fallbackQuery.lte('date', options.dateTo);
             if (options?.doctorId) fallbackQuery = fallbackQuery.eq('doctor_id', options.doctorId);
             if (options?.patientId) fallbackQuery = fallbackQuery.eq('patient_id', options.patientId);
+            if (signal) fallbackQuery = fallbackQuery.abortSignal(signal);
             const fallback = await fallbackQuery;
+            throwIfReadAborted(signal, fallback.error);
             data = fallback.data;
             error = fallback.error;
             count = fallback.count;
@@ -3936,8 +3985,9 @@ export const api = {
         const entriesByTreatment = options?.includeCommissionEntries === false
           ? new Map<string, any[]>()
           : await getDoctorEarningEntriesByTreatmentIds(records.map((rec: any) => rec.id), options?.commissionRequestConcurrency,
-            (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total));
+            (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total), signal);
         if (options?.includeCommissionEntries === false) options?.onEnrichmentProgress?.('commission', 0, 0);
+        signal?.throwIfAborted();
 
         return records.map((rec: any) => ({
           ...rec,
@@ -3982,6 +4032,7 @@ export const api = {
           doctor_commission_per_visit: rec.doctors?.commission_per_visit !== undefined ? Number(rec.doctors.commission_per_visit || 0) : null
         }));
       } catch (err) {
+        throwIfReadAborted(signal, err);
         console.warn("Error fetching records:", err);
         if (options?.throwOnError) throw err;
         return [];
@@ -4793,7 +4844,10 @@ export const api = {
       onEnrichmentProgress?: MlsEnrichmentProgress;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
+      signal?: AbortSignal;
     }): Promise<PaymentRecord[]> => {
+      const signal = options?.signal;
+      signal?.throwIfAborted();
       const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
         const source = supabase.from('payments');
         let query = (options?.onProgress && from === 0
@@ -4806,6 +4860,7 @@ export const api = {
         if (options?.dateFrom) query = query.gte('payment_date', options.dateFrom);
         if (options?.dateTo) query = query.lte('payment_date', options.dateTo);
         if (options?.patientId) query = query.eq('patient_id', options.patientId);
+        if (signal) query = query.abortSignal(signal);
         return query;
       };
 
@@ -4836,28 +4891,29 @@ export const api = {
       const columns = options?.includeCorrections === false
         ? '*, patients(name, balance, patient_type), payment_allocations(id, payment_id, payment_method, amount, reference)'
         : fullColumns;
-      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(columns), options?.onProgress);
+      let { data, error } = await fetchAllRows<any>(buildPaymentQuery(columns), options?.onProgress, signal);
       if (error && isOptionalRelationAccessError(error, ['payment_allocations'])) {
         const fallback = await fetchAllRows<any>(buildPaymentQuery(
           options?.includeCorrections === false
             ? '*, patients(name, balance, patient_type)'
             : '*, patients(name, balance, patient_type), payment_corrections(*, editor:users!payment_corrections_edited_by_fkey(username))'
-        ), options?.onProgress);
+        ), options?.onProgress, signal);
         data = fallback.data;
         error = fallback.error;
       }
       if (error && isMissingRelationError(error, 'payment_corrections')) {
-        const fallback = await fetchAllRows<any>(buildPaymentQuery('*, patients(name, balance, patient_type)'), options?.onProgress);
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*, patients(name, balance, patient_type)'), options?.onProgress, signal);
         data = fallback.data;
         error = fallback.error;
       }
 
       if (error && isOptionalRelationAccessError(error, ['patients', 'payment_allocations', 'payment_corrections', 'users'])) {
-        const fallback = await fetchAllRows<any>(buildPaymentQuery('*'), options?.onProgress);
+        const fallback = await fetchAllRows<any>(buildPaymentQuery('*'), options?.onProgress, signal);
         data = fallback.data;
         error = fallback.error;
       }
 
+      throwIfReadAborted(signal, error);
       if (error) {
         if (isMissingRelationError(error, 'payments')) {
           console.warn('Payment storage is not installed yet. Payment history will remain unavailable until the migration is applied.');
@@ -4866,16 +4922,19 @@ export const api = {
         throw new Error(error.message);
       }
 
+      signal?.throwIfAborted();
       const payments = (data || []).map(mapPaymentRow);
       const paymentIds = payments.map((payment) => payment.id);
       options?.onRowsDownloaded?.();
+      signal?.throwIfAborted();
       const [entriesByPayment, costsByPayment] = await Promise.all([
         getDoctorEarningEntriesByPaymentIds(paymentIds, options?.commissionRequestConcurrency,
-          (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total)),
+          (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total), signal),
         api.materialCosts.getTotalsByPaymentIds(paymentIds, {
-          idBatchSize: 50, ...(options?.onEnrichmentProgress ? { onProgress: options.onEnrichmentProgress } : {})
+          idBatchSize: 50, signal, ...(options?.onEnrichmentProgress ? { onProgress: options.onEnrichmentProgress } : {})
         })
       ]);
+      signal?.throwIfAborted();
       return payments.map((payment) => ({
         ...payment,
         doctorEarningEntries: entriesByPayment.get(payment.id) || [],

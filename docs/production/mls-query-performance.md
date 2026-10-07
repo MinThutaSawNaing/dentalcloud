@@ -167,3 +167,32 @@ costs and network speed can vary; there is no exact seconds-remaining claim or
 timer-driven artificial progress. The existing 60-second timeout and Retry remain
 active, and stale row/batch callbacks cannot update another branch/session/flight.
 No new database migration is required for this follow-up.
+
+## October 7 follow-up: slow connections and explicit retry
+
+The fixed 60-second **total** MLS deadline could reject a download that was still
+making progress. It is replaced by a two-minute **inactivity** timeout. Completed
+row pages, row-download stages, commission batches and cost batches reset that
+timer. A progressing sync may run longer than two minutes; a stalled first page
+or enrichment request still ends with a visible, retryable error. Exact progress
+counts and accounting calculations are unchanged.
+
+Both MLS APIs share an AbortSignal, propagated into pagination, optional-relation
+fallbacks, commission queries and cost queries. Timeout, a failed sibling read,
+scope replacement or explicit invalidation cancels the old requests and prevents
+new pages/batches from being scheduled. Navigating to another tab alone continues
+the same flight, preserving the existing deduplication behavior. Cancellation is
+not treated as successful partial financial enrichment.
+
+Returning to the browser or an online event no longer clears MLS errors or starts
+another complete attempt. Users explicitly choose Retry/Refresh. Retry now works
+even when the old global loading flag remains true; a healthy active load still
+blocks duplicate refreshes. No automatic browser reload or database change is
+introduced.
+
+Regression coverage uses controlled timers to complete a progressing sync over
+eight minutes, stop two minutes after its last progress, cancel failed/stalled
+reads, reject old results, preserve navigation deduplication, and retain errors
+across repeated focus/online events. API tests verify cancellation in pages,
+fallbacks and enrichment. These are synthetic tests, not a live reproduction on
+the affected users' devices or proof that every reported page reload has this cause.

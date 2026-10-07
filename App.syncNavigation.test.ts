@@ -124,10 +124,15 @@ describe('App MLS navigation runtime regression', () => {
       h.render('material-cost');
       h.treatmentReads[0].resolve(records);
       await flush();
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       expect(h.context.setMlsSyncError).toHaveBeenCalledWith(expect.stringMatching(/timed out.*retry/i));
       expect(h.context.mlsInFlightRef.current).toBeNull();
       expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+      expect(h.context.api.treatments.getAllRecords.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(h.context.api.finance.getPayments.mock.calls[0][1].signal.aborted).toBe(true);
+      h.render('patients');
+      h.render('material-cost');
+      h.counts(1); // Failed attempts stay stopped until explicit Retry.
       h.context.setMlsSyncError(null);
       h.render('material-cost');
       h.counts(2);
@@ -168,6 +173,95 @@ describe('App MLS navigation runtime regression', () => {
     expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
     h.counts(1);
   });
+
+  it('allows a slow progressing MLS sync beyond the old one-minute total deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.render('material-cost');
+      const treatmentOptions = h.context.api.treatments.getAllRecords.mock.calls[0][1];
+      const paymentOptions = h.context.api.finance.getPayments.mock.calls[0][1];
+      expect(paymentOptions.signal).toBe(treatmentOptions.signal);
+      for (let page = 1; page <= 4; page++) {
+        await vi.advanceTimersByTimeAsync(70_000);
+        treatmentOptions.onProgress(page * 1000, 4000);
+        paymentOptions.onProgress(page * 1000, 4000);
+        expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
+      }
+      treatmentOptions.onRowsDownloaded();
+      paymentOptions.onRowsDownloaded();
+      for (let batch = 1; batch <= 3; batch++) {
+        await vi.advanceTimersByTimeAsync(70_000);
+        treatmentOptions.onEnrichmentProgress('commission', batch, 3);
+        paymentOptions.onEnrichmentProgress('cost-items', batch, 3);
+      }
+      expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
+      expect(treatmentOptions.signal.aborted).toBe(false);
+      await h.settle();
+      expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
+      expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
+      expect(vi.getTimerCount()).toBe(0);
+      h.counts(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stops two minutes after the last progress, not two minutes after startup', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.render('material-cost');
+      await vi.advanceTimersByTimeAsync(100_000);
+      const options = h.context.api.finance.getPayments.mock.calls[0][1];
+      options.onProgress(1000, 2000);
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.context.setMlsSyncError).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/without progress/));
+      expect(options.signal.aborted).toBe(true);
+      await h.settle();
+      expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('fails promptly and aborts the other read instead of waiting for a hung sibling', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.render('material-cost');
+      h.treatmentReads[0].reject(new Error('Treatment download failed'));
+      await flush();
+      expect(h.context.setMlsSyncError).toHaveBeenCalledExactlyOnceWith('Treatment download failed');
+      expect(h.context.api.finance.getPayments.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(h.context.mlsInFlightRef.current).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      h.paymentReads[0].resolve(payments);
+      await flush();
+      expect(h.context.setMlsPayments).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not restart failed MLS on focus or online events', () => {
+    const visibilityStart = app.lastIndexOf('  useEffect(() => {', app.indexOf('const refreshVisibleReads ='));
+    const visibilityEnd = app.indexOf('  const loadDirectoryHistory =', visibilityStart);
+    const h = harness(compile(app.slice(visibilityStart, visibilityEnd)));
+    const handlers: Record<string, () => void> = {};
+    const events = { addEventListener: vi.fn((event: string, callback: () => void) => { handlers[event] = callback; }),
+      removeEventListener: vi.fn() };
+    h.context.document = { ...events, visibilityState: 'visible' };
+    h.context.window = events;
+    h.context.mlsSyncError = 'Connection timed out';
+    h.context.lazyViewError = null;
+    h.context.appointmentPageError = null;
+    h.render('material-cost');
+    for (let i = 0; i < 5; i++) {
+      handlers.visibilitychange();
+      handlers.online();
+    }
+    expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
+    expect(h.context.mlsSyncError).toBe('Connection timed out');
+    h.counts(0);
+  });
   it('deduplicates pending visits, completes away, and reuses ready data', async () => {
     const h = harness();
     h.render('patients');
@@ -176,11 +270,13 @@ describe('App MLS navigation runtime regression', () => {
     h.counts(1);
     expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
       limit: null, throwOnError: true, onProgress: expect.any(Function),
+      signal: expect.any(AbortSignal),
       countMode: 'exact', onEnrichmentProgress: expect.any(Function),
       commissionRequestConcurrency: 3,
       onRowsDownloaded: expect.any(Function),
     });
     expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
+      signal: expect.any(AbortSignal),
       countMode: 'exact', includeCorrections: false, onEnrichmentProgress: expect.any(Function),
       commissionRequestConcurrency: 3,
       onProgress: expect.any(Function),
@@ -280,8 +376,10 @@ describe('App MLS navigation runtime regression', () => {
       h.context.startupScope = 'branch-b';
       h.context.currentLocationIdRef.current = 'branch-b';
     }
+    const oldSignal = h.context.api.finance.getPayments.mock.calls[0][1].signal;
     h.render('material-cost');
     h.counts(2);
+    expect(oldSignal.aborted).toBe(true);
     const replacement = h.context.mlsInFlightRef.current;
     await h.settle(0);
     expect(h.context.mlsInFlightRef.current).toBe(replacement);
