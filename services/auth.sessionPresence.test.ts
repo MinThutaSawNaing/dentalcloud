@@ -22,7 +22,7 @@ vi.mock('./api', () => ({
   }
 }));
 
-import { auth } from './auth';
+import { auth, type AuthSession } from './auth';
 import { api } from './api';
 vi.mock('./secureAuth', () => ({ secureAuthRequest: vi.fn() }));
 import { secureAuthRequest } from './secureAuth';
@@ -42,6 +42,12 @@ const createLocalStorageMock = () => {
     })
   };
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 describe('auth staff session presence resilience', () => {
   beforeEach(() => {
@@ -142,6 +148,7 @@ describe('auth staff session presence resilience', () => {
     await auth.createStaffSession({
       id: '00000000-0000-0000-0000-000000000004',
       username: 'removed-user',
+      auth_session_token: 'valid-server-token',
       password: 'secret',
       role: 'normal',
       location_id: null
@@ -150,6 +157,7 @@ describe('auth staff session presence resilience', () => {
 
     await expect(auth.refreshStaffSession()).resolves.toBeNull();
     expect(auth.getSession()).toBeNull();
+    expect(api.users.getById).toHaveBeenCalledWith('00000000-0000-0000-0000-000000000004');
   });
 
   it('repairs a legacy doctor session that stored doctors.id as userId', async () => {
@@ -194,5 +202,130 @@ describe('auth staff session presence resilience', () => {
     expect(refreshed?.role).toBe('patient');
     expect(api.users.getById).not.toHaveBeenCalled();
     expect(api.users.getByDoctorId).not.toHaveBeenCalled();
+  });
+
+  const seedSession = (): AuthSession => {
+    auth.setSession({ userId: 'staff-1', username: 'Staff', role: 'normal',
+      staffAuthToken: 'token-1', location_id: null, loginTime: Date.now() });
+    return auth.getSession()!;
+  };
+
+  it('does not resurrect a logged-out session after a delayed user lookup', async () => {
+    seedSession();
+    const lookup = deferred<any>();
+    vi.mocked(api.users.getById).mockReturnValueOnce(lookup.promise);
+    const refresh = auth.refreshStaffSession();
+    await vi.waitFor(() => expect(api.users.getById).toHaveBeenCalled());
+    await auth.logout();
+    lookup.resolve({ id: 'staff-1', username: 'Staff', role: 'normal', location_id: null });
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()).toBeNull();
+  });
+
+  it.each([true, false])('does not overwrite or delete a newer login after a delayed lookup (account exists: %s)', async (exists) => {
+    const original = seedSession();
+    const lookup = deferred<any>();
+    vi.mocked(api.users.getById).mockReturnValueOnce(lookup.promise);
+    const refresh = auth.refreshStaffSession();
+    await vi.waitFor(() => expect(api.users.getById).toHaveBeenCalled());
+    auth.setSession({ ...original, userId: 'staff-2', staffAuthToken: 'token-2' });
+    const newer = auth.getSession();
+    lookup.resolve(exists ? { id: 'staff-1', username: 'Staff', role: 'normal' } : null);
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()).toEqual(newer);
+    expect(api.users.revokeAuthSession).not.toHaveBeenCalled();
+  });
+
+  it('does not revoke a newer login after delayed invalid validation', async () => {
+    const original = seedSession();
+    const validation = deferred<any>();
+    vi.mocked(secureAuthRequest).mockReturnValueOnce(validation.promise);
+    const refresh = auth.refreshStaffSession();
+    auth.setSession({ ...original, staffAuthToken: 'new-token' });
+    validation.resolve({ session: null });
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()?.staffAuthToken).toBe('new-token');
+    expect(api.users.getById).not.toHaveBeenCalled();
+    expect(api.users.revokeAuthSession).not.toHaveBeenCalled();
+  });
+
+  it('invalidates refreshes as soon as logout starts, before network cleanup finishes', async () => {
+    seedSession();
+    const lookup = deferred<any>();
+    const cleanup = deferred<void>();
+    vi.mocked(api.users.getById).mockReturnValueOnce(lookup.promise);
+    presenceMock.markInactive.mockReturnValueOnce(cleanup.promise);
+    const refresh = auth.refreshStaffSession();
+    await vi.waitFor(() => expect(api.users.getById).toHaveBeenCalled());
+    const logout = auth.logout();
+    lookup.resolve({ id: 'staff-1', username: 'Changed', role: 'normal' });
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()).toBeNull();
+    cleanup.resolve();
+    await logout;
+    expect(auth.getSession()).toBeNull();
+  });
+
+  it('does not clear a newer login when an old logout finishes', async () => {
+    const original = seedSession();
+    const revoke = deferred<void>();
+    vi.mocked(api.users.revokeAuthSession).mockReturnValueOnce(revoke.promise);
+    const logout = auth.logout();
+    await vi.waitFor(() => expect(api.users.revokeAuthSession).toHaveBeenCalledWith('token-1'));
+    auth.setSession({ ...original, staffAuthToken: 'new-token' });
+    revoke.resolve();
+    await logout;
+    expect(auth.getSession()?.staffAuthToken).toBe('new-token');
+  });
+
+  it('rejects cross-tab session replacement during refresh', async () => {
+    seedSession();
+    const lookup = deferred<any>();
+    vi.mocked(api.users.getById).mockReturnValueOnce(lookup.promise);
+    const refresh = auth.refreshStaffSession();
+    await vi.waitFor(() => expect(api.users.getById).toHaveBeenCalled());
+    // Another tab writes localStorage without changing this module's revision.
+    localStorage.setItem('dental_auth_session', JSON.stringify({ ...auth.getSession(), staffAuthToken: 'other-tab-token' }));
+    lookup.resolve({ id: 'staff-1', username: 'Old', role: 'normal' });
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()?.staffAuthToken).toBe('other-tab-token');
+  });
+
+  it('does not start a new refresh while logout network cleanup is pending', async () => {
+    seedSession();
+    const cleanup = deferred<void>();
+    presenceMock.markInactive.mockReturnValueOnce(cleanup.promise);
+    const logout = auth.logout();
+    await expect(auth.refreshStaffSession()).resolves.toBeNull();
+    expect(secureAuthRequest).not.toHaveBeenCalled();
+    expect(api.users.getById).not.toHaveBeenCalled();
+    cleanup.resolve();
+    await logout;
+  });
+
+  it('gives a login during logout a new presence instance', async () => {
+    const original = seedSession();
+    const cleanup = deferred<void>();
+    presenceMock.markInactive.mockReturnValueOnce(cleanup.promise);
+    const logout = auth.logout();
+    await auth.createStaffSession({ id: 'staff-2', username: 'New Staff', role: 'normal',
+      location_id: null, auth_session_token: 'token-2' });
+    expect(auth.getSession()?.clientSessionId).not.toBe(original.clientSessionId);
+    cleanup.resolve();
+    await logout;
+    expect(auth.getSession()?.staffAuthToken).toBe('token-2');
+  });
+
+  it('does not revoke a newer login after delayed invalid patient validation', async () => {
+    auth.setSession({ userId: 'patient-1', patientId: 'patient-1', username: 'Patient',
+      role: 'patient', patientAuthToken: 'patient-token', loginTime: Date.now(), location_id: null });
+    const validation = deferred<any>();
+    vi.mocked(secureAuthRequest).mockReturnValueOnce(validation.promise);
+    const refresh = auth.validatePatientSession();
+    const newer = seedSession();
+    validation.resolve({ session: null });
+    await expect(refresh).resolves.toBeNull();
+    expect(auth.getSession()).toEqual(newer);
+    expect(api.users.revokeAuthSession).not.toHaveBeenCalled();
   });
 });

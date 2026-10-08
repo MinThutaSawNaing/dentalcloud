@@ -104,7 +104,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   }, [loading, filteredRows.length]);
 
   const handleRefresh = async () => {
-    if (isRefreshing || loading) return;
+    if (isRefreshing || (loading && !loadError)) return;
     setIsRefreshing(true);
     try { await onRefresh(); }
     catch (error) { console.error('Failed to refresh MLS costs:', error); alert(error instanceof Error ? error.message : 'Unable to refresh MLS costs. Please try again.'); }

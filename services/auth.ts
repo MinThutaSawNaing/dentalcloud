@@ -13,6 +13,8 @@ const SESSION_KEY = 'dental_auth_session';
 const SESSION_USER_KEY = 'dental_auth_user';
 const SESSION_INSTANCE_KEY = 'dental_auth_session_instance';
 const SESSION_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+// Invalidates pending refreshes even while logout's network cleanup is running.
+let sessionRevision = 0;
 
 const generateSessionInstanceId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -54,6 +56,17 @@ export interface AuthSession {
   supabaseUserId?: string; // For Supabase Auth sessions
 }
 
+export const isSameAuthSession = (left: AuthSession | null, right: AuthSession | null): boolean => {
+  return Boolean(left && right &&
+    (left.userId === right.userId ||
+      (left.role === 'doctor' && right.role === 'doctor' &&
+        Boolean(left.doctor_id) && left.doctor_id === right.doctor_id)) &&
+    left.loginTime === right.loginTime &&
+    left.clientSessionId === right.clientSessionId &&
+    left.staffAuthToken === right.staffAuthToken &&
+    left.patientAuthToken === right.patientAuthToken);
+};
+
 export const auth = {
   // Initialize default admin if it doesn't exist
   async initializeDefaultAdmin(): Promise<void> {
@@ -85,6 +98,12 @@ export const auth = {
   // Logout
   async logout(): Promise<void> {
     const session = this.getSession();
+    sessionRevision += 1;
+    // Detach immediately: new refreshes must not read a session being revoked.
+    // Keep the captured tokens solely for best-effort server cleanup below.
+    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_USER_KEY);
+    localStorage.removeItem(SESSION_INSTANCE_KEY);
     if (session?.patientAuthToken) {
       try { await secureAuthRequest('logout', { token: session.patientAuthToken }); }
       catch { /* Local logout must still succeed during a network failure. */ }
@@ -104,10 +123,6 @@ export const auth = {
         console.warn('Unable to revoke the server staff session during logout. Continuing local logout.', error);
       }
     }
-
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(SESSION_USER_KEY);
-    localStorage.removeItem(SESSION_INSTANCE_KEY);
   },
 
   // Get current session
@@ -151,6 +166,7 @@ export const auth = {
 
   // Set session
   setSession(session: AuthSession): void {
+    sessionRevision += 1;
     const sessionWithClientId: AuthSession = {
       ...session,
       clientSessionId: session.clientSessionId || getOrCreateSessionInstanceId()
@@ -215,11 +231,16 @@ export const auth = {
   async refreshStaffSession(): Promise<AuthSession | null> {
     const currentSession = this.getSession();
     if (!currentSession || currentSession.role === 'patient') return currentSession;
+    const revision = sessionRevision;
+    const storedSession = localStorage.getItem(SESSION_KEY);
+    const isCurrent = () => revision === sessionRevision &&
+      storedSession === localStorage.getItem(SESSION_KEY);
     if (!currentSession.staffAuthToken) {
       await this.logout();
       return null;
     }
     const validated = await secureAuthRequest<{ session: any }>('validate', { token: currentSession.staffAuthToken });
+    if (!isCurrent()) return null;
     if (!validated.session || validated.session.kind !== 'staff' ||
       (validated.session.id !== currentSession.userId &&
         (!currentSession.doctor_id || validated.session.doctor_id !== currentSession.doctor_id))) {
@@ -228,11 +249,13 @@ export const auth = {
     }
 
     let currentUser = await api.users.getById(currentSession.userId);
+    if (!isCurrent()) return null;
     // Older doctor-only logins stored doctors.id as userId. After the database
     // repair creates the linked staff user, migrate those cached sessions to
     // the canonical users.id instead of forcing the doctor to log in again.
     if (!currentUser && currentSession.role === 'doctor' && currentSession.doctor_id) {
       currentUser = await api.users.getByDoctorId(currentSession.doctor_id);
+      if (!isCurrent()) return null;
     }
     if (!currentUser) {
       await this.logout();
@@ -260,7 +283,10 @@ export const auth = {
     const current = this.getSession();
     if (!current || current.role !== 'patient') return current;
     if (!current.patientAuthToken) { await this.logout(); return null; }
+    const revision = sessionRevision;
+    const storedSession = localStorage.getItem(SESSION_KEY);
     const result = await secureAuthRequest<{ session: any }>('validate', { token: current.patientAuthToken });
+    if (revision !== sessionRevision || storedSession !== localStorage.getItem(SESSION_KEY)) return null;
     if (!result.session || result.session.kind !== 'patient' || result.session.id !== current.patientId) {
       await this.logout(); return null;
     }

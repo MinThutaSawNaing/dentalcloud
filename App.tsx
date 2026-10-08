@@ -76,7 +76,7 @@ import { loadStaffStartup } from './services/staffStartup';
 import { formatCurrency, getCurrencySymbol, Currency } from './utils/currency';
 import { usesFlatVisitCommission, singleMethodDoctorCommission, singleMethodCommissionRule } from './utils/doctorCommission';
 import { buildFinancialReport, renderFinancialReportMarkdown } from './utils/aiReport';
-import { auth } from './services/auth';
+import { auth, isSameAuthSession } from './services/auth';
 import { activeStaffPresence } from './services/activeStaffPresence';
 import { getMyanmarCities, getTownshipsForCity } from './utils/myanmarCities';
 import { supabase } from './services/supabase';
@@ -466,7 +466,7 @@ const App: React.FC = () => {
     dataCache.invalidatePrefix(`${getClinicCacheKey('audit-range', currentLocationId)}:`);
   };
   const [mlsSyncError, setMlsSyncError] = useState<string | null>(null);
-  const mlsInFlightRef = useRef<{ scope: string; startupRequestId: number; cacheVersion: number } | null>(null);
+  const mlsInFlightRef = useRef<{ scope: string; startupRequestId: number; cacheVersion: number; cancel: () => void } | null>(null);
   const mlsAuthenticatedRef = useRef(isAuthenticated);
   mlsAuthenticatedRef.current = isAuthenticated;
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
@@ -479,6 +479,8 @@ const App: React.FC = () => {
   const invalidateMlsMemory = () => {
     invalidateNavigationCache();
     mlsCacheVersionRef.current += 1;
+    mlsInFlightRef.current?.cancel();
+    mlsInFlightRef.current = null;
     setMlsScope('');
     setMlsCacheRevision((value) => value + 1);
   };
@@ -1243,7 +1245,8 @@ const App: React.FC = () => {
       return;
     }
     if (session.role === 'doctor') {
-      setAllowedViews([...DOCTOR_DASHBOARD_TABS] as ViewState[]);
+      const nextAllowedViews = [...DOCTOR_DASHBOARD_TABS] as ViewState[];
+      setAllowedViews((previous) => previous.length === nextAllowedViews.length && previous.every((view, index) => view === nextAllowedViews[index]) ? previous : nextAllowedViews);
       return;
     }
 
@@ -1400,11 +1403,14 @@ const App: React.FC = () => {
 
   // Check authentication on mount
   useEffect(() => {
+    let cancelled = false;
+    const bootstrapSession = auth.getSession();
     const checkAuth = async () => {
-      let session = auth.getSession();
+      let session = bootstrapSession;
       if (session) {
         if (session.role === 'patient') session = await auth.validatePatientSession();
-        if (!session) { resetStaffSession(); return; }
+        if (cancelled) return;
+        if (!session) { if (!auth.getSession()) resetStaffSession(); return; }
         if (session.role !== 'patient') {
           try {
             session = await auth.refreshStaffSession();
@@ -1413,21 +1419,31 @@ const App: React.FC = () => {
           }
         }
 
+        if (cancelled) return;
+        const latestSession = auth.getSession();
+        // Concurrent bootstrap refreshes (including StrictMode) may supersede
+        // one another. Publish the latest snapshot of this login, not stale tabs.
+        if (latestSession && isSameAuthSession(bootstrapSession, latestSession)) session = latestSession;
         if (!session) {
-          resetStaffSession();
+          if (!auth.getSession()) resetStaffSession();
           return;
         }
+        if (!isSameAuthSession(session, auth.getSession())) return;
 
         applySessionState(session);
         const preferredBranchId = getPreferredSessionBranchId(session);
         // Initialize default admin and fetch data
         await auth.initializeDefaultAdmin();
+        if (cancelled || !isSameAuthSession(session, auth.getSession())) return;
         fetchInitialData(preferredBranchId || undefined);
         fetchUsers();
         return;
       }
 
       const restoredSession = await auth.restoreSupabaseSession();
+      if (cancelled) return;
+      // Do not reset a login that completed while bootstrap was awaiting work.
+      if (!restoredSession && auth.getSession()) return;
       if (restoredSession) {
         applySessionState(restoredSession);
         const preferredBranchId = getPreferredSessionBranchId(restoredSession);
@@ -1445,28 +1461,36 @@ const App: React.FC = () => {
     };
     
     checkAuth().catch(err => {
+      if (cancelled) return;
       console.warn('Authentication bootstrap failed:', err);
-      resetStaffSession();
+      if (!auth.getSession() || isSameAuthSession(bootstrapSession, auth.getSession())) resetStaffSession();
     });
-    
+
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated || auth.isPatient()) return;
 
     let syncInProgress = false;
+    let cancelled = false;
     const refreshPermissions = async () => {
-      if (syncInProgress) return;
+      if (cancelled || syncInProgress) return;
       syncInProgress = true;
       const previousSession = auth.getSession();
 
       try {
-        const refreshedSession = await auth.refreshStaffSession();
+        let refreshedSession = await auth.refreshStaffSession();
+        if (cancelled) return;
         if (!refreshedSession) {
+          // A superseded refresh must not reset a newer active login.
+          if (auth.getSession()) return;
           resetStaffSession();
           setCurrentView('dashboard');
           return;
         }
+        if (!isSameAuthSession(refreshedSession, auth.getSession())) return;
+        refreshedSession = auth.getSession()!;
 
         applySessionState(refreshedSession);
         if (previousSession?.location_id !== refreshedSession.location_id) {
@@ -1484,7 +1508,10 @@ const App: React.FC = () => {
       void refreshPermissions();
     }, 60_000);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -1699,6 +1726,11 @@ const App: React.FC = () => {
       return;
     }
 
+    // Old logout cleanup must not clear a login completed while revocation ran.
+    if (auth.getSession()) {
+      setIsLoggingOut(false);
+      return;
+    }
     treatmentHistoryRequestRef.current += 1;
     medicineHistoryRequestRef.current += 1;
     paymentHistoryRequestRef.current += 1;
@@ -2617,7 +2649,14 @@ const App: React.FC = () => {
     const existing = mlsInFlightRef.current;
     if (existing?.scope === scope && existing.startupRequestId === startupRequestId
       && existing.cacheVersion === cacheVersion) return;
-    const flight = { scope, startupRequestId, cacheVersion };
+    existing?.cancel();
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let resetIdleTimeout = () => {};
+    const flight = { scope, startupRequestId, cacheVersion, cancel: () => {
+      clearTimeout(timeout);
+      controller.abort();
+    } };
     mlsInFlightRef.current = flight;
     const isCurrent = () => mlsInFlightRef.current === flight
       && mlsAuthenticatedRef.current && currentLocationIdRef.current === scope
@@ -2625,12 +2664,13 @@ const App: React.FC = () => {
       && mlsCacheVersionRef.current === cacheVersion;
     const fractions = [0, 0, 0, 0, 0, 0];
     const updateProgress = () => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
+      resetIdleTimeout();
       setMlsSyncProgress(getMlsSyncPercentage(fractions));
     };
     const downloaded = [false, false];
     const rowsDownloaded = (index: number) => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       downloaded[index] = true;
       fractions[index] = 1;
       if (downloaded.every(Boolean)) {
@@ -2639,13 +2679,13 @@ const App: React.FC = () => {
       updateProgress();
     };
     const progress = (index: number, loaded: number, total: number | null) => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       // A join fallback restarts its download; reflect the actual new work.
       fractions[index] = getMlsStageFraction(loaded, total);
       updateProgress();
     };
     const enrichmentProgress = (index: number, stage: MlsEnrichmentStage, completed: number, total: number) => {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       const slot = stage === 'commission' ? index + 2 : stage === 'cost-audits' ? 4 : 5;
       fractions[slot] = getMlsStageFraction(completed, total);
       updateProgress();
@@ -2662,29 +2702,47 @@ const App: React.FC = () => {
     setMlsSyncProgress(0);
     setMlsFinalizing(false);
     const load = async () => {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let rejectOnAbort: (() => void) | undefined;
       try {
-        // Bound the entire read/enrichment flight. A hung proxy request must not
-        // leave this tab preparing forever; late results cannot publish after retry.
+        // Slow, progressing downloads may take longer than a minute. Only stop
+        // after two minutes without a completed page/batch, and cancel old reads.
         const deadline = new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error('MLS loading timed out. Please retry.')), 60_000);
+          rejectOnAbort = () => reject(controller.signal.reason);
+          controller.signal.addEventListener('abort', rejectOnAbort, { once: true });
         });
+        resetIdleTimeout = () => {
+          if (controller.signal.aborted) return;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => controller.abort(new Error(
+            'MLS loading timed out after 2 minutes without progress. Check your connection and press Retry.'
+          )), 120_000);
+        };
+        resetIdleTimeout();
         const results = await Promise.race([deadline, Promise.allSettled([
           api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
+            signal: controller.signal,
             countMode: 'exact',
             onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(0, stage, completed, total),
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(0),
             onProgress: (loaded, total) => progress(0, loaded, total)
-          }).then((rows) => done(0, rows)),
+          }).then((rows) => done(0, rows)).catch((error) => {
+            controller.abort(error);
+            throw error;
+          }),
           api.finance.getPayments(scope, {
+            signal: controller.signal,
             countMode: 'exact', includeCorrections: false,
             onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(1, stage, completed, total),
             commissionRequestConcurrency: 3,
             onRowsDownloaded: () => rowsDownloaded(1),
             onProgress: (loaded, total) => progress(1, loaded, total)
-          }).then((rows) => done(1, rows))
+          }).then((rows) => done(1, rows)).catch((error) => {
+            controller.abort(error);
+            throw error;
+          })
         ])]);
+        controller.signal.throwIfAborted();
         if (!isCurrent()) return;
         const [records, payments] = results;
         if (records.status === 'rejected') throw records.reason;
@@ -2699,6 +2757,9 @@ const App: React.FC = () => {
         if (isCurrent()) setMlsSyncError(err?.message || 'Could not sync MLS. Please retry.');
       } finally {
         clearTimeout(timeout);
+        resetIdleTimeout = () => {};
+        if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort);
+        controller.abort();
         if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null;
       }
     };
@@ -2855,10 +2916,9 @@ const App: React.FC = () => {
       if (currentView === 'appointments' && appointmentPageError) setAppointmentPageRefreshKey((key) => key + 1);
       else if (currentView === 'patients' || currentView === 'doctors' || currentView === 'material-cost') {
         if (currentView === 'patients') setHistoryError(null);
-        // Returning to the browser is not a request to redownload complete history.
-        // Only retry failed MLS reads here; successful data stays cached.
+        // MLS retry is explicit: focus/network flapping must not repeatedly
+        // restart complete history downloads after a timeout or read failure.
         if (currentView === 'material-cost') {
-          if (mlsSyncError) setMlsSyncError(null);
           return;
         }
         if (lazyViewError) setLazyViewRevision((key) => key + 1);

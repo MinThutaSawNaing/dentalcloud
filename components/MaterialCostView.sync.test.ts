@@ -5,6 +5,9 @@ import type { ClinicalRecord, PaymentRecord } from '../types';
 import MaterialCostView from './MaterialCostView';
 import { api } from '../services/api';
 import { auth } from '../services/auth';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { transpileModule, ScriptTarget } from 'typescript';
 
 // Replace service modules entirely: no live Supabase client is imported.
 vi.mock('../services/api', () => ({
@@ -133,6 +136,29 @@ describe('MaterialCostView MLS sync UI (SSR)', () => {
     expect(markup).not.toContain('MLS syncs automatically.');
     expectFilters(markup);
     expectNoFinancialRows(markup);
+  });
+
+  it('executes Retry despite a lingering loading flag, but blocks refresh during a healthy load', async () => {
+    const source = readFileSync(fileURLToPath(new URL('./MaterialCostView.tsx', import.meta.url)), 'utf8');
+    const from = source.indexOf('  const handleRefresh =');
+    const to = source.indexOf('  const handleSaved =', from);
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(to).toBeGreaterThan(from);
+    const code = transpileModule(source.slice(from, to), {
+      compilerOptions: { target: ScriptTarget.ES2022 }, fileName: 'refresh.ts'
+    }).outputText;
+    const onRefresh = vi.fn(async () => {});
+    const setIsRefreshing = vi.fn();
+    const run = (error: string | null, refreshing = false) => new Function(
+      'isRefreshing', 'loading', 'loadError', 'onRefresh', 'setIsRefreshing',
+      `${code}\nreturn handleRefresh();`)(refreshing, true, error, onRefresh, setIsRefreshing);
+    await run(null);
+    expect(onRefresh).not.toHaveBeenCalled();
+    await run('Connection timed out');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(setIsRefreshing.mock.calls).toEqual([[true], [false]]);
+    await run('Connection timed out', true);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('shows the actual table when loading completes even with numeric syncProgress=100', () => {
