@@ -44,6 +44,32 @@ import { loadEmailSettingsAsync } from '../utils/emailSettings';
 
 // Custom CSS for animations
 const customStyles = `
+  .loli-workspace button:focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+  }
+
+  .loli-workspace .ai-markdown {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .loli-workspace .ai-markdown pre {
+    max-width: 100%;
+    overflow-wrap: normal;
+  }
+
+  @media (max-width: 639px) {
+    .loli-workspace button { min-height: 44px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loli-workspace *, .loli-workspace *::before, .loli-workspace *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
   @keyframes fade-in-up {
     0% {
       opacity: 0;
@@ -1641,9 +1667,32 @@ const AIAssistantView: React.FC<AIAssistantViewProps> = ({
     return 'General dental practice discussion';
   };
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const memoryDirtyRef = useRef<boolean>(false);
   const lastSpeechTranscriptRef = useRef<string>('');
+
+  // Keep the composer inside the visible phone viewport when the keyboard opens.
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const viewport = window.visualViewport;
+    const appHeader = document.querySelector<HTMLElement>('[data-mobile-app-header]');
+    const updateHeight = () => {
+      const headerHeight = appHeader?.getBoundingClientRect().height || 0;
+      workspace.style.setProperty('--loli-mobile-height', `${Math.max(0, (viewport?.height ?? window.innerHeight) - headerHeight)}px`);
+    };
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    viewport?.addEventListener('resize', updateHeight);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateHeight) : null;
+    if (appHeader) observer?.observe(appHeader);
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      viewport?.removeEventListener('resize', updateHeight);
+      observer?.disconnect();
+    };
+  }, []);
   
   // Enhanced speech recognition with SpeechGrammarList for better accuracy
   const recognition = useRef<any>(null);
@@ -5436,34 +5485,34 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
   const showIntroPresentation = isWelcomeOnlyConversation(messages);
   
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white animate-fade-in">
-      <div className="border-b border-gray-200 bg-white">
-        <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+    <div ref={workspaceRef} className="loli-workspace flex h-[var(--loli-mobile-height,100dvh)] w-full min-w-0 min-h-0 flex-col overflow-hidden bg-white animate-fade-in lg:h-full">
+      <div className="max-h-[35%] shrink-0 overflow-y-auto border-b border-gray-200 bg-white lg:max-h-none">
+        <div className="flex flex-col gap-2 px-3 py-2 sm:gap-4 sm:px-4 sm:py-4 lg:px-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-4">
-              <div className="relative flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-md">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <div className="relative flex h-10 w-10 sm:h-16 sm:w-16 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-md">
                 <span className="absolute inset-[-4px] rounded-full border border-indigo-200/80 loli-orbit" />
                 <img
                   src="/loliAiAssistant.svg"
                   alt="Loli AI Assistant Logo"
-                  className="h-14 w-14 rounded-full object-cover"
+                  className="h-9 w-9 sm:h-14 sm:w-14 rounded-full object-cover"
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-slate-900">Loli AI Assistant</h2>
                   <span className="inline-flex items-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-2 py-0.5 text-[10px] font-bold tracking-wide text-white shadow-sm">
                     v2.0
                   </span>
                 </div>
-                <p className="text-sm text-slate-500">Ask questions, review records, or run clinic actions from one workspace.</p>
+                <p className="hidden text-sm text-slate-500 sm:block">Ask questions, review records, or run clinic actions from one workspace.</p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center">
               <button
                 onClick={() => setShowHelpModal(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
                 title="Quick start guide and command reference"
               >
                 <HelpCircle className="h-4 w-4" />
@@ -5471,7 +5520,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               </button>
               <button
                 onClick={() => setShowMemoryPanel(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
                 title="View assistant memory"
               >
                 <Brain className="h-4 w-4" />
@@ -5479,7 +5528,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               </button>
               <button
                 onClick={() => setShowChatSidebar(true)}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
                 title="Open chat history"
               >
                 <MessageCircle className="h-4 w-4" />
@@ -5490,12 +5539,13 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="min-w-[220px]">
+              <div className="min-w-0 sm:min-w-[220px]">
                 {canAccessAllLocations ? (
                   <select
                     value={selectedLocationScope}
+                    aria-label="Report branch scope"
                     onChange={(e) => setSelectedLocationScope(e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    className="min-h-11 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-base sm:text-sm text-gray-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
                   >
                     <option value={ALL_BRANCHES_VALUE}>All Branches</option>
                     {locations.map(location => (
@@ -5505,22 +5555,23 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                     ))}
                   </select>
                 ) : (
-                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
+                  <div className="break-words rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
                     {selectedLocationLabel}
                   </div>
                 )}
               </div>
 
-              <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              <div className="hidden min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500 sm:inline-flex">
                 <MapPin className="h-3.5 w-3.5" />
                 {selectedLocationLabel}
               </div>
             </div>
 
-            <div className="inline-flex rounded-lg bg-gray-100 p-1">
+            <div className="inline-flex shrink-0 rounded-lg bg-gray-100 p-1">
               <button
                 onClick={() => setMode('ask')}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                aria-pressed={mode === 'ask'}
+                className={`inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
                   mode === 'ask'
                     ? 'bg-white text-gray-900 shadow-sm'
                     : 'text-gray-500 hover:text-gray-800'
@@ -5531,7 +5582,8 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               </button>
               <button
                 onClick={() => setMode('agent')}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                aria-pressed={mode === 'agent'}
+                className={`inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
                   mode === 'agent'
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-gray-500 hover:text-gray-800'
@@ -5545,8 +5597,8 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1">
-        <div className="relative flex min-h-0 flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 animate-gradient-shift">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1">
+        <div className="relative flex min-h-0 min-w-0 flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 animate-gradient-shift">
           {/* Floating particles background */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             {particles.map((particle) => (
@@ -5564,8 +5616,8 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               />
             ))}
           </div>
-          <div className="border-b border-gray-200 bg-white/80 backdrop-blur-sm px-4 py-3 lg:px-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="shrink-0 border-b border-gray-200 bg-white/80 backdrop-blur-sm px-3 py-2 sm:px-4 sm:py-3 lg:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-gray-900">{activeSession?.title || 'New chat'}</p>
                 <p className="text-xs text-gray-500">{mode === 'ask' ? 'Ask mode is active' : 'Agent mode is active'}</p>
@@ -5587,8 +5639,8 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
             </div>
           </div>
 
-          <div className="flex-1 overflow-hidden">
-            <div className="h-full overflow-y-auto px-3 py-4 sm:px-4 sm:py-5 lg:px-6">
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div role="region" aria-label="Chat messages" tabIndex={0} className="h-full overflow-y-auto overscroll-contain px-3 py-4 sm:px-4 sm:py-5 lg:px-6">
               <div className="w-full space-y-4">
                 {apiStatus === 'mock' && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -5625,11 +5677,11 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                     return (
                       <div
                         key={isIntroWelcome ? `${currentSessionId || message.timestamp.getTime()}-${message.id}` : message.id}
-                        className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'} ${isIntroWelcome ? 'loli-welcome-message' : 'animate-fade-in-up'}`}
+                        className={`flex min-w-0 gap-2 sm:gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'} ${isIntroWelcome ? 'loli-welcome-message' : 'animate-fade-in-up'}`}
                         style={isIntroWelcome ? undefined : { animationDelay: `${index * 45}ms` }}
                       >
                         {message.role === 'assistant' && (
-                          <div className={`mt-1 flex flex-shrink-0 items-center justify-center overflow-hidden ${isIntroWelcome ? 'h-10 w-10 rounded-full bg-indigo-50 ring-2 ring-indigo-100' : 'h-8 w-8 rounded-lg bg-slate-100 text-slate-600'}`}>
+                          <div className={`mt-1 hidden sm:flex flex-shrink-0 items-center justify-center overflow-hidden ${isIntroWelcome ? 'h-10 w-10 rounded-full bg-indigo-50 ring-2 ring-indigo-100' : 'h-8 w-8 rounded-lg bg-slate-100 text-slate-600'}`}>
                             {isIntroWelcome
                               ? <img src="/loliAiAssistant.svg" alt="" className="h-9 w-9 object-cover" />
                               : <Bot className="h-4 w-4" />}
@@ -5637,7 +5689,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                         )}
 
                         <div
-                          className={`group max-w-[min(100%,76rem)] rounded-2xl px-4 sm:px-5 py-3 sm:py-4 shadow-sm transition ${isIntroWelcome ? 'loli-welcome-bubble' : ''} ${
+                          className={`group min-w-0 max-w-[min(100%,76rem)] [overflow-wrap:anywhere] rounded-2xl px-3 sm:px-5 py-3 sm:py-4 shadow-sm transition ${isIntroWelcome ? 'loli-welcome-bubble' : ''} ${
                           message.role === 'user'
                             ? 'bg-indigo-600 text-white'
                             : 'border border-gray-200 bg-white text-gray-900'
@@ -5684,7 +5736,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                                 },
                                 pre: ({node, ...props}) => <pre className="my-3 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-3" {...props} />,
                                 blockquote: ({node, ...props}) => <blockquote className="my-3 border-l-4 border-slate-300 pl-4 italic text-slate-600" {...props} />,
-                                table: ({node, ...props}) => <table className="my-3 min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white" {...props} />,
+                                table: ({node, ...props}) => <div role="region" aria-label="Scrollable response table" tabIndex={0} className="my-3 max-w-full overflow-x-auto overscroll-x-contain rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400"><table className="min-w-full border border-slate-200 bg-white" {...props} /></div>,
                                 th: ({node, ...props}) => <th className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-sm font-semibold text-slate-900" {...props} />,
                                 td: ({node, ...props}) => <td className="border-b border-slate-100 px-4 py-2 text-sm text-slate-700" {...props} />,
                                 a: ({node, ...props}) => <a className="font-medium text-indigo-600 underline hover:text-indigo-800" {...props} />,
@@ -5749,7 +5801,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                       </div>
 
                       {message.role === 'user' && (
-                        <div className="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white">
+                        <div className="mt-1 hidden sm:flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white">
                           <User className="h-4 w-4" />
                         </div>
                       )}
@@ -5787,22 +5839,23 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
           </div>
 
           {/* Input Area */}
-          <div className="border-t border-gray-200 bg-white px-3 py-3 sm:px-4 sm:py-4 lg:px-6">
+          <div className="shrink-0 border-t border-gray-200 bg-white px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:py-4 lg:px-6">
             <div className="w-full">
               <div className="rounded-xl border border-gray-200 bg-white p-3">
-                <div className="flex flex-col gap-3 md:flex-row">
+                <div className="flex flex-col gap-2 md:flex-row md:gap-3">
                   <textarea
                     ref={inputRef}
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={handleKeyPress}
                     placeholder={inputPlaceholder}
-                    className="min-h-\[60px\] sm:min-h-\[72px\] flex-1 resize-none rounded-xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                    aria-label="Message Loli"
+                    className="min-h-[60px] sm:min-h-[72px] min-w-0 flex-1 resize-none rounded-xl border border-gray-200 bg-gray-50 px-3 sm:px-4 py-2.5 sm:py-3 text-base text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
                     rows={2}
                     disabled={isLoading || isListening}
                   />
 
-                  <div className="flex w-full flex-col gap-2 md:w-[180px]">
+                  <div className="loli-composer-actions flex w-full flex-row gap-2 md:w-[180px] md:shrink-0 md:flex-col [&>button]:min-h-11 [&>button]:flex-1">
                     {/* Speech-to-text button */}
                     {typeof window !== 'undefined' && 'webkitSpeechRecognition' in window && (
                       <button
@@ -5889,7 +5942,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500">AI guidance supports decisions, but final clinical judgment stays with your team.</p>
+                  <p className="hidden text-xs text-gray-500 sm:block">AI guidance supports decisions, but final clinical judgment stays with your team.</p>
                 </div>
               </div>
             </div>
@@ -5905,7 +5958,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
             onClick={() => setShowChatSidebar(false)}
             aria-label="Close chat history"
           />
-          <aside className="relative z-10 flex h-full w-full max-w-sm max-sm:max-w-full flex-col bg-white shadow-2xl animate-slide-in-right">
+          <aside className="relative z-10 flex h-[100dvh] w-full max-w-sm max-sm:max-w-full flex-col bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl animate-slide-in-right">
             <div className="flex items-center justify-between border-b border-gray-200 px-4 py-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">AI Chats</h3>
@@ -5986,9 +6039,9 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
       {/* Help Modal */}
       {showHelpModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
+          <div role="dialog" aria-modal="true" aria-label="Quick Start Guide" className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90dvh] flex flex-col overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between gap-2 p-3 sm:p-6 border-b border-gray-200">
+              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 flex items-center gap-2 sm:gap-3">
                 <HelpCircle className="w-8 h-8 text-green-600" />
                 Quick Start Guide
               </h2>
@@ -6001,15 +6054,15 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-6">
               <div className="prose max-w-none">
-                <pre className="whitespace-pre-wrap font-mono text-sm text-gray-800 bg-gray-50 p-4 rounded-lg border">
+                <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-sm text-gray-800 bg-gray-50 p-3 sm:p-4 rounded-lg border">
                   {helpContent}
                 </pre>
               </div>
             </div>
             
-            <div className="p-6 border-t border-gray-200 flex justify-end">
+            <div className="shrink-0 p-3 sm:p-6 border-t border-gray-200 flex justify-end">
               <button
                 onClick={() => setShowHelpModal(false)}
                 className="px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-xl font-medium transition-all duration-300 shadow-lg hover:shadow-xl"
@@ -6035,7 +6088,10 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.85, y: 30 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Assistant Memory"
+            className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90dvh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -6043,7 +6099,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="flex items-center justify-between px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-indigo-50/50 via-white to-purple-50/50"
+              className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-6 sm:py-5 border-b border-gray-200 bg-gradient-to-r from-indigo-50/50 via-white to-purple-50/50"
             >
               <div className="flex items-center gap-3">
                 {/* Animated Brain Icon */}
@@ -6133,7 +6189,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
             </motion.div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-6">
               {/* Memory Status Cards */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}

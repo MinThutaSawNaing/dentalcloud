@@ -5371,7 +5371,7 @@ const App: React.FC = () => {
       
       {/* Mobile Header */}
       {!isDoctor && (
-      <header className="lg:hidden theme-nav-bg theme-nav-text p-4 flex items-center justify-between sticky top-0 z-50">
+      <header data-mobile-app-header className="lg:hidden theme-nav-bg theme-nav-text p-4 flex items-center justify-between sticky top-0 z-50">
         {renderAppBrand('mobile')}
         <button 
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
