@@ -153,13 +153,13 @@ const section = (source: string, start: string, end: string) => {
     expect(payment).toContain('invalidateMlsMemory()');
     expect(app).toContain('if (force) invalidateMlsMemory();');
     expect(app).toMatch(/const refreshGlobalRecordsForPatient = [^\n]+\n\s*invalidateMlsMemory\(\)/);
-    expect(app).toMatch(/const invalidateMaterialCostCaches = [^\n]+\n\s*invalidateMlsMemory\(\)/);
+    expect(app).toMatch(/const invalidateMaterialCostCaches = [^\n]+\n\s*if \(preserveMls\) invalidateNavigationCache\(\);\n\s*else invalidateMlsMemory\(\)/);
     expect(app).toContain('leanStaffStartup, allowedViews, mlsCacheRevision, mlsScope, mlsSyncError]');
   });
 
   it('places screen content behind the branch/loading/error gate with a retry action', () => {
     const gate = section(app, '{leanStaffStartup && (startupScope !== currentLocationId', "{currentView === 'dashboard'");
-    expect(gate).toContain("initialSyncActive || (currentView !== 'material-cost' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))");
+    expect(gate).toContain("initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))");
     expect(gate).toContain("role={lazyViewError || error ? 'alert' : 'status'}");
     expect(gate).toContain('setLazyViewRevision((value) => value + 1)');
     expect(gate).toContain('}>Retry</button>');

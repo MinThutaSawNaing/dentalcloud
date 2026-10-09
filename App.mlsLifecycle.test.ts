@@ -68,7 +68,8 @@ describe('MLS branch/session lifecycle source guards', () => {
     const component = section("{currentView === 'material-cost' &&", "{currentView === 'records' &&");
     expect(component).toContain('loadError={leanStaffStartup ? mlsSyncError : null}');
     expect(component).toContain('mlsScope !== currentLocationId && !mlsSyncError');
-    expect(component.match(/setMlsSyncError\(null\)/g)).toHaveLength(2);
+    expect(component.match(/setMlsSyncError\(null\)/g)).toHaveLength(1);
+    expect(component).toContain('onCostsSaved={refreshMlsAfterCostSave}');
     expect(section('const resetStaffSession =', 'const canAccessView =')).toContain('setMlsSyncError(null)');
     expect(section('const fetchInitialData =', 'const advanceInitialSync =')).toContain('++initialDataFetchRequestRef.current');
     expect(app).toMatch(/invalidateMlsMemory\(\);\s*setMlsSyncError\(null\);\s*setMlsSyncProgress\(null\);\s*setMlsRecords\(\[\]\)/);

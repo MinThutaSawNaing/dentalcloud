@@ -15,6 +15,7 @@ import { formatDoctorName } from '../utils/doctorName';
 import { ASSISTANT_PRODUCT_KNOWLEDGE } from '../utils/assistantProductKnowledge';
 import { LOLI_WELCOME_MESSAGE, LOLI_WELCOME_MESSAGE_ID, isWelcomeMessage, isWelcomeOnlyConversation } from '../utils/assistantIntro';
 import LoliIntroAnimation from './LoliIntroAnimation';
+import AssistantDataStatus from './AssistantDataStatus';
 import {
   ExpectedAppointmentState,
   renderVerificationResult,
@@ -678,6 +679,9 @@ const buildConversationTimelineForPrompt = (history: Message[]) => {
 };
 
 interface AIAssistantViewProps {
+  dataReady?: boolean;
+  dataError?: string | null;
+  onRetryData?: () => void;
   patients: Patient[];
   treatmentRecords: ClinicalRecord[];
   appointments: Appointment[];
@@ -697,6 +701,9 @@ interface AIAssistantViewProps {
 }
 
 const AIAssistantView: React.FC<AIAssistantViewProps> = ({ 
+  dataReady = true,
+  dataError,
+  onRetryData,
   patients, 
   treatmentRecords,
   appointments,
@@ -3637,7 +3644,7 @@ I can provide guidance on:
 
   const handleSendMessage = async (messageOverride?: string) => {
     const messageText = (messageOverride ?? inputMessage).trim();
-    if (!messageText || isLoading) return;
+    if (!messageText || isLoading || !dataReady) return;
 
     // Check if this is a confirmation response for a pending action
     const lowerInput = messageText.toLowerCase();
@@ -5839,6 +5846,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
           </div>
 
           {/* Input Area */}
+          <AssistantDataStatus ready={dataReady} error={dataError} onRetry={onRetryData} />
           <div className="shrink-0 border-t border-gray-200 bg-white px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:py-4 lg:px-6">
             <div className="w-full">
               <div className="rounded-xl border border-gray-200 bg-white p-3">
@@ -5917,7 +5925,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                     )}
                     <button
                       onClick={() => handleSendMessage()}
-                      disabled={!inputMessage.trim() || isLoading}
+                      disabled={!inputMessage.trim() || isLoading || !dataReady}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--hover-600)] px-4 py-3 text-sm font-medium text-white transition hover:bg-[var(--hover-700)] focus:outline-none focus:ring-2 focus:ring-[var(--hover-600)] disabled:cursor-not-allowed disabled:bg-gray-300"
                       title="Send message"
                     >

@@ -113,7 +113,8 @@ const PatientDashboardView = React.lazy(() => import('./components/PatientDashbo
 const UsersView = React.lazy(() => import('./components/UsersView'));
 const InventoryView = React.lazy(() => import('./components/InventoryView'));
 const MedicineSelectionModal = React.lazy(() => import('./components/MedicineSelectionModal'));
-const AIAssistantView = React.lazy(() => import('./components/AIAssistantView'));
+const loadAIAssistantView = () => import('./components/AIAssistantView');
+const AIAssistantView = React.lazy(loadAIAssistantView);
 const MessagingView = React.lazy(() => import('./components/MessagingView'));
 const PatientMessagingView = React.lazy(() => import('./components/PatientMessagingView'));
 const ExpensesView = React.lazy(() => import('./components/ExpensesView'));
@@ -476,6 +477,7 @@ const App: React.FC = () => {
   const [mlsScope, setMlsScope] = useState('');
   const [mlsCacheRevision, setMlsCacheRevision] = useState(0);
   const mlsCacheVersionRef = useRef(0);
+  const mlsPatientRefreshRequestRef = useRef(0);
   const invalidateMlsMemory = () => {
     invalidateNavigationCache();
     mlsCacheVersionRef.current += 1;
@@ -602,8 +604,9 @@ const App: React.FC = () => {
   const getClinicCacheKey = (domain: string, locationId = currentLocationId): string =>
     `clinic:${getClinicCacheScope(locationId)}:${domain}`;
 
-  const invalidateMaterialCostCaches = (locationId = currentLocationId) => {
-    invalidateMlsMemory();
+  const invalidateMaterialCostCaches = (locationId = currentLocationId, preserveMls = false) => {
+    if (preserveMls) invalidateNavigationCache();
+    else invalidateMlsMemory();
     const scope = getClinicCacheScope(locationId);
     dataCache.invalidatePrefix(`mls-treatments:${scope}:`);
     dataCache.invalidate(getClinicCacheKey('expenses', locationId));
@@ -2768,9 +2771,15 @@ const App: React.FC = () => {
   }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated,
     leanStaffStartup, allowedViews, mlsCacheRevision, mlsScope, mlsSyncError]);
 
-  // Fetch only the selected screen's complete datasets. Do not mount that screen
-  // with empty/partial financial data while its requests are still running.
+  // Fetch only the selected screen's complete datasets. Financial screens wait
+  // for the bundle; the Assistant can show its workspace early but cannot send
+  // messages or actions until the complete bundle is published.
   useEffect(() => {
+    // Start the workspace download alongside its data, rather than after all
+    // historical reads finish. A preload failure is handled by React.lazy.
+    if (isAuthenticated && currentView === 'ai-assistant' && canAccessView('ai-assistant')) {
+      void loadAIAssistantView().catch(() => {});
+    }
     if (!leanStaffStartup || !isAuthenticated || !currentLocationId || startupScope !== currentLocationId || initialSyncActive) return;
     if (!canAccessView(currentView) && currentView !== 'finance') return;
     const scope = currentLocationId;
@@ -3300,6 +3309,55 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('Patient-scoped record refresh failed; falling back to a full reload.', err);
       await fetchGlobalRecords(true);
+    }
+  };
+
+  const refreshMlsAfterCostSave = async (patientId?: string | null) => {
+    const locationId = currentLocationId;
+    if (!leanStaffStartup || !patientId || mlsScope !== locationId) {
+      invalidateMaterialCostCaches(locationId);
+      if (!leanStaffStartup) await refreshGlobalRecordsForPatient(patientId);
+      return;
+    }
+
+    // Costs recalculate this patient's commission allocations, potentially across
+    // several payments. Refresh that complete patient bundle, not clinic history.
+    invalidateMaterialCostCaches(locationId, true);
+    const requestId = ++mlsPatientRefreshRequestRef.current;
+    const cacheVersion = mlsCacheVersionRef.current;
+    const startupRequestId = initialDataFetchRequestRef.current;
+    const session = auth.getSession();
+    const clinicScope = getClinicCacheScope(locationId);
+    const isCurrent = () => requestId === mlsPatientRefreshRequestRef.current
+      && mlsAuthenticatedRef.current && currentLocationIdRef.current === locationId
+      && cacheVersion === mlsCacheVersionRef.current
+      && startupRequestId === initialDataFetchRequestRef.current
+      && getClinicCacheScope(locationId) === clinicScope
+      && isSameAuthSession(session, auth.getSession());
+    try {
+      const [records, payments] = await Promise.all([
+        api.treatments.getAllRecords(locationId, {
+          patientId, limit: null, throwOnError: true, commissionRequestConcurrency: 3
+        }),
+        api.finance.getPayments(locationId, {
+          patientId, includeCorrections: false, commissionRequestConcurrency: 3
+        })
+      ]);
+      if (!isCurrent()) return;
+      const refreshedPayments = mergeLegacyPaymentRecords(payments, locationId, patientId);
+      setMlsRecords((previous) => [
+        ...previous.filter((record) => record.patient_id !== patientId), ...records
+      ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))
+        || String(a.id).localeCompare(String(b.id))));
+      setMlsPayments((previous) => [
+        ...previous.filter((payment) => payment.patientId !== patientId), ...refreshedPayments
+      ].sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date)));
+    } catch (error) {
+      if (!isCurrent()) return;
+      // Never silently publish one half of the financial bundle or launch a
+      // clinic-wide retry loop after a successful write.
+      setMlsSyncError('MLS costs were saved, but updated totals could not load. Choose Retry to reload the latest data.');
+      throw error;
     }
   };
 
@@ -5299,6 +5357,8 @@ const App: React.FC = () => {
     : [];
   const shouldShowAdminBadge = isAdmin && currentUser.trim().toLowerCase() !== 'admin';
   const isWorkspaceView = currentView === 'ai-assistant' || currentView === 'messaging' || currentView === 'patients' || currentView === 'appointments';
+  const assistantDataReady = !leanStaffStartup || (startupScope === currentLocationId
+    && !initialSyncActive && !lazyViewError && loadedLazyView === `${currentLocationId}:ai-assistant`);
   const editableAllowedTabs = resolveAllowedTabs('normal', newUserData.allowed_tabs).filter((tab) => (
     tab !== 'branch-switching' || !newUserData.location_id
   )) as ViewState[];
@@ -5478,7 +5538,7 @@ const App: React.FC = () => {
       <main className={isDoctor ? "flex min-w-0 flex-1 flex-col p-0 pb-32" : isWorkspaceView ? "flex min-w-0 flex-1 flex-col p-0 lg:h-screen overflow-hidden" : "flex-1 min-w-0 p-3 md:p-5"}>
         <div className={isDoctor || isWorkspaceView ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
           <Suspense fallback={<div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600 w-10 h-10" /></div>}>
-            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || (currentView !== 'material-cost' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))) ? (
+            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))) ? (
               <div className="flex flex-col items-center gap-3 p-12" role={lazyViewError || error ? 'alert' : 'status'}>
                 {lazyViewError || error ? <>
                   <p className="text-red-700">{lazyViewError || error}</p>
@@ -5776,21 +5836,7 @@ const App: React.FC = () => {
                   setLazyViewRevision((value) => value + 1);
                 } else await fetchGlobalRecords(true);
               }}
-              onCostsSaved={async (patientId) => {
-                invalidateMaterialCostCaches();
-                if (leanStaffStartup) {
-                  setLoadedLazyView('');
-                  setMlsSyncError(null);
-                  setMlsSyncProgress(null);
-                  setLazyViewRevision((value) => value + 1);
-                } else {
-                  await refreshGlobalRecordsForPatient(patientId);
-                  void fetchExpenses(true);
-                }
-                void fetchDashboardData(dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId).catch(() => {
-                  console.warn('Dashboard refresh after MLS cost save needs a manual refresh.');
-                });
-              }}
+              onCostsSaved={refreshMlsAfterCostSave}
             />}
             {currentView === 'records' && canAccessView('records') && <RecordsView records={auditRecords} appointments={auditAppointments} rescheduleLogs={auditRescheduleLogs} payments={auditPayments} loading={auditLoading} loadError={auditLoadError} onQueryChange={loadAuditLog} onRefresh={() => setAuditRefreshKey((key) => key + 1)} onDeleteAll={isDoctor ? () => alert('Doctor accounts cannot delete patient records.') : handleDeleteAllRecords} currency={currency} isDoctor={isDoctor} initialFilter={recordsInitialFilter} onOpenPaymentReceipt={handleOpenStoredPaymentReceipt} canEditPayments={isAdmin && !isDoctor} onPaymentCorrected={handlePaymentCorrected} cacheScope={getClinicCacheScope()} cacheRevision={materialCostCacheRevision} />}
             {currentView === 'inventory' && canAccessView('inventory') && <InventoryView medicines={medicines} topSelling={topSellingMedicines} loading={loading} syncProgress={(!medicinesReady && initialSyncActive) ? initialSyncProgress : null} currency={currency} onRefresh={() => fetchMedicines(true)} onAdd={() => {setEditingMedicine(null); setNewMedicineData({ name: '', description: '', unit: 'pack', item_type: 'Medicine', price: 0, stock: 0, min_stock: 0, quantity_step: 1, category: '' }); setShowMedicineModal(true)}} onEdit={(med) => {setEditingMedicine(med); setNewMedicineData(med); setShowMedicineModal(true)}} onDelete={handleDeleteMedicine} />}
@@ -5903,16 +5949,20 @@ const App: React.FC = () => {
               />
             )}
             {currentView === 'ai-assistant' && canAccessView('ai-assistant') && <AIAssistantView 
-                patients={assistantPatients} 
-                treatmentRecords={assistantRecords} 
-                appointments={assistantAppointments}
-                doctors={assistantDoctors}
-                treatmentTypes={assistantTreatmentTypes}
+                key={`${getClinicCacheScope(currentLocationId)}:${initialDataFetchRequestRef.current}`}
+                dataReady={assistantDataReady}
+                dataError={lazyViewError}
+                onRetryData={() => setLazyViewRevision((value) => value + 1)}
+                patients={assistantDataReady ? assistantPatients : []}
+                treatmentRecords={assistantDataReady ? assistantRecords : []}
+                appointments={assistantDataReady ? assistantAppointments : []}
+                doctors={assistantDataReady ? assistantDoctors : []}
+                treatmentTypes={assistantDataReady ? assistantTreatmentTypes : []}
                 users={users}
-                medicines={assistantMedicines}
-                expenses={assistantExpenses}
-                medicineSales={assistantMedicineSales}
-                paymentRecords={assistantPaymentRecords}
+                medicines={assistantDataReady ? assistantMedicines : []}
+                expenses={assistantDataReady ? assistantExpenses : []}
+                medicineSales={assistantDataReady ? assistantMedicineSales : []}
+                paymentRecords={assistantDataReady ? assistantPaymentRecords : []}
                 locations={locations}
                 currentLocationId={currentLocationId}
                 canAccessAllLocations={false}

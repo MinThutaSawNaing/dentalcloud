@@ -74,6 +74,7 @@ function harness(code = mlsCode) {
     mlsInFlightRef: { current: null }, mlsAuthenticatedRef: { current: true },
     currentLocationIdRef: { current: 'branch-a' }, lazyViewRequestRef: { current: 0 },
     canAccessView: vi.fn(() => true),
+    loadAIAssistantView: vi.fn().mockResolvedValue({ default: () => null }),
     api: {
       treatments: { getAllRecords: vi.fn(() => pending(treatmentReads)) },
       finance: { getPayments: vi.fn(() => pending(paymentReads)) },
@@ -462,6 +463,16 @@ const bundles = [
   { view: 'dashboard', reads: ['patients.getAll', 'appointments.getAll', 'treatments.getAllRecords', 'expenses.getAll', 'finance.getPayments'], setters: ['setDashboardPatients', 'setDashboardAppointments', 'setDashboardRecords', 'setDashboardExpenses', 'setDashboardPayments'] },
   { view: 'ai-assistant', reads: ['patients.getAll', 'appointments.getAll', 'doctors.getAll', 'treatments.getTypes', 'treatments.getAllRecords', 'medicines.getAll', 'expenses.getAll', 'medicines.getSales', 'finance.getPayments'], setters: ['setAssistantPatients', 'setAssistantAppointments', 'setAssistantDoctors', 'setAssistantTreatmentTypes', 'setAssistantRecords', 'setAssistantMedicines', 'setAssistantExpenses', 'setAssistantMedicineSales', 'setAssistantPaymentRecords'] },
 ];
+describe('Assistant parallel module/data startup runtime', () => {
+  it('starts the module while data remains unresolved and publishes no incomplete data', () => {
+    const h = bundleHarness(bundles.find((bundle) => bundle.view === 'ai-assistant')!);
+    h.render('ai-assistant');
+    expect(h.context.loadAIAssistantView).toHaveBeenCalledTimes(1);
+    h.reads.forEach(({ mock }) => expect(mock).toHaveBeenCalledTimes(1));
+    expect(h.context.setAssistantPatients).not.toHaveBeenCalled();
+    expect(h.context.setLoadedLazyView).not.toHaveBeenCalledWith('branch-a:ai-assistant');
+  });
+});
 // Actual App effect and real cache, with deferred API bundles.
 function bundleHarness(bundle: typeof bundles[number]) {
   const h = harness(lazyCode);
