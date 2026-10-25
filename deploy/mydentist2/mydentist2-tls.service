@@ -1,0 +1,9 @@
+[Unit]
+Description=Issue and activate mydentist2 TLS once DNS is ready
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mydentist2-ensure-tls
+TimeoutStartSec=600

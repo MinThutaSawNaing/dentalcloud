@@ -1,0 +1,57 @@
+name: Test and deploy mydentist2
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mydentist2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run tests
+        run: npm test -- --maxWorkers=2
+      - name: Build production frontend
+        run: npm run build
+      - name: Deploy validated static artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          DEPLOY_HOST: ${{ secrets.MYDENTIST2_HOST }}
+          DEPLOY_KEY: ${{ secrets.MYDENTIST2_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.MYDENTIST2_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Missing MYDENTIST2_HOST}"
+          : "${DEPLOY_KEY:?Missing MYDENTIST2_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing MYDENTIST2_KNOWN_HOSTS}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/mydentist2"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/mydentist2" "$HOME/.ssh/known_hosts"
+          trap 'rm -f "$HOME/.ssh/mydentist2"' EXIT
+          tar -czf "$RUNNER_TEMP/mydentist2.tar.gz" -C dist .
+          ssh -T -i "$HOME/.ssh/mydentist2" \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "mydentist2deploy@$DEPLOY_HOST" "deploy $GITHUB_SHA" \
+            < "$RUNNER_TEMP/mydentist2.tar.gz"

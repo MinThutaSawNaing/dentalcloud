@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const app = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8');
+// Structural guards must behave identically on Windows and Linux checkouts.
+const app = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 const staffStartup = readFileSync(fileURLToPath(new URL('./services/staffStartup.ts', import.meta.url)), 'utf8');
 
 // Structural regression guards only: these do not mount React or prove runtime UI behavior.

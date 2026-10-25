@@ -1,0 +1,30 @@
+services:
+  web:
+    image: mydentist2:${IMAGE_TAG:?Release SHA is required}
+    container_name: mydentist2-${SLOT:?Deployment slot is required}
+    restart: unless-stopped
+    init: true
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=101,gid=101,mode=1770
+    ports:
+      - "127.0.0.1:${APP_PORT:?Loopback port is required}:3000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    mem_reservation: 16m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+    ulimits:
+      nofile:
+        soft: 2048
+        hard: 2048
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
