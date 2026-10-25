@@ -33,6 +33,29 @@ const section = (source: string, start: string, end: string) => {
     expect(app).toContain("if (import.meta.env.VITE_LEAN_STAFF_STARTUP !== 'false' && session?.role !== 'doctor') {");
   });
 
+  it('keeps doctor startup ownership-scoped without unrelated finance or reporting reads', () => {
+    const startup = section(app, 'const sessionDoctorId =', 'const handleLocationChange =');
+    expect(startup).toContain('doctorId: sessionDoctorId || undefined, throwOnError: true');
+    expect(startup).toContain("promise: isDoctorSession ? Promise.resolve([]) : safeLoad('Payments'");
+    expect(startup).toContain("promise: isDoctorSession ? Promise.resolve([]) : safeLoad('Appointment reschedule logs'");
+    expect(startup).toContain('if (!isDoctorSession) void (async () => {');
+    expect(startup).toContain('if (!isDoctorSession && requestId === initialDataFetchRequestRef.current) {\n          await fetchDashboardData');
+    const firstPage = section(startup, 'const patData = await patientInitialPromise;', 'const [supportingData, startupAppointments]');
+    expect(firstPage).toContain('setLoading(false);');
+    expect(firstPage).not.toContain('await supportingDataPromise');
+  });
+
+  it('refreshes lean Overview through its single owner after recall mutations', () => {
+    const mutation = section(app, 'const handleUpdateCancellationOutcome =', 'const handleCreateLocation =');
+    expect(mutation).toContain('invalidateNavigationCache();');
+    expect(mutation).toContain('if (leanStaffStartup) setLazyViewRevision(value => value + 1);');
+    expect(mutation).toContain('else await fetchDashboardData');
+    const loader = section(app, 'const fetchDashboardData =', 'const fetchAssistantData =');
+    const failure = section(loader, '} catch (err: any)', '} finally');
+    expect(failure).toContain('requestId === dashboardFetchRequestRef.current && startupRequestId === initialDataFetchRequestRef.current');
+    expect(failure).toContain('setLazyViewError(');
+  });
+
   it('restricts staffStartup reads to the five lightweight datasets, not heavy histories', () => {
     const reads = [...staffStartup.matchAll(/source\.(\w+)\.(\w+)\(/g)].map((match) => `${match[1]}.${match[2]}`);
     expect(reads).toEqual([
@@ -160,7 +183,7 @@ const section = (source: string, start: string, end: string) => {
 
   it('places screen content behind the branch/loading/error gate with a retry action', () => {
     const gate = section(app, '{leanStaffStartup && (startupScope !== currentLocationId', "{currentView === 'dashboard'");
-    expect(gate).toContain("initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))");
+    expect(gate).toContain("initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && currentView !== 'dashboard' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))");
     expect(gate).toContain("role={lazyViewError || error ? 'alert' : 'status'}");
     expect(gate).toContain('setLazyViewRevision((value) => value + 1)');
     expect(gate).toContain('}>Retry</button>');

@@ -3,6 +3,7 @@ import { Home, Calendar, FileText, User, LogOut, Plus, Trash2, Download, Eye, Ey
 import PatientQRCode from './PatientQRCode';
 import { auth } from '../services/auth';
 import { api } from '../services/api';
+import { loadPatientDashboard } from '../services/patientDashboard';
 import { otpService } from '../services/otp';
 import { BranchReceiptIdentity, Patient, Appointment, ClinicalRecord, Doctor, PatientFile, ReceiptSize } from '../types';
 import { Modal, Input, TimeInput } from './Shared';
@@ -101,49 +102,34 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
   
   // State for cancellation
   const [cancellingAppointment, setCancellingAppointment] = useState<string | null>(null);
+  const patientDataRequestRef = useRef(0);
   
   useEffect(() => {
     fetchPatientData();
+    return () => { patientDataRequestRef.current += 1; };
   }, []);
 
   const fetchPatientData = async () => {
+    const requestId = ++patientDataRequestRef.current;
     try {
       setLoading(true);
       setError(null);
       
-      const patientId = auth.getCurrentPatientId();
-      if (!patientId) {
-        throw new Error('No patient session found');
-      }
-
       const sessionLocationId = auth.getCurrentUser()?.location_id || undefined;
-      
-      // Fetch patient profile
-      const allPatients = await api.patients.getAll(sessionLocationId);
-      const patientData = allPatients.find(p => p.id === patientId);
-      if (!patientData) {
-        throw new Error('Patient data not found');
-      }
+      const data = await loadPatientDashboard(api, auth.getCurrentPatientId(), sessionLocationId);
+      if (requestId !== patientDataRequestRef.current) return;
+      const patientData = data.patient;
       setPatient(patientData);
 
       // Receipt configuration is supplementary. Migration/network failures must
       // never prevent the patient's clinical data from loading.
-      const receiptConfigurationResults = await Promise.allSettled([
-        api.appSettings.getReceiptPreferences().then((preferences) => {
-          if (!preferences) return;
-          setReceiptSize(preferences.receiptSize);
-          setCurrency(preferences.currency);
-        }),
-        api.appSettings.getAppName().then((name) => {
-          if (name?.trim()) setAppName(name.trim());
-        }),
-        api.branchReceiptIdentity.get(patientData.location_id).then(setReceiptIdentity)
-      ]);
-      receiptConfigurationResults.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          console.warn(['receipt preferences', 'application name', 'branch receipt identity'][index] + ' unavailable in patient portal:', result.reason);
-        }
-      });
+      const [preferences, name, identity] = data.receiptConfiguration;
+      if (preferences.status === 'fulfilled' && preferences.value) {
+        setReceiptSize(preferences.value.receiptSize);
+        setCurrency(preferences.value.currency);
+      }
+      if (name.status === 'fulfilled' && name.value?.trim()) setAppName(name.value.trim());
+      if (identity.status === 'fulfilled') setReceiptIdentity(identity.value);
       
       // Initialize profile changes with current values
       setProfileChanges({
@@ -152,39 +138,16 @@ const PatientDashboard: React.FC<PatientDashboardProps> = ({ onLogout, messaging
         phone: patientData.phone || ''
       });
       
-      // Fetch appointments
-      const allAppointments = await api.appointments.getAll(patientData.location_id);
-      const patientAppointments = allAppointments.filter(apt => apt.patient_id === patientId);
-      setAppointments(patientAppointments);
-      
-      // Fetch treatment records
-      const records = await api.treatments.getHistory(patientId);
-      setTreatmentRecords(records);
-
-      // Fetch patient files
-      try {
-        const files = await api.files.list(patientId);
-        setPatientFiles(files);
-      } catch (fileErr) {
-        console.error('Failed to fetch patient files:', fileErr);
-        // Don't fail the entire fetch if files fail
-        setPatientFiles([]);
-      }
-
-      // Fetch doctors
-      const allDoctors = await api.doctors.getAll(patientData.location_id);
-      setDoctors(allDoctors);
-
-      // Fetch treatment types for appointment reason/type
-      const allTreatmentTypes = await api.treatments.getTypes(patientData.location_id);
-      const typeNames = [...new Set(allTreatmentTypes.map((type) => (type.name || '').trim()).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b));
-      setTreatmentTypeOptions(typeNames);
+      setAppointments(data.appointments);
+      setTreatmentRecords(data.treatmentRecords);
+      setPatientFiles(data.patientFiles);
+      setDoctors(data.doctors);
+      setTreatmentTypeOptions(data.treatmentTypeOptions);
       
     } catch (err: any) {
-      setError(err.message || 'Failed to load patient data');
+      if (requestId === patientDataRequestRef.current) setError(err.message || 'Failed to load patient data');
     } finally {
-      setLoading(false);
+      if (requestId === patientDataRequestRef.current) setLoading(false);
     }
   };
 

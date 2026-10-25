@@ -42,4 +42,17 @@ describe('Doctors and Overview loading progress', () => {
     const ready = renderToStaticMarkup(React.createElement(DashboardView, { ...dashboardProps, loading: false }));
     expect(ready).not.toContain('Loading Overview data');
   });
+
+  it('keeps reporting controls visible but hides stale totals while refreshing or after failure', () => {
+    const busy = renderToStaticMarkup(React.createElement(DashboardView, { ...dashboardProps, loading: true }));
+    expect(busy).toContain('Report Scope');
+    expect(busy).not.toContain('Collections by Payment Type');
+    const failed = renderToStaticMarkup(React.createElement(DashboardView, {
+      ...dashboardProps, loadError: 'Synthetic overview failure', onRetry: () => {}
+    }));
+    expect(failed).toContain('role="alert"');
+    expect(failed).toContain('Synthetic overview failure');
+    expect(failed).toContain('Retry');
+    expect(failed).not.toContain('Collections by Payment Type');
+  });
 });

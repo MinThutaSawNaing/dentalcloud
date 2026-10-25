@@ -546,6 +546,10 @@ const App: React.FC = () => {
   const scheduledTaskProcessorRef = React.useRef<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardRange, setDashboardRange] = useState(() => {
+    const today = toLocalDateInputValue(new Date());
+    return { dateFrom: today, dateTo: today };
+  });
   // Startup sync tracking: Service Menu / MLS / Inventory share data that is
   // fetched in the background after the first screen is usable, so each of those
   // tabs needs a progress signal until its own dataset has arrived.
@@ -1828,12 +1832,15 @@ const App: React.FC = () => {
   const fetchDashboardData = async (
     scopeLocationId?: string,
     knownLocations?: Location[],
-    // Preloaded data from fetchInitialData to avoid redundant API calls.
-    preloaded?: { patients?: Patient[]; appointments?: Appointment[] | Promise<Appointment[]>; records?: ClinicalRecord[]; expenses?: Expense[] }
+    // Legacy startup callers may still pass their clinical datasets; reporting
+    // needs its own complete date/payment-date union, not a first patient page.
+    preloaded?: { patients?: Patient[]; appointments?: Appointment[] | Promise<Appointment[]>; records?: ClinicalRecord[]; expenses?: Expense[] },
+    range = dashboardRange
   ) => {
     const requestId = ++dashboardFetchRequestRef.current;
     const startupRequestId = initialDataFetchRequestRef.current;
     setDashboardLoading(true);
+    setLazyViewError(null);
     try {
       const session = auth.getSession();
       const restrictedLocationId = getSessionRestrictedLocationId(session);
@@ -1847,13 +1854,13 @@ const App: React.FC = () => {
         ? ALL_BRANCHES_VALUE
         : restrictedLocationId || (hasMatchingLocation ? requestedScope : (availableLocations[0]?.id || requestedScope));
       const queryLocationId = sanitizedScope === ALL_BRANCHES_VALUE ? undefined : (sanitizedScope || undefined);
-      // Use preloaded data when available; fetch missing dashboard datasets in parallel.
+      // Independent, date-scoped reads; never cap a selected reporting range.
       const [patData, aptData, recordsData, expenseData, scopedPayments] = await Promise.all([
-        preloaded?.patients ? Promise.resolve(preloaded.patients) : api.patients.getAll(queryLocationId, { throwOnError: true }),
-        preloaded?.appointments ? Promise.resolve(preloaded.appointments) : api.appointments.getAll(queryLocationId, { throwOnError: true }),
-        preloaded?.records ? Promise.resolve(preloaded.records) : api.treatments.getAllRecords(queryLocationId, { limit: null, throwOnError: true }),
-        preloaded?.expenses ? Promise.resolve(preloaded.expenses) : api.expenses.getAll(queryLocationId, { throwOnError: true }),
-        api.finance.getPayments(queryLocationId)
+        api.patients.getCreatedInRange(queryLocationId, range.dateFrom, range.dateTo),
+        api.appointments.getAll(queryLocationId, { ...range, throwOnError: true }),
+        api.treatments.getOverviewRecords(queryLocationId, range),
+        api.expenses.getAll(queryLocationId, { ...range, throwOnError: true }),
+        api.finance.getPayments(queryLocationId, { ...range, includeCorrections: false, includeEnrichment: false })
       ]);
 
       if (requestId !== dashboardFetchRequestRef.current || startupRequestId !== initialDataFetchRequestRef.current) {
@@ -1867,8 +1874,12 @@ const App: React.FC = () => {
       setDashboardPayments(mergeLegacyPaymentRecords(scopedPayments, queryLocationId));
       setDashboardLocationId(sanitizedScope);
       localStorage.setItem('dashboardLocationId', sanitizedScope);
+    } catch (err: any) {
+      if (requestId === dashboardFetchRequestRef.current && startupRequestId === initialDataFetchRequestRef.current) {
+        setLazyViewError(err?.message || 'Could not load the overview. Please retry.');
+      }
     } finally {
-      if (requestId === dashboardFetchRequestRef.current) setDashboardLoading(false);
+      if (requestId === dashboardFetchRequestRef.current && startupRequestId === initialDataFetchRequestRef.current) setDashboardLoading(false);
     }
   };
 
@@ -2257,21 +2268,21 @@ const App: React.FC = () => {
         const doctorQueryLocationIds = sessionDoctorId && doctorLocationIds.length > 0 ? doctorLocationIds : [locId];
         const isDoctorMultiBranchSession = !!sessionDoctorId && doctorQueryLocationIds.length > 1;
         const appointmentsPromise = isDoctorMultiBranchSession
-          ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Appointments for doctor branch ${locationId}`, api.appointments.getAll(locationId), []))).then((groups) => groups.flat())
-          : api.appointments.getAll(locId);
+          ? Promise.all(doctorQueryLocationIds.map((locationId) => api.appointments.getAll(locationId, { doctorId: sessionDoctorId || undefined, throwOnError: true }))).then((groups) => groups.flat())
+          : api.appointments.getAll(doctorQueryLocationIds[0], { doctorId: sessionDoctorId || undefined, throwOnError: true });
         const isDoctorSession = session?.role === 'doctor' && !!session?.doctor_id;
         const patientInitialPromise = isDoctorMultiBranchSession
           ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Patients for doctor branch ${locationId}`, api.patients.getAll(locationId), []))).then((groups) => groups.flat())
-          : api.patients.getPage(locId, 0, PATIENTS_INITIAL_LOAD_SIZE);
+          : isDoctorSession ? api.patients.getAll(doctorQueryLocationIds[0], { throwOnError: true }) : api.patients.getPage(locId, 0, PATIENTS_INITIAL_LOAD_SIZE);
         const supportingTasks = [
           { points: 5, promise: activeSessionDoctor ? Promise.resolve([activeSessionDoctor]) : safeLoad('Doctors', api.doctors.getAll(locId), []) },
           { points: 8, promise: safeLoad('Treatment types', api.treatments.getTypes(locId), []) },
           { points: 26, promise: isDoctorMultiBranchSession
-            ? Promise.all(doctorQueryLocationIds.map((locationId) => safeLoad(`Treatment records for doctor branch ${locationId}`, api.treatments.getAllRecords(locationId, { limit: null }), []))).then((groups) => groups.flat())
-            : api.treatments.getAllRecords(locId, { limit: null }) },
+            ? Promise.all(doctorQueryLocationIds.map((locationId) => api.treatments.getAllRecords(locationId, { limit: null, doctorId: sessionDoctorId || undefined, throwOnError: true, commissionRequestConcurrency: 3 }))).then((groups) => groups.flat())
+            : api.treatments.getAllRecords(doctorQueryLocationIds[0], { limit: null, doctorId: sessionDoctorId || undefined, throwOnError: true, commissionRequestConcurrency: 3 }) },
           { points: 10, promise: safeLoad('Medicines', api.medicines.getAll(locId), []) },
-          { points: 8, promise: safeLoad('Payments', api.finance.getPayments(locId), []) },
-          { points: 4, promise: safeLoad('Appointment reschedule logs', api.appointmentRescheduleLogs.getAll(locId), []) }
+          { points: 8, promise: isDoctorSession ? Promise.resolve([]) : safeLoad('Payments', api.finance.getPayments(locId), []) },
+          { points: 4, promise: isDoctorSession ? Promise.resolve([]) : safeLoad('Appointment reschedule logs', api.appointmentRescheduleLogs.getAll(locId), []) }
         ];
         // Each supporting dataset advances the startup progress bar as soon as it
         // individually resolves, so tab visitors can watch data arrive.
@@ -2286,6 +2297,10 @@ const App: React.FC = () => {
         // hold the directory behind treatments, payments, medicines, or other
         // independent startup data. Doctor sessions retain the existing full-load
         // path because their patient visibility depends on ownership records.
+        // Observe early failures without blocking the first staff patient page.
+        // The original promises are still awaited below so errors remain visible.
+        void supportingDataPromise.catch(() => {});
+        void appointmentsPromise.catch(() => {});
         const patData = await patientInitialPromise;
         if (requestId !== initialDataFetchRequestRef.current) return;
 
@@ -2316,12 +2331,13 @@ const App: React.FC = () => {
           })();
         }
 
-        const [docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = await supportingDataPromise;
+        const [supportingData, startupAppointments] = await Promise.all([supportingDataPromise, appointmentsPromise]);
+        const [docData, typeData, recordsData, medData, paymentsData, rescheduleLogsData] = supportingData;
         if (requestId !== initialDataFetchRequestRef.current) return;
 
-        const doctorAppointmentsPromise = appointmentsPromise.then((aptData) => isDoctorSession
-          ? aptData.filter((appointment) => appointment.doctor_id === session.doctor_id)
-          : aptData);
+        const doctorAppointmentsPromise = Promise.resolve(isDoctorSession
+          ? startupAppointments.filter((appointment) => appointment.doctor_id === session.doctor_id)
+          : startupAppointments);
         const doctorRecords = isDoctorSession
           ? recordsData.filter((record) => record.doctor_id === session.doctor_id)
           : recordsData;
@@ -2376,7 +2392,7 @@ const App: React.FC = () => {
         });
 
         // � Deferred data: load in background so the UI is interactive faster �
-        void (async () => {
+        if (!isDoctorSession) void (async () => {
           try {
             const [loyaltyData, expenseData, salesData] = await Promise.all([
               safeLoad('Deferred loyalty rules', api.loyalty.getRules(locId), []),
@@ -2396,7 +2412,7 @@ const App: React.FC = () => {
           }
         })();
 
-        if (requestId === initialDataFetchRequestRef.current) {
+        if (!isDoctorSession && requestId === initialDataFetchRequestRef.current) {
           await fetchDashboardData(locId, locData, {
             patients: scopedPatients,
             appointments: doctorAppointmentsPromise,
@@ -2475,6 +2491,13 @@ const App: React.FC = () => {
   };
 
   const handleDashboardLocationChange = async (locId: string) => {
+    if (leanStaffStartup) {
+      setDashboardLoading(true);
+      setLazyViewError(null);
+      setDashboardLocationId(locId);
+      localStorage.setItem('dashboardLocationId', locId);
+      return; // The scoped lazy loader is the single owner of this read.
+    }
     try {
       setLoading(true);
       setError(null);
@@ -2806,7 +2829,8 @@ const App: React.FC = () => {
     const cacheKey = `navigation:${clinicScope}:${startupRequestId}:${cacheVersion}:${view}:${JSON.stringify([
       view === 'dashboard' ? dashboardLocationId : '',
       view === 'dashboard' ? effectiveDashboardScope : restrictedScope || scope,
-      permissionKey, lazyViewRevision
+      permissionKey, lazyViewRevision,
+      view === 'dashboard' ? dashboardRange : null
     ])}`;
     let cancelled = false;
     const isCurrent = () => !cancelled && requestId === lazyViewRequestRef.current
@@ -2847,12 +2871,13 @@ const App: React.FC = () => {
         // Cache data, not a helper completion flag: filters can replace these arrays.
         const queryScope = effectiveDashboardScope === ALL_BRANCHES_VALUE ? undefined : effectiveDashboardScope;
         const dashboardRequestId = ++dashboardFetchRequestRef.current;
+        setDashboardLoading(true);
         const [patients, appointments, records, expenses, payments] = await cached(() => Promise.all([
-          api.patients.getAll(queryScope, { throwOnError: true }),
-          api.appointments.getAll(queryScope, { throwOnError: true }),
-          api.treatments.getAllRecords(queryScope, { limit: null, throwOnError: true }),
-          api.expenses.getAll(queryScope, { throwOnError: true }),
-          api.finance.getPayments(queryScope)
+          api.patients.getCreatedInRange(queryScope, dashboardRange.dateFrom, dashboardRange.dateTo),
+          api.appointments.getAll(queryScope, { ...dashboardRange, throwOnError: true }),
+          api.treatments.getOverviewRecords(queryScope, dashboardRange),
+          api.expenses.getAll(queryScope, { ...dashboardRange, throwOnError: true }),
+          api.finance.getPayments(queryScope, { ...dashboardRange, includeCorrections: false, includeEnrichment: false })
         ]));
         if (!isCurrent() || dashboardRequestId !== dashboardFetchRequestRef.current) return;
         setDashboardPatients(patients);
@@ -2912,11 +2937,13 @@ const App: React.FC = () => {
       if (!cancelled && requestId === lazyViewRequestRef.current && isCurrent()) {
         setLazyViewError(err?.message || 'Could not load this screen. Please retry.');
       }
+    }).finally(() => {
+      if (view === 'dashboard' && isCurrent()) setDashboardLoading(false);
     });
     // Cancel publication only: getOrLoad keeps the bundle flight available across tab switches.
     return () => { cancelled = true; };
   }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated, leanStaffStartup,
-    lazyViewRevision, allowedViews, dashboardLocationId, isAdmin]);
+    lazyViewRevision, allowedViews, dashboardLocationId, dashboardRange, isAdmin]);
 
   useEffect(() => {
     if (!leanStaffStartup || !isAuthenticated) return;
@@ -4454,7 +4481,8 @@ const App: React.FC = () => {
   ) => {
     await api.appointments.updateCancellationOutcome(id, outcome, completedLaterAppointmentId);
     invalidateNavigationCache();
-    await fetchDashboardData(dashboardLocationId, locations);
+    if (leanStaffStartup) setLazyViewRevision(value => value + 1);
+    else await fetchDashboardData(dashboardLocationId, locations);
   };
 
   const handleCreateLocation = async (locData: Partial<Location>) => {
@@ -5538,7 +5566,7 @@ const App: React.FC = () => {
       <main className={isDoctor ? "flex min-w-0 flex-1 flex-col p-0 pb-32" : isWorkspaceView ? "flex min-w-0 flex-1 flex-col p-0 lg:h-screen overflow-hidden" : "flex-1 min-w-0 p-3 md:p-5"}>
         <div className={isDoctor || isWorkspaceView ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
           <Suspense fallback={<div className="flex justify-center p-20"><Loader2 className="animate-spin text-indigo-600 w-10 h-10" /></div>}>
-            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))) ? (
+            {leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive || (currentView !== 'material-cost' && currentView !== 'ai-assistant' && currentView !== 'dashboard' && (lazyViewError || loadedLazyView !== `${currentLocationId}:${currentView}`))) ? (
               <div className="flex flex-col items-center gap-3 p-12" role={lazyViewError || error ? 'alert' : 'status'}>
                 {lazyViewError || error ? <>
                   <p className="text-red-700">{lazyViewError || error}</p>
@@ -5576,6 +5604,34 @@ const App: React.FC = () => {
                   allBranchesValue={ALL_BRANCHES_VALUE}
                   canViewAllBranches={canAdminViewAllBranches}
                   onLocationChange={handleDashboardLocationChange}
+                  reportRange={dashboardRange}
+                  onRangeChange={(dateFrom, dateTo) => {
+                    const range = { dateFrom, dateTo };
+                    setDashboardLoading(true);
+                    setLazyViewError(null);
+                    setDashboardRange(range);
+                    if (!leanStaffStartup) void fetchDashboardData(dashboardLocationId, undefined, undefined, range);
+                  }}
+                  onLoadRecalls={async () => {
+                    const restrictedScope = getSessionRestrictedLocationId(auth.getSession());
+                    const queryScope = restrictedScope || (dashboardLocationId === ALL_BRANCHES_VALUE ? undefined : dashboardLocationId);
+                    const key = `navigation:${getClinicCacheScope()}:recalls:${queryScope || 'all'}`;
+                    return dataCache.getOrLoad(key, async () => {
+                      const [patients, appointments] = await Promise.all([
+                        api.patients.getAll(queryScope, { throwOnError: true }),
+                        api.appointments.getAll(queryScope, { throwOnError: true })
+                      ]);
+                      return { patients, appointments };
+                    }, 30_000);
+                  }}
+                  loadError={lazyViewError || undefined}
+                  onRetry={() => {
+                    if (leanStaffStartup) setLazyViewRevision(value => value + 1);
+                    else {
+                      setLazyViewError(null);
+                      void fetchDashboardData(dashboardLocationId);
+                    }
+                  }}
                   onUpdateCancellationOutcome={handleUpdateCancellationOutcome}
                   onLoadTreatmentAnalysis={async (dateFrom, dateTo) => {
                     const session = auth.getSession();
@@ -5624,7 +5680,7 @@ const App: React.FC = () => {
                     return report;
                   }}
                   onSelectPatient={handlePatientSelect}
-                  loading={loading || initialSyncActive || dashboardLoading}
+                  loading={loading || initialSyncActive || dashboardLoading || (leanStaffStartup && !lazyViewError && loadedLazyView !== `${currentLocationId}:dashboard`)}
                   syncProgress={initialSyncActive ? initialSyncProgress : null}
                 />
               )

@@ -117,6 +117,22 @@ describe('finance payment pagination progress', () => {
 
 
 describe('payment fallback progress', () => {
+  it('keeps complete collection/allocations while skipping unrelated overview enrichment', async () => {
+    mock.state.rows[0].payment_allocations = [
+      { id: 'cash', payment_id: 'payment-0', payment_method: 'CASH', amount: 40 },
+      { id: 'kpay', payment_id: 'payment-0', payment_method: 'KPAY', amount: 60 }
+    ];
+    const result = await fetchPayments({ includeCorrections: false, includeEnrichment: false });
+    expect(result).toHaveLength(1001);
+    expect(result[0].amount).toBe(100);
+    expect(result[0].allocations?.map(row => row.amount)).toEqual([40, 60]);
+    expect(mock.from).not.toHaveBeenCalledWith('doctor_commission_entries');
+    expect(api.materialCosts.getTotalsByPaymentIds).not.toHaveBeenCalled();
+    expect(paymentCalls().every(call => !call.columns.includes('payment_corrections'))).toBe(true);
+    expect(paymentCalls()[0].columns).toContain('payment_allocations');
+    assertQueries(false);
+  });
+
   it('supports lightweight MLS reads without exact counts or correction history', async () => {
     const onProgress = vi.fn();
     const result = await fetchPayments({ onProgress, countMode: 'planned', includeCorrections: false });

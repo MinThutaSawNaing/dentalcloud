@@ -153,6 +153,50 @@ describe('high-volume Supabase fetches', () => {
       ['eq', 'patient_id', 'patient-1']
     ]));
   });
+
+  it('loads all matching overview registrations without directory/account maintenance', async () => {
+    supabaseMock.rowsByTable.patients = rows('patients');
+    const patients = await api.patients.getCreatedInRange('location-1', '2026-08-01', '2026-08-31');
+    expect(patients).toHaveLength(1001);
+    expect(supabaseMock.rangesByTable.patients).toEqual([[0, 999], [1000, 1999]]);
+    const filters = [
+      ['eq', 'location_id', 'location-1'],
+      ['gte', 'created_at', '2026-08-01T00:00:00Z'],
+      ['lt', 'created_at', '2026-09-01T00:00:00.000Z']
+    ];
+    expect(supabaseMock.filtersByTable.patients).toEqual([...filters.slice(1), filters[0], ...filters.slice(1), filters[0]]);
+    expect([...new Set(supabaseMock.from.mock.calls.map(call => call[0]))]).toEqual(['patients']);
+  });
+
+  it('queries all branches without adding a location restriction for overview registrations', async () => {
+    await api.patients.getCreatedInRange(undefined, '2026-12-31', '2026-12-31');
+    expect(supabaseMock.filtersByTable.patients).toEqual([
+      ['gte', 'created_at', '2026-12-31T00:00:00Z'],
+      ['lt', 'created_at', '2027-01-01T00:00:00.000Z']
+    ]);
+  });
+
+  it('paginates the complete payment-date ledger and bounds older-treatment lookups for Overview', async () => {
+    supabaseMock.rowsByTable.doctor_commission_entries = Array.from({ length: 1001 }, (_, i) => ({
+      id: `entry-${i}`, treatment_id: `treatment-${i}`, payment_id: `payment-${i}`,
+      doctor_id: 'doctor-1', payment_date: '2026-08-05', earnings: 10
+    }));
+    const records = vi.spyOn(api.treatments, 'getAllRecords').mockImplementation(async (_scope, options) => (
+      (options?.treatmentIds || []).map(id => ({
+        id, location_id: 'location-1', date: '2025-01-01', cost: 100, patient_id: 'patient-1', teeth: [], description: 'Synthetic'
+      }))
+    ));
+    try {
+      const result = await api.treatments.getOverviewRecords('location-1', { dateFrom: '2026-08-05', dateTo: '2026-08-05' });
+      expect(result).toHaveLength(1001);
+      expect(result.reduce((sum, record) => sum + record.doctorEarningEntries!.length, 0)).toBe(1001);
+      expect(supabaseMock.rangesByTable.doctor_commission_entries).toEqual([[0, 999], [1000, 1999]]);
+      expect(supabaseMock.filtersByTable.doctor_commission_entries).toContainEqual(['eq', 'location_id', 'location-1']);
+      expect(records.mock.calls.slice(1).every(([, options]) => options!.treatmentIds!.length <= 50)).toBe(true);
+    } finally {
+      records.mockRestore();
+    }
+  });
 });
 
 // Reuse the mock query recorder above: no real Supabase/backend access.

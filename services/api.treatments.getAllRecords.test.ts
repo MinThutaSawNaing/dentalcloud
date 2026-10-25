@@ -72,6 +72,19 @@ describe('treatments.getAllRecords', () => {
     expect(supabaseMock.calls).toContainEqual({ action: 'range', from: 0, to: 49 });
   });
 
+  it('applies bounded overview treatment IDs without commission enrichment', async () => {
+    supabaseMock.rows = [{ id: 'old', cost: 100, date: '2025-01-01', location_id: 'branch-1' }];
+    const result = await api.treatments.getAllRecords('branch-1', {
+      treatmentIds: ['old'], limit: null, throwOnError: true, includeCommissionEntries: false
+    });
+    expect(result).toHaveLength(1);
+    expect(supabaseMock.calls).toEqual(expect.arrayContaining([
+      { action: 'eq', column: 'location_id', value: 'branch-1' },
+      { action: 'in', column: 'id', value: ['old'] }
+    ]));
+    expect(supabaseMock.from).not.toHaveBeenCalledWith('doctor_commission_entries');
+  });
+
   it('uses estimated counts for MLS progress instead of an exact table count', async () => {
     await api.treatments.getAllRecords('location-1', {
       limit: null, onProgress: vi.fn(), countMode: 'planned'

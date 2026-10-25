@@ -23,6 +23,7 @@ import { chunkUniqueIds, mapWithConcurrency, REPORT_REQUEST_CONCURRENCY } from '
 import { normalizeMaterialCostPresetInputs, sortMaterialCostPresets } from '../utils/materialCostPresets';
 import { normalizeBranchReceiptIdentity } from '../utils/branchReceiptIdentity';
 import type { MlsEnrichmentProgress } from '../utils/mlsSyncProgress';
+import { loadOverviewRecords, type OverviewRecordRange } from './overviewRecords';
 
 let usersAllowedTabsSupport: boolean | null = null;
 let usersDoctorIdSupport: boolean | null = null;
@@ -734,13 +735,51 @@ const mapMaterialLabCostPresetRow = (row: any): MaterialLabCostPreset => ({
 
 const fetchSyntheticMaterialCostExpenses = async (
   locationId: string | undefined,
-  existingExpenses: Expense[]
+  existingExpenses: Expense[],
+  range?: { dateFrom?: string; dateTo?: string }
 ): Promise<Expense[]> => {
-  const fetchMaterialRows = (columns: string) => fetchAllRows<any>((from, to) => supabase
-    .from('patient_material_costs')
-    .select(columns)
-    .order('id')
-    .range(from, to));
+  // Bound cost reads by candidate treatment/audit IDs, not by treatment branch:
+  // the audit's branch wins, and null treatment dates use cost creation dates.
+  let scopedTreatments: any[] | undefined;
+  let scopedAudits: any[] | undefined;
+  if (range?.dateFrom || range?.dateTo) {
+    const loadTreatments = (columns: string) => fetchAllRows<any>((from, to) => {
+      let query = supabase.from('treatments').select(columns).order('id').range(from, to);
+      const dateFilters = [
+        range.dateFrom ? `date.gte.${range.dateFrom}` : '',
+        range.dateTo ? `date.lte.${range.dateTo}` : ''
+      ].filter(Boolean);
+      query = query.or(`date.is.null,and(${dateFilters.join(',')})`);
+      return query;
+    });
+    let result = await loadTreatments('id, location_id, patient_id, date, description, patients(name)');
+    if (result.error && isOptionalRelationAccessError(result.error, ['patients'])) {
+      result = await loadTreatments('id, location_id, patient_id, date, description');
+    }
+    if (result.error) throw result.error;
+    scopedTreatments = result.data || [];
+    if (scopedTreatments.length === 0) return [];
+    const auditGroups = await mapWithConcurrency(chunkUniqueIds(scopedTreatments.map(row => row.id)), REPORT_REQUEST_CONCURRENCY, async ids => {
+      const result = await fetchAllRows<any>((from, to) => supabase.from('audit_logs')
+        .select('id, source_id, location_id').eq('source_type', 'treatment')
+        .in('source_id', ids).order('id').range(from, to));
+      if (result.error && !isMissingRelationError(result.error, 'audit_logs')) throw result.error;
+      return result.data || [];
+    });
+    const treatmentById = new Map(scopedTreatments.map(row => [row.id, row]));
+    scopedAudits = auditGroups.flat().filter(row => !locationId ||
+      (row.location_id || treatmentById.get(row.source_id)?.location_id || null) === locationId);
+    if (scopedAudits.length === 0) return [];
+  }
+  const fetchMaterialRows = async (columns: string) => {
+    const batches = scopedAudits ? chunkUniqueIds(scopedAudits.map(row => row.id)) : [undefined];
+    const results = await mapWithConcurrency(batches, REPORT_REQUEST_CONCURRENCY, ids => fetchAllRows<any>((from, to) => {
+      let query = supabase.from('patient_material_costs').select(columns).order('id').range(from, to);
+      if (ids) query = query.in('audit_log_id', ids);
+      return query;
+    }));
+    return { data: results.flatMap(result => result.data || []), error: results.find(result => result.error)?.error };
+  };
   let { data: materialRows, error: materialError } = await fetchMaterialRows(
     'audit_log_id, material_name, cost_type, total_amount, created_at, updated_at'
   );
@@ -798,7 +837,7 @@ const fetchSyntheticMaterialCostExpenses = async (
   const auditIds = Array.from(new Set((materialRows || []).map((row: any) => row.audit_log_id).filter(Boolean)));
   if (auditIds.length === 0) return [];
 
-  const auditBatches = await Promise.all(chunk(auditIds, 25).map(async (auditIdBatch) => {
+  const auditBatches = scopedAudits ? [scopedAudits] : await mapWithConcurrency(chunk(auditIds, 25), REPORT_REQUEST_CONCURRENCY, async (auditIdBatch) => {
     const { data, error } = await supabase
       .from('audit_logs')
       .select('id, source_id, location_id')
@@ -811,13 +850,13 @@ const fetchSyntheticMaterialCostExpenses = async (
     }
 
     return data || [];
-  }));
+  });
 
   const auditRows: any[] = auditBatches.flat();
   if (auditRows.length === 0) return [];
 
   const treatmentIds = Array.from(new Set(auditRows.map((row) => row.source_id).filter(Boolean)));
-  const treatmentBatches = await Promise.all(chunk(treatmentIds, 25).map(async (treatmentIdBatch) => {
+  const treatmentBatches = scopedTreatments ? [scopedTreatments] : await mapWithConcurrency(chunk(treatmentIds, 25), REPORT_REQUEST_CONCURRENCY, async (treatmentIdBatch) => {
     const { data, error } = await supabase
       .from('treatments')
       .select('id, location_id, patient_id, date, description, patients(name)')
@@ -836,7 +875,7 @@ const fetchSyntheticMaterialCostExpenses = async (
     }
 
     return data || [];
-  }));
+  });
 
   const treatmentById = new Map(treatmentBatches.flat().map((row: any) => [row.id, row]));
   const linkedExpenseKeys = new Set(
@@ -844,6 +883,19 @@ const fetchSyntheticMaterialCostExpenses = async (
       .filter((expense) => ['material_cost', 'lab_cost', 'special_doctor_cost'].includes(expense.source_type || '') && expense.source_id)
       .map((expense) => `${expense.source_id}|${expense.source_type}`)
   );
+  if (range?.dateFrom || range?.dateTo) {
+    // Stored report rows are date-filtered. A persisted link outside this
+    // range must still suppress synthesis here, without adding that row to
+    // the report or scanning the full expense history.
+    await mapWithConcurrency(chunkUniqueIds(auditIds), REPORT_REQUEST_CONCURRENCY, async ids => {
+      const { data, error } = await fetchAllRows<Pick<Expense, 'source_id' | 'source_type'>>((from, to) => supabase
+        .from('expenses').select('source_id, source_type')
+        .in('source_type', ['material_cost', 'lab_cost', 'special_doctor_cost'])
+        .in('source_id', ids).order('id').range(from, to));
+      if (error) throw error;
+      (data || []).forEach(expense => linkedExpenseKeys.add(`${expense.source_id}|${expense.source_type}`));
+    });
+  }
 
   return auditRows.flatMap((auditRow: any): Expense[] => {
     const treatment = treatmentById.get(auditRow.source_id);
@@ -854,6 +906,10 @@ const fetchSyntheticMaterialCostExpenses = async (
     return (['material', 'lab', 'special_doctor'] as TreatmentCostType[]).flatMap((costType): Expense[] => {
       const summary = costSummaryByAuditAndType.get(`${auditRow.id}|${costType}`);
       if (!summary || summary.totalAmount <= 0) return [];
+      const expenseDate = treatment.date || summary.createdAt?.slice(0, 10) || '';
+      if ((range?.dateFrom || range?.dateTo) && (!expenseDate ||
+        (range.dateFrom && expenseDate < range.dateFrom) ||
+        (range.dateTo && expenseDate > range.dateTo))) return [];
       const metadata = getTreatmentCostExpenseMetadata(costType);
       if (linkedExpenseKeys.has(`${auditRow.id}|${metadata.sourceType}`)) return [];
       const treatmentContext = {
@@ -865,7 +921,7 @@ const fetchSyntheticMaterialCostExpenses = async (
       const hasLegacyExpense = existingExpenses.some((expense) => (
         expense.category === metadata.category &&
         expense.location_id === resolvedLocationId &&
-        expense.date === treatment.date &&
+        expense.date === expenseDate &&
         expense.description.startsWith(prefix)
       ));
       if (hasLegacyExpense) return [];
@@ -876,7 +932,7 @@ const fetchSyntheticMaterialCostExpenses = async (
         description,
         amount: summary.totalAmount,
         category: metadata.category,
-        date: treatment.date || summary.createdAt?.slice(0, 10) || '',
+        date: expenseDate,
         source_type: metadata.sourceType,
         source_id: auditRow.id,
         is_system_generated: true,
@@ -1888,6 +1944,21 @@ export const api = {
       delete patient.has_account;
       delete patient.username;
       return patient;
+    },
+    // Reporting does not need account joins or ONP maintenance. Keep every
+    // matching registration, including ranges larger than PostgREST's page cap.
+    getCreatedInRange: async (locationId: string | undefined, dateFrom: string, dateTo: string): Promise<Patient[]> => {
+      const nextDay = new Date(`${dateTo}T00:00:00Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const { data, error } = await fetchAllRows<any>((from, to) => {
+        let query = supabase.from('patients').select('id, location_id, name, created_at')
+          .gte('created_at', `${dateFrom}T00:00:00Z`).lt('created_at', nextDay.toISOString())
+          .order('id').range(from, to);
+        if (locationId) query = query.eq('location_id', locationId);
+        return query;
+      });
+      if (error) throw error;
+      return (data || []).map(mapPatient);
     },
     search: async (locationId: string | undefined, term: string, limit = 100): Promise<Patient[]> => {
       try {
@@ -3909,12 +3980,40 @@ export const api = {
       }
       return { records, allocationRecords };
     },
+    getOverviewRecords: async (locationId: string | undefined, range: OverviewRecordRange): Promise<ClinicalRecord[]> => loadOverviewRecords({
+      loadTreatmentsInRange: (scope, dates) => api.treatments.getAllRecords(scope, {
+        ...dates, limit: null, throwOnError: true, commissionRequestConcurrency: 3
+      }),
+      loadCommissionEntriesInRange: async (scope, dates) => {
+        const { data, error } = await fetchAllRows<any>((from, to) => {
+          let query = supabase.from('doctor_commission_entries').select('*')
+            .gte('payment_date', dates.dateFrom).lte('payment_date', dates.dateTo)
+            .order('id').range(from, to);
+          if (scope) query = query.eq('location_id', scope);
+          return query;
+        });
+        // Only genuinely pre-ledger installations may use stored legacy totals.
+        // Permission/network failures must be visible, not reported as zero.
+        if (error && !isMissingRelationError(error, 'doctor_commission_entries')) throw error;
+        return (data || []).map((row: any) => ({
+          id: row.id, paymentId: row.payment_id, treatmentId: row.treatment_id,
+          doctorId: row.doctor_id, paymentDate: row.payment_date, treatmentDate: row.treatment_date,
+          calculationMode: row.calculation_mode || 'percentage',
+          allocatedPayment: Number(row.allocated_payment || 0), materialDeduction: Number(row.material_deduction || 0),
+          commissionRate: Number(row.commission_rate || 0), earnings: Number(row.earnings || 0)
+        }));
+      },
+      loadTreatmentsByIds: (scope, treatmentIds) => api.treatments.getAllRecords(scope, {
+        treatmentIds, limit: null, includeCommissionEntries: false, throwOnError: true
+      })
+    }, locationId, range),
     getAllRecords: async (locationId?: string, options?: {
       limit?: number | null;
       dateFrom?: string;
       dateTo?: string;
       doctorId?: string;
       patientId?: string;
+      treatmentIds?: string[];
       includeCommissionEntries?: boolean;
       throwOnError?: boolean;
       commissionRequestConcurrency?: number;
@@ -3947,6 +4046,7 @@ export const api = {
           if (options?.dateTo) query = query.lte('date', options.dateTo);
           if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
           if (options?.patientId) query = query.eq('patient_id', options.patientId);
+          if (options?.treatmentIds) query = query.in('id', options.treatmentIds);
           if (signal) query = query.abortSignal(signal);
           let { data, error, count } = await query;
           throwIfReadAborted(signal, error);
@@ -3965,6 +4065,7 @@ export const api = {
             if (options?.dateTo) fallbackQuery = fallbackQuery.lte('date', options.dateTo);
             if (options?.doctorId) fallbackQuery = fallbackQuery.eq('doctor_id', options.doctorId);
             if (options?.patientId) fallbackQuery = fallbackQuery.eq('patient_id', options.patientId);
+            if (options?.treatmentIds) fallbackQuery = fallbackQuery.in('id', options.treatmentIds);
             if (signal) fallbackQuery = fallbackQuery.abortSignal(signal);
             const fallback = await fallbackQuery;
             throwIfReadAborted(signal, fallback.error);
@@ -4841,6 +4942,7 @@ export const api = {
       commissionRequestConcurrency?: number;
       countMode?: 'exact' | 'planned';
       includeCorrections?: boolean;
+      includeEnrichment?: boolean;
       onEnrichmentProgress?: MlsEnrichmentProgress;
       onProgress?: (loaded: number, total: number | null) => void;
       onRowsDownloaded?: () => void;
@@ -4927,6 +5029,9 @@ export const api = {
       const paymentIds = payments.map((payment) => payment.id);
       options?.onRowsDownloaded?.();
       signal?.throwIfAborted();
+      // Overview uses collected amounts and tender allocations, not MLS totals
+      // or the commission ledger. Other callers retain their full enrichment.
+      if (options?.includeEnrichment === false) return payments;
       const [entriesByPayment, costsByPayment] = await Promise.all([
         getDoctorEarningEntriesByPaymentIds(paymentIds, options?.commissionRequestConcurrency,
           (completed, total) => options?.onEnrichmentProgress?.('commission', completed, total), signal),
@@ -6192,7 +6297,7 @@ export const api = {
   },
 
   expenses: {
-    getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Expense[]> => {
+    getAll: async (locationId?: string, options?: { throwOnError?: boolean; dateFrom?: string; dateTo?: string }): Promise<Expense[]> => {
       try {
           const { data, error } = await fetchAllRows<Expense>((from, to) => {
             let query = supabase
@@ -6202,11 +6307,13 @@ export const api = {
               .order('id')
               .range(from, to);
             if (locationId) query = query.eq('location_id', locationId);
+            if (options?.dateFrom) query = query.gte('date', options.dateFrom);
+            if (options?.dateTo) query = query.lte('date', options.dateTo);
             return query;
           });
           if (error) throw error;
           const storedExpenses = (data || []) as Expense[];
-          const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses)
+          const syntheticMaterialExpenses = await fetchSyntheticMaterialCostExpenses(locationId, storedExpenses, options)
             .catch((err) => {
               if (options?.throwOnError) throw err;
               return [];

@@ -98,6 +98,7 @@ function harness(code = mlsCode) {
     isAdmin: true, getClinicCacheScope: (scope: string) => `tenant-a:${scope}`,
     getSessionRestrictedLocationId: vi.fn(() => undefined),
     dashboardLocationId: 'branch-a', dashboardFetchRequestRef: { current: 0 },
+    dashboardRange: { dateFrom: '2026-10-25', dateTo: '2026-10-25' },
     locations: [{ id: 'branch-a' }, { id: 'branch-b' }], ALL_BRANCHES_VALUE: 'all',
     localStorage: { setItem: vi.fn() },
     PATIENTS_INITIAL_LOAD_SIZE: 50,
@@ -460,7 +461,7 @@ const bundles = [
   { view: 'inventory', reads: ['medicines.getAll', 'medicines.getTopSelling'], setters: ['setMedicines', 'setTopSellingMedicines'] },
   { view: 'doctors', reads: ['doctors.getAll'], setters: ['setDoctors'] },
   { view: 'users', reads: ['users.getAll'], setters: ['setUsers'] },
-  { view: 'dashboard', reads: ['patients.getAll', 'appointments.getAll', 'treatments.getAllRecords', 'expenses.getAll', 'finance.getPayments'], setters: ['setDashboardPatients', 'setDashboardAppointments', 'setDashboardRecords', 'setDashboardExpenses', 'setDashboardPayments'] },
+  { view: 'dashboard', reads: ['patients.getCreatedInRange', 'appointments.getAll', 'treatments.getOverviewRecords', 'expenses.getAll', 'finance.getPayments'], setters: ['setDashboardPatients', 'setDashboardAppointments', 'setDashboardRecords', 'setDashboardExpenses', 'setDashboardPayments'] },
   { view: 'ai-assistant', reads: ['patients.getAll', 'appointments.getAll', 'doctors.getAll', 'treatments.getTypes', 'treatments.getAllRecords', 'medicines.getAll', 'expenses.getAll', 'medicines.getSales', 'finance.getPayments'], setters: ['setAssistantPatients', 'setAssistantAppointments', 'setAssistantDoctors', 'setAssistantTreatmentTypes', 'setAssistantRecords', 'setAssistantMedicines', 'setAssistantExpenses', 'setAssistantMedicineSales', 'setAssistantPaymentRecords'] },
 ];
 describe('Assistant parallel module/data startup runtime', () => {
@@ -593,6 +594,31 @@ describe.each(bundles)('App generic $view navigation cache runtime', (bundle) =>
     h.published(1);
     h.render('material-cost');
     h.render(bundle.view);
+    await flush();
+    h.counts(2);
+    h.published(2);
+  });
+});
+
+describe('overview range isolation', () => {
+  it('starts scoped parallel reads and reuses only an identical reporting range', async () => {
+    const bundle = bundles.find(bundle => bundle.view === 'dashboard')!;
+    const h = bundleHarness(bundle);
+    h.render('dashboard');
+    expect(h.context.api.patients.getCreatedInRange).toHaveBeenCalledWith('branch-a', '2026-10-25', '2026-10-25');
+    expect(h.context.api.treatments.getOverviewRecords).toHaveBeenCalledWith('branch-a', h.context.dashboardRange);
+    for (const [group, method] of [['appointments', 'getAll'], ['expenses', 'getAll'], ['finance', 'getPayments']]) {
+      expect(h.context.api[group][method]).toHaveBeenCalledWith('branch-a', expect.objectContaining(h.context.dashboardRange));
+    }
+    h.context.dashboardRange = { dateFrom: '2026-10-01', dateTo: '2026-10-31' };
+    h.render('dashboard');
+    h.counts(2);
+    await h.settle(0);
+    h.published(0);
+    await h.settle(1);
+    h.published(1);
+    h.context.dashboardRange = { dateFrom: '2026-10-25', dateTo: '2026-10-25' };
+    h.render('dashboard');
     await flush();
     h.counts(2);
     h.published(2);
