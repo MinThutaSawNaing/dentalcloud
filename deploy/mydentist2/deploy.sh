@@ -122,10 +122,21 @@ switched=1
 nginx -t
 systemctl reload nginx
 if [[ -f /etc/letsencrypt/live/mydentist2.dentalcloud.asia/fullchain.pem ]]; then
-    [[ $(curl --fail --silent --max-time 10 --resolve mydentist2.dentalcloud.asia:443:127.0.0.1 \
-        https://mydentist2.dentalcloud.asia/health) == ok ]]
-    [[ $(curl --fail --silent --max-time 10 --resolve mydentist2.dentalcloud.asia:443:127.0.0.1 \
-        https://mydentist2.dentalcloud.asia/release.txt) == "$sha" ]]
+    # Reload signals nginx asynchronously. Old workers can briefly accept new
+    # connections before their replacements take over. Require the exact release
+    # through TLS, but give the reload a bounded opportunity to finish first.
+    verified=0
+    for attempt in {1..15}; do
+        if [[ $(curl --fail --silent --max-time 3 --resolve mydentist2.dentalcloud.asia:443:127.0.0.1 \
+            https://mydentist2.dentalcloud.asia/health) == ok ]] && \
+           [[ $(curl --fail --silent --max-time 3 --resolve mydentist2.dentalcloud.asia:443:127.0.0.1 \
+            https://mydentist2.dentalcloud.asia/release.txt) == "$sha" ]]; then
+            verified=1
+            break
+        fi
+        sleep 1
+    done
+    (( verified )) || { echo 'TLS release verification failed after nginx reload' >&2; exit 1; }
 fi
 printf '%s %s\n' "$slot" "$sha" > "$base/current-release.new"
 mv "$base/current-release.new" "$base/current-release"

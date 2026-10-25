@@ -45,6 +45,14 @@ describe('mydentist2 production deployment safeguards', () => {
     expect(deploy).toContain('/release.txt) == "$sha"');
   });
 
+  it('waits for asynchronous nginx reload while preserving exact TLS release verification and rollback', () => {
+    const deploy = read('deploy.sh');
+    expect(deploy).toContain('for attempt in {1..15}; do');
+    expect(deploy).toContain('(( verified )) ||');
+    expect(deploy.indexOf('(( verified )) ||')).toBeLessThan(deploy.indexOf('committed=1'));
+    expect(deploy).toContain('cp "$work/previous-upstream.conf" /etc/nginx/snippets/mydentist2-upstream.conf');
+  });
+
   it('pins the base image and restricts SSH to the deploy command', () => {
     expect(read('Dockerfile')).toMatch(/FROM .+@sha256:[a-f0-9]{64}/);
     expect(read('Dockerfile')).toContain('COPY --chmod=644 nginx.conf');
