@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx-js-style';
-import type { MonthlyReport, MonthlyReportMetadata } from './monthlyReport';
+import { buildMonthlyReport, type MonthlyReport, type MonthlyReportMetadata } from './monthlyReport';
 import { buildMonthlyReportExcelWorkbook } from './monthlyReportExport';
 
 const metadata: MonthlyReportMetadata = {
@@ -29,6 +29,42 @@ const report: MonthlyReport = {
 };
 
 describe('monthly report Excel workbook', () => {
+  it('distinguishes treatment charges from expenses with unique column headings', async () => {
+    const workbook = await buildMonthlyReportExcelWorkbook(report, metadata);
+    for (const name of workbook.SheetNames.filter(name => name !== 'Executive Summary')) {
+      const headers = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 })[3] as string[];
+      expect(new Set(headers).size).toBe(headers.length);
+    }
+  });
+
+  it('writes full daily collections and reconciled totals to the actual XLSX file', async () => {
+    const source = buildMonthlyReport({
+      records: [{ id: 'treatment-1', location_id: 'location-1', patient_id: 'patient-1', patient_name: 'Aye Aye',
+        teeth: [], description: 'Crown', cost: 270000, doctorEarnings: 20000, date: '2026-07-10' }],
+      payments: [170000, 50000, 100000].map((amount, index) => ({
+        id: `payment-${index}`, patientId: 'patient-1', amount, clearedAmount: amount,
+        treatmentIds: ['treatment-1'], date: `2026-07-${10 + index}`, type: 'PARTIAL' as const, remainingBalance: 0
+      })),
+      costSummaries: {}, dateFrom: metadata.dateFrom, dateTo: metadata.dateTo
+    });
+    const workbook = await buildMonthlyReportExcelWorkbook(source, metadata);
+    const reopened = XLSX.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true });
+    const detail = reopened.Sheets['Treatment Detail'];
+    expect([detail.K5.v, detail.K6.v, detail.K7.v]).toEqual([170000, 50000, 100000]);
+    expect(detail.K8.v).toBe(320000);
+    expect(detail.L8.v).toBe(0);
+    const summary = reopened.Sheets['Executive Summary'];
+    expect(detail.K4.v).toBe('Period Receipts');
+    expect(summary.D7.v).toBe('Period Receipts');
+    expect(summary.E7.v).toBe(320000);
+    expect(summary.E10.v).toBe(270000);
+    expect(summary.E9.v).toBe(1);
+    expect(summary.A16.v).toContain('full receipts');
+    for (const name of ['By Treatment', 'By Clinician', 'By Patient Type']) {
+      expect(reopened.Sheets[name].E5.v).toBe(270000);
+    }
+  });
+
   it('builds a structured, readable workbook with professional report sections', async () => {
     const workbook = await buildMonthlyReportExcelWorkbook(report, metadata);
 
@@ -43,7 +79,11 @@ describe('monthly report Excel workbook', () => {
     expect(summary.G5.v).toBe('COSTS & PROFITABILITY');
     expect(summary.E6.z).toBe('#,##0" Ks"');
     expect(summary.E9.z).toBe('0.0%');
-    expect(summary.H11.z).toBe('0.0%');
+    expect(summary.H11.z).toBe('#,##0" Ks"');
+    expect(summary.H11.v).toBe(65000);
+    expect(summary.H12.z).toBe('0.0%');
+    expect(summary.H12.v).toBe(0.65);
+    expect(summary.E10.z).toBe('#,##0" Ks"');
     expect(summary.A1.s).toMatchObject({
       fill: { patternType: 'solid', fgColor: { rgb: '0F172A' } },
       font: { bold: true, color: { rgb: 'FFFFFF' } }
@@ -52,21 +92,27 @@ describe('monthly report Excel workbook', () => {
       fill: { patternType: 'solid', fgColor: { rgb: '4F46E5' } },
       border: { bottom: { style: 'medium' } }
     });
-    expect(summary.H10.s).toMatchObject({
+    expect(summary.H11.s).toMatchObject({
       fill: { patternType: 'solid', fgColor: { rgb: 'DCFCE7' } },
       font: { color: { rgb: '166534' } }
     });
-    expect(summary['!merges']).toHaveLength(8);
+    expect(summary['!merges']).toHaveLength(10);
+    expect(summary.A14.v).toBe('REPORT DEFINITION');
+    expect(summary.A16.v).toContain('Actual period receipts are unavailable');
+    expect(summary.D7.v).toBe('Allocated Treatment Payment');
+    expect(workbook.Sheets['Treatment Detail'].K4.v).toBe('Allocated Treatment Payment');
+    expect(summary.A17.v).toContain('not the patient account balance');
     expect(summary['!freeze']).toMatchObject({ ySplit: 4, topLeftCell: 'A5' });
 
     const detail = workbook.Sheets['Treatment Detail'];
-    expect(detail.A4.v).toBe('Treatment Date');
+    expect(detail.A4.v).toBe('Activity Date');
     expect(detail.B4.v).toBe('Patient Name');
     expect(detail.F4.v).toBe('Township');
     expect(detail.F5.v).toBe('Bahan');
-    expect(detail.J4.v).toBe('Total Cost');
-    expect(detail.L4.v).toBe('Receivable Balance');
-    expect(detail.P4.v).toBe('Doctor RF');
+    expect(detail.J4.v).toBe('Treatment Charges');
+    expect(detail.L4.v).toBe('Closing Treatment Balance');
+    expect(detail.P4.v).toBe('Doctor Commission');
+    expect(detail.Q4.v).toBe('Total Expenses');
     expect(detail.A6.v).toBe('REPORT TOTAL');
     expect(detail.J5.z).toBe('#,##0" Ks"');
     expect(detail.S5.z).toBe('0.0%');
@@ -91,7 +137,9 @@ describe('monthly report Excel workbook', () => {
     const clinician = workbook.Sheets['By Clinician'];
     expect(clinician.A1.v).toBe('CLINICIAN PERFORMANCE');
     expect(clinician.A4.v).toBe('Clinician');
-    expect(clinician.D4.v).toBe('Total Cost');
+    expect(clinician.D4.v).toBe('Treatment Charges');
+    expect(clinician.E4.v).toBe('Allocated Treatment Payment');
+    expect(clinician.F4.v).toBe('Total Expenses');
     expect(clinician.A6.v).toBe('REPORT TOTAL');
   });
 
@@ -134,7 +182,7 @@ describe('monthly report Excel workbook', () => {
     const workbook = await buildMonthlyReportExcelWorkbook(emptyReport, metadata);
     const detail = workbook.Sheets['Treatment Detail'];
 
-    expect(detail.A4.v).toBe('Treatment Date');
+    expect(detail.A4.v).toBe('Activity Date');
     expect(detail.A5.v).toBe('REPORT TOTAL');
     expect(detail.J5.v).toBe(0);
     expect(detail.J5.z).toBe('#,##0" Ks"');
@@ -158,7 +206,7 @@ describe('monthly report Excel workbook', () => {
       fill: { patternType: 'solid', fgColor: { rgb: 'FEE2E2' } },
       font: { color: { rgb: 'B91C1C' } }
     });
-    expect(workbook.Sheets['Executive Summary'].H10.s?.fill?.fgColor?.rgb).toBe('FEE2E2');
+    expect(workbook.Sheets['Executive Summary'].H11.s?.fill?.fgColor?.rgb).toBe('FEE2E2');
   });
 
   it('exports same-patient same-day treatments as one detail row without changing treatment analysis', async () => {

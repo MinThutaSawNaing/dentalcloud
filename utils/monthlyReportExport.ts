@@ -26,7 +26,7 @@ const addPdfGroupTable = (doc: jsPDF, title: string, groups: MonthlyReportGroup[
   doc.text(title, 14, startY);
   autoTable(doc, {
     startY: startY + 4,
-    head: [['Category', 'Treatments', 'Patients', 'Production', 'Payment', 'Total Cost', 'Net Profit', 'Margin']],
+    head: [['Category', 'Treatments', 'Patients', 'Treatment Charges', 'Allocated Payment', 'Total Expenses', 'Net Profit', 'Margin']],
     body: groups.slice(0, 15).map(group => [
       group.name, String(group.treatments), String(group.patients), formatCurrency(group.production, metadata.currency),
       formatCurrency(group.payment, metadata.currency), formatCurrency(group.totalCost, metadata.currency),
@@ -42,6 +42,7 @@ const addPdfGroupTable = (doc: jsPDF, title: string, groups: MonthlyReportGroup[
 
 export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: MonthlyReportMetadata) => {
   const generatedAt = metadata.generatedAt || new Date();
+  const hasPeriodReceipts = report.summary.periodCollected !== undefined;
   const detailRows = groupMonthlyReportDetailRows(report.detailRows || report.rows);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3', compress: true } as any);
   const drawingDoc = doc as any;
@@ -61,11 +62,11 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
     ['Treatments', String(report.summary.treatmentCount)],
     ['Patients', String(report.summary.patientCount)],
     ['Production', formatCurrency(report.summary.production, metadata.currency)],
-    ['Payments', formatCurrency(report.summary.payment, metadata.currency)],
-    ['Total Cost', formatCurrency(report.summary.totalCost, metadata.currency)],
+    [hasPeriodReceipts ? 'Period Receipts' : 'Allocated Payment', formatCurrency(report.summary.periodCollected ?? report.summary.payment, metadata.currency)],
+    ['Total Expenses', formatCurrency(report.summary.totalCost, metadata.currency)],
     ['Net Profit', formatCurrency(report.summary.netProfit, metadata.currency)],
     ['Net Margin', percentage(report.summary.netMargin)],
-    ['Collection Rate', percentage(report.summary.collectionRate)]
+    ['Treatment Collection Rate', percentage(report.summary.collectionRate)]
   ];
   const cardWidth = (width - 28 - 7 * 3) / 8;
   cards.forEach(([label, value], index) => {
@@ -83,7 +84,7 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
 
   autoTable(doc, {
     startY: 71,
-    head: [['Date', 'Pt Name', 'Age', 'Phone', 'City', 'Township', 'Pt Type', 'Treatment', 'Dentist / Doctor', 'Total Cost', 'Payment', 'Receivable Balance', 'Lab Cost', 'Material Cost', 'Special Doctor Cost', 'Doctor RF', 'Total Cost', 'Net Profit']],
+    head: [['Activity Date', 'Pt Name', 'Age', 'Phone', 'City', 'Township', 'Pt Type', 'Treatment', 'Dentist / Doctor', 'Treatment Charges', hasPeriodReceipts && report.detailRows ? 'Period Receipts' : 'Allocated Payment', 'Closing Treatment Balance', 'Lab Cost', 'Material Cost', 'Special Doctor Cost', 'Doctor Commission', 'Total Expenses', 'Net Profit']],
     body: detailRows.length ? detailRows.map(row => [
       row.date, row.patientName, row.age === null ? '-' : String(row.age), row.phone, row.city, row.township, row.patientType,
       row.treatment, row.doctor, formatCurrency(row.cost, metadata.currency), formatCurrency(row.payment, metadata.currency),
@@ -116,7 +117,9 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
   doc.text('Ranked by treatment production. Top 15 categories are shown in each section.', 14, 28);
-  addPdfGroupTable(doc, 'Treatment Performance', report.byTreatment, 39, metadata);
+  doc.text('Treatment Collection Rate = payments allocated to report treatments through the end date / treatment charges; not period receipts / charges.', 14, 33);
+  doc.text('Period receipts cover report patients only and include medicine/service fees and older balances. Closing balances are report-treatment receivables.', 14, 38);
+  addPdfGroupTable(doc, 'Treatment Performance', report.byTreatment, 46, metadata);
   const firstEnd = Number((doc as any).lastAutoTable?.finalY || 85);
   addPdfGroupTable(doc, 'Clinician Performance', report.byDoctor, firstEnd + 10, metadata);
   const secondEnd = Number((doc as any).lastAutoTable?.finalY || 145);
@@ -276,6 +279,7 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
   const workbook = XLSX.utils.book_new();
   const generatedAt = metadata.generatedAt || new Date();
   const currency = currencyFormat(metadata.currency);
+  const hasPeriodReceipts = report.summary.periodCollected !== undefined;
   workbook.Props = {
     Title: 'Monthly Treatment & Profitability Report',
     Subject: `${metadata.locationName} | ${metadata.dateFrom} to ${metadata.dateTo}`,
@@ -289,16 +293,20 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
     [`Generated ${generatedLabel(generatedAt)}`, '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', ''],
     ['REPORT VOLUME', '', '', 'REVENUE & COLLECTIONS', '', '', 'COSTS & PROFITABILITY', ''],
-    ['Treatments Performed', report.summary.treatmentCount, '', 'Treatment Production', report.summary.production, '', 'Material Cost', report.summary.materialCost],
-    ['Distinct Patients', report.summary.patientCount, '', 'Collected Payment', report.summary.payment, '', 'Lab Cost', report.summary.labCost],
-    ['', '', '', 'Outstanding Balance', report.summary.balance, '', 'Special Doctor Cost', report.summary.specialDoctorCost],
-    ['', '', '', 'Collection Rate', report.summary.collectionRate, '', 'Doctor Cost', report.summary.doctorCost],
-    ['', '', '', '', '', '', 'Total Cost', report.summary.totalCost],
+    ['Treatments Performed', report.summary.treatmentCount, '', 'Treatment Charges', report.summary.production, '', 'Material Cost', report.summary.materialCost],
+    ['Distinct Patients', report.summary.patientCount, '', hasPeriodReceipts ? 'Period Receipts' : 'Allocated Treatment Payment', report.summary.periodCollected ?? report.summary.payment, '', 'Lab Cost', report.summary.labCost],
+    ['', '', '', 'Closing Treatment Balance', report.summary.balance, '', 'Special Doctor Cost', report.summary.specialDoctorCost],
+    ['', '', '', 'Treatment Collection Rate', report.summary.collectionRate, '', 'Doctor Commission', report.summary.doctorCost],
+    ['', '', '', 'Allocated Treatment Payment', report.summary.payment, '', 'Total Expenses', report.summary.totalCost],
     ['', '', '', '', '', '', 'Net Profit', report.summary.netProfit],
     ['', '', '', '', '', '', 'Net Margin', report.summary.netMargin],
     ['', '', '', '', '', '', '', ''],
     ['REPORT DEFINITION', '', '', '', '', '', '', ''],
-    ['Net Profit = Treatment Production - Material Cost - Lab Cost - Special Doctor Cost - Doctor Cost. Unrelated operating expenses are excluded.', '', '', '', '', '', '', '']
+    ['Net Profit = Treatment Charges - Material Cost - Lab Cost - Special Doctor Cost - Doctor Commission. Unrelated operating expenses are excluded.', '', '', '', '', '', '', ''],
+    [hasPeriodReceipts
+      ? 'Period Receipts = full receipts received in the selected dates for patients with treatments in this report, including medicine/service fees and older balances. Explicit links outside the loaded branch scope are excluded.'
+      : 'Actual period receipts are unavailable in this treatment-only report. Payment values are allocations to report treatments, not full receipts.', '', '', '', '', '', '', ''],
+    ['Allocated Treatment Payment and Treatment Collection Rate use payments applied to report treatments through the end date, including earlier receipts. Closing Treatment Balance is the unpaid amount for those treatments at the end date, not the patient account balance.', '', '', '', '', '', '', '']
   ];
   const summarySheet: any = XLSX.utils.aoa_to_sheet(summaryRows);
   summarySheet['!cols'] = [24, 16, 4, 24, 18, 4, 24, 18].map(wch => ({ wch }));
@@ -306,13 +314,14 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
   summarySheet['!merges'] = [
     XLSX.utils.decode_range('A1:H1'), XLSX.utils.decode_range('A2:H2'), XLSX.utils.decode_range('A3:H3'),
     XLSX.utils.decode_range('A5:B5'), XLSX.utils.decode_range('D5:E5'), XLSX.utils.decode_range('G5:H5'),
-    XLSX.utils.decode_range('A13:H13'), XLSX.utils.decode_range('A14:H14')
+    XLSX.utils.decode_range('A14:H14'), XLSX.utils.decode_range('A15:H15'),
+    XLSX.utils.decode_range('A16:H16'), XLSX.utils.decode_range('A17:H17')
   ];
   summarySheet['!freeze'] = { xSplit: 0, ySplit: 4, topLeftCell: 'A5', activePane: 'bottomLeft', state: 'frozen' };
-  ['E6', 'E7', 'E8', 'H6', 'H7', 'H8', 'H9', 'H10'].forEach(address => {
+  ['E6', 'E7', 'E8', 'E10', 'H6', 'H7', 'H8', 'H9', 'H10', 'H11'].forEach(address => {
     if (summarySheet[address]?.t === 'n') summarySheet[address].z = currency;
   });
-  ['E9', 'H11'].forEach(address => {
+  ['E9', 'H12'].forEach(address => {
     if (summarySheet[address]?.t === 'n') summarySheet[address].z = '0.0%';
   });
   styleReportBanner(XLSX, summarySheet, 'H');
@@ -327,35 +336,36 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
     alignment: { vertical: 'center', horizontal: 'left' },
     border: excelBorder('medium', EXCEL_COLORS.indigo)
   }));
-  ['A6:B11', 'D6:E11', 'G6:H11'].forEach(range => applyRangeStyle(XLSX, summarySheet, range, {
+  ['A6:B12', 'D6:E12', 'G6:H12'].forEach(range => applyRangeStyle(XLSX, summarySheet, range, {
     fill: fill(EXCEL_COLORS.white),
     font: { name: 'Calibri', sz: 10, color: { rgb: EXCEL_COLORS.slate } },
     alignment: { vertical: 'center', horizontal: 'left' },
     border: excelBorder()
   }));
-  ['B6', 'B7', 'E6', 'E7', 'E8', 'E9', 'H6', 'H7', 'H8', 'H9', 'H10', 'H11'].forEach(address => {
+  ['B6', 'B7', 'E6', 'E7', 'E8', 'E9', 'E10', 'H6', 'H7', 'H8', 'H9', 'H10', 'H11', 'H12'].forEach(address => {
     applyCellStyle(summarySheet, address, { alignment: { vertical: 'center', horizontal: 'right' } });
   });
-  styleProfitCell(summarySheet, 'H10', report.summary.netProfit, true);
   styleProfitCell(summarySheet, 'H11', report.summary.netProfit, true);
-  applyRangeStyle(XLSX, summarySheet, 'A13:H13', {
+  styleProfitCell(summarySheet, 'H12', report.summary.netProfit, true);
+  applyRangeStyle(XLSX, summarySheet, 'A14:H14', {
     fill: fill(EXCEL_COLORS.total),
     font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: EXCEL_COLORS.navy } },
     alignment: { vertical: 'center', horizontal: 'left' },
     border: excelBorder('medium', EXCEL_COLORS.slate)
   });
-  applyRangeStyle(XLSX, summarySheet, 'A14:H14', {
+  applyRangeStyle(XLSX, summarySheet, 'A15:H17', {
     fill: fill(EXCEL_COLORS.stripe),
     font: { name: 'Calibri', sz: 9, italic: true, color: { rgb: EXCEL_COLORS.slate } },
     alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
     border: excelBorder()
   });
+  [14, 15, 16].forEach(row => { summarySheet['!rows'][row] = { hpt: 36 }; });
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Executive Summary');
 
   const detailHeaders = [
-    'Treatment Date', 'Patient Name', 'Age', 'Phone Number', 'City', 'Township', 'Patient Type', 'Treatment', 'Clinician',
-    'Total Cost', 'Collected Payment', 'Receivable Balance', 'Material Cost', 'Lab Cost', 'Special Doctor Cost', 'Doctor RF',
-    'Total Cost', 'Net Profit', 'Net Margin'
+    'Activity Date', 'Patient Name', 'Age', 'Phone Number', 'City', 'Township', 'Patient Type', 'Treatment', 'Clinician',
+    'Treatment Charges', hasPeriodReceipts && report.detailRows ? 'Period Receipts' : 'Allocated Treatment Payment', 'Closing Treatment Balance', 'Material Cost', 'Lab Cost', 'Special Doctor Cost', 'Doctor Commission',
+    'Total Expenses', 'Net Profit', 'Net Margin'
   ];
   const groupedDetailRows = groupMonthlyReportDetailRows(report.detailRows || report.rows);
   const detailData = groupedDetailRows.map(row => [
@@ -368,7 +378,7 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
     ['', ...Array(18).fill('')],
     detailHeaders,
     ...detailData,
-    ['REPORT TOTAL', '', '', '', '', '', '', '', '', report.summary.production, report.summary.payment, report.summary.balance,
+    ['REPORT TOTAL', '', '', '', '', '', '', '', '', report.summary.production, report.summary.periodCollected ?? report.summary.payment, report.summary.balance,
       report.summary.materialCost, report.summary.labCost, report.summary.specialDoctorCost, report.summary.doctorCost, report.summary.totalCost, report.summary.netProfit, report.summary.netMargin]
   ];
   const detailSheet: any = XLSX.utils.aoa_to_sheet(detailRows);
@@ -390,7 +400,7 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
       [title, '', '', '', '', '', '', ''],
       [reportSubtitle(metadata), '', '', '', '', '', '', ''],
       ['', '', '', '', '', '', '', ''],
-      [categoryHeader, 'Treatments', 'Distinct Patients', 'Total Cost', 'Collected Payment', 'Total Cost', 'Net Profit', 'Net Margin'],
+      [categoryHeader, 'Treatments', 'Distinct Patients', 'Treatment Charges', 'Allocated Treatment Payment', 'Total Expenses', 'Net Profit', 'Net Margin'],
       ...groupData,
       ['REPORT TOTAL', report.summary.treatmentCount, report.summary.patientCount, report.summary.production, report.summary.payment,
         report.summary.totalCost, report.summary.netProfit, report.summary.netMargin]
