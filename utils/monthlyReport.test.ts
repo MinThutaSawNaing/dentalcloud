@@ -50,7 +50,7 @@ describe('monthly report', () => {
 
     const detailRows = groupMonthlyReportDetailRows(report.detailRows || []);
     expect(detailRows.map(row => ({ date: row.date, cost: row.cost, payment: row.payment, balance: row.balance }))).toEqual([
-      { date: '2026-09-16', cost: 250000, payment: 100000, balance: 150000 },
+      { date: '2026-09-16', cost: 250000, payment: 100000, balance: 0 },
       { date: '2026-09-25', cost: 0, payment: 150000, balance: 0 }
     ]);
     expect(report.summary).toMatchObject({ treatmentCount: 1, production: 250000, payment: 250000 });
@@ -64,6 +64,70 @@ describe('monthly report', () => {
     });
     expect(report.rows.map(row => row.payment)).toEqual([50, 150]);
     expect(report.summary.balance).toBe(200);
+  });
+
+  it('preserves actual daily receipts even when the last receipt exceeds remaining treatment debt', () => {
+    const report = buildMonthlyReport({
+      records: [record({ cost: 270000, date: '2026-07-10' })],
+      payments: [170000, 50000, 100000].map((amount, index) => payment({
+        id: `payment-${index}`, amount, clearedAmount: amount, date: `2026-07-${10 + index}`
+      })),
+      costSummaries: {}, dateFrom: '2026-07-01', dateTo: '2026-07-31'
+    });
+
+    expect(report.detailRows?.map(row => row.payment)).toEqual([170000, 50000, 100000]);
+    expect(report.summary).toMatchObject({ payment: 270000, balance: 0, periodCollected: 320000 });
+  });
+
+  it('does not double-count same-day receivables and reconciles them to the closing treatment balance', () => {
+    const report = buildMonthlyReport({
+      records: [record(), record({ id: 'treatment-2', cost: 200 })],
+      payments: [payment({ amount: 150, clearedAmount: 150, treatmentIds: ['treatment-1', 'treatment-2'] })],
+      costSummaries: {}
+    });
+
+    expect(groupMonthlyReportDetailRows(report.detailRows || [])[0]).toMatchObject({ payment: 150, balance: 150 });
+    expect(report.summary.balance).toBe(150);
+  });
+
+  it('separates full mixed-receipt collections from treatment-only allocation and excludes out-of-period receipts', () => {
+    const mixed = payment({
+      id: 'mixed', amount: 150, clearedAmount: 150,
+      receiptSnapshot: {
+        treatments: [{ id: 'treatment-1', finalCost: 100 }],
+        medicines: [{ id: 'sale-1', totalPrice: 40 }],
+        payment: { serviceFeeAmount: 10 }
+      } as PaymentRecord['receiptSnapshot']
+    });
+    const report = buildMonthlyReport({
+      records: [record({ cost: 1000 })],
+      payments: [
+        payment({ id: 'earlier', amount: 50, clearedAmount: 50, date: '2026-06-30' }),
+        mixed, { ...mixed },
+        payment({ id: 'outside-scope', amount: 999, clearedAmount: 999, treatmentIds: ['other-branch-treatment'] }),
+        payment({ id: 'other-patient', patientId: 'other-patient', amount: 999, clearedAmount: 999, treatmentIds: [] })
+      ],
+      costSummaries: {}, dateFrom: '2026-07-01', dateTo: '2026-07-31'
+    });
+
+    expect(report.summary).toMatchObject({ payment: 150, balance: 850, periodCollected: 150 });
+    expect(report.detailRows).toHaveLength(1);
+    expect(report.detailRows?.[0]).toMatchObject({ payment: 150, balance: 850 });
+  });
+
+  it('keeps a receipt after treatment debt is fully paid and respects cleared-amount fallback', () => {
+    const report = buildMonthlyReport({
+      records: [record()],
+      payments: [
+        payment({ id: 'settled', amount: 100, clearedAmount: undefined }),
+        payment({ id: 'extra', amount: 50, clearedAmount: undefined, date: '2026-07-11', treatmentIds: [] }),
+        payment({ id: 'zero', amount: 100, clearedAmount: 0, date: '2026-07-12' })
+      ],
+      costSummaries: {}, dateFrom: '2026-07-01', dateTo: '2026-07-31'
+    });
+
+    expect(report.detailRows?.map(row => row.payment)).toEqual([100, 50]);
+    expect(report.summary).toMatchObject({ payment: 100, balance: 0, periodCollected: 150 });
   });
 
   it('deduplicates repeated payments and supports legacy oldest-balance allocation', () => {

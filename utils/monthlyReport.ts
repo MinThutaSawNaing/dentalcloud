@@ -7,6 +7,7 @@ import {
   getPaymentTreatmentShare
 } from './paymentTreatmentAllocation';
 import { chunkUniqueIds, REPORT_URL_BATCH_SIZE } from './reportBatching';
+import { getPaymentReceivedAmount } from './paymentHistory';
 
 export interface MonthlyReportSourceRecord extends ClinicalRecord {
   patient_age?: number | null;
@@ -67,6 +68,9 @@ export interface MonthlyReportSummary {
   netProfit: number;
   netMargin: number;
   collectionRate: number;
+  // Actual receipts on payment dates, not capped by treatment debt. Optional
+  // for compatibility with callers supplying treatment-only report fixtures.
+  periodCollected?: number;
 }
 
 export interface MonthlyReportGroup {
@@ -84,8 +88,8 @@ export interface MonthlyReport {
   rows: MonthlyReportRow[];
   // Detail rows are date-based: treatment production stays on the treatment
   // date, while later collections are represented by zero-production rows on
-  // their payment dates. `rows` remains the treatment-only source used by the
-  // report summaries and analysis groups.
+  // their payment dates. Balances are closing treatment receivables, while
+  // `rows` remains the treatment-only source used by the analysis groups.
   detailRows?: MonthlyReportRow[];
   summary: MonthlyReportSummary;
   byTreatment: MonthlyReportGroup[];
@@ -226,7 +230,6 @@ const buildDateBasedDetailRows = (
   treatmentRows: MonthlyReportRow[],
   allocationRecords: MonthlyReportSourceRecord[],
   payments: PaymentRecord[],
-  allocations: ReturnType<typeof buildPaymentAllocations>,
   dateFrom?: string,
   dateTo?: string
 ): MonthlyReportRow[] => {
@@ -236,20 +239,24 @@ const buildDateBasedDetailRows = (
   const inferredTo = treatmentRows.reduce((latest, row) => row.date > latest ? row.date : latest, treatmentRows[0].date);
   const from = dateFrom || inferredFrom;
   const to = dateTo || inferredTo;
-  const paymentById = new Map(dedupePaymentRecords(payments).map(payment => [payment.id, payment]));
   const recordsById = new Map(allocationRecords.map(record => [record.id, record]));
+  const reportPatientIds = new Set(treatmentRows.map(row => row.patientId));
   const paymentByPatientDate = new Map<string, { amount: number; paymentIds: string[]; treatmentIds: string[] }>();
 
-  allocations.forEach((allocation) => {
-    if (allocation.paymentDate < from || allocation.paymentDate > to) return;
-    const payment = paymentById.get(allocation.paymentId);
-    const linkedTreatment = recordsById.get(allocation.treatmentId);
-    if (!payment || !linkedTreatment) return;
-    const key = `${linkedTreatment.patient_id}|${allocation.paymentDate}`;
+  // Collections are receipts, not commissionable treatment allocations. The
+  // latter deliberately omit non-treatment charges and cap at outstanding debt.
+  dedupePaymentRecords(payments).forEach((payment) => {
+    if (payment.date < from || payment.date > to || !reportPatientIds.has(payment.patientId)) return;
+    const treatmentIds = getPaymentTreatmentIds(payment);
+    // Preserve the existing branch/scope guard for explicitly linked receipts.
+    if (treatmentIds.some(id => recordsById.get(id)?.patient_id !== payment.patientId)) return;
+    const amount = positiveMoney(getPaymentReceivedAmount(payment));
+    if (amount <= 0) return;
+    const key = `${payment.patientId}|${payment.date}`;
     const current = paymentByPatientDate.get(key) || { amount: 0, paymentIds: [], treatmentIds: [] };
-    current.amount = money(current.amount + allocation.amount);
-    if (!current.paymentIds.includes(allocation.paymentId)) current.paymentIds.push(allocation.paymentId);
-    if (!current.treatmentIds.includes(allocation.treatmentId)) current.treatmentIds.push(allocation.treatmentId);
+    current.amount = money(current.amount + amount);
+    current.paymentIds.push(payment.id);
+    current.treatmentIds = Array.from(new Set([...current.treatmentIds, ...treatmentIds]));
     paymentByPatientDate.set(key, current);
   });
 
@@ -263,7 +270,7 @@ const buildDateBasedDetailRows = (
 
   // Keep a collection on only one treatment row per patient/date so the
   // existing same-day grouping does not duplicate it across multiple services.
-  const detailRows = treatmentRows.map((row) => ({ ...row, payment: 0, balance: row.cost }));
+  const detailRows = treatmentRows.map((row) => ({ ...row, payment: 0 }));
   treatmentRowsByPatientDate.forEach((rows, key) => {
     const collection = paymentByPatientDate.get(key);
     if (!collection) return;
@@ -272,15 +279,8 @@ const buildDateBasedDetailRows = (
     if (index < 0) return;
     detailRows[index] = {
       ...detailRows[index],
-      payment: collection.amount,
-      balance: money(Math.max(0, detailRows[index].cost - collection.amount))
+      payment: collection.amount
     };
-    // If several treatment rows share a date, the grouped detail row should
-    // retain the full date-level balance without repeating the collection.
-    if (rows.length > 1) {
-      const totalCost = money(rows.reduce((sum, treatment) => sum + treatment.cost, 0));
-      detailRows[index].balance = money(Math.max(0, totalCost - collection.amount));
-    }
     paymentByPatientDate.delete(key);
   });
 
@@ -408,10 +408,14 @@ export const buildMonthlyReport = (data: MonthlyReportData): MonthlyReport => {
     };
   }).sort((a, b) => a.date.localeCompare(b.date) || a.patientName.localeCompare(b.patientName) || a.treatmentId.localeCompare(b.treatmentId));
 
+  const detailRows = buildDateBasedDetailRows(rows, allocationRecords, data.payments, data.dateFrom, data.dateTo);
   return {
     rows,
-    detailRows: buildDateBasedDetailRows(rows, allocationRecords, data.payments, paymentAllocations, data.dateFrom, data.dateTo),
-    summary: summarizeRows(rows),
+    detailRows,
+    summary: {
+      ...summarizeRows(rows),
+      periodCollected: money(detailRows.reduce((sum, row) => sum + row.payment, 0))
+    },
     byTreatment: groupRows(rows, row => row.treatment),
     byDoctor: groupRows(rows, row => row.doctor),
     byPatientType: groupRows(rows, row => row.patientType)
