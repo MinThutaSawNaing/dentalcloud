@@ -29,7 +29,7 @@ const UsersView: React.FC<UsersViewProps> = ({
   const [showAll, setShowAll] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [pendingDeleteUser, setPendingDeleteUser] = useState<UserType | null>(null);
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
 
   // Filtered data based on search term
   const filteredUsers = useMemo(() => {

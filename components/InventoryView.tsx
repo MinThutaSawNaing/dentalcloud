@@ -46,7 +46,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [medicineToDelete, setMedicineToDelete] = useState<{id: string, name: string} | null>(null);
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
 
   // Filtered data based on search term
   const filteredMedicines = useMemo(() => {

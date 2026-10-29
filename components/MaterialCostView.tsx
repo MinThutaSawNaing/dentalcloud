@@ -47,7 +47,7 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   const [dateFrom, setDateFrom] = useState(todayKey);
   const [dateTo, setDateTo] = useState(todayKey);
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
 
   React.useEffect(() => {
     if (loading || loadError) setEditingRow(null);

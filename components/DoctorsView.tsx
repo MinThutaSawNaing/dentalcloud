@@ -36,7 +36,7 @@ const DoctorsView: React.FC<DoctorsViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [doctorToDelete, setDoctorToDelete] = useState<string | null>(null);
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   // Filtered data based on search term

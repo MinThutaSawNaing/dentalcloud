@@ -52,7 +52,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
   const [dateTo, setDateTo] = useState(todayKey);
   const [materialSummaries, setMaterialSummaries] = useState<Record<string, TreatmentCostSummary>>({});
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
 
   const handleDateFromChange = (value: string) => {
     setDateFrom(value);

@@ -42,7 +42,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const itemsPerPage = 10;
+  const itemsPerPage = 100;
 
   const categories = useMemo(() => {
     const unique = new Set<string>();
