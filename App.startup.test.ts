@@ -230,16 +230,11 @@ const section = (source: string, start: string, end: string) => {
     }
     expect(section(app, 'const handlePatientSelect =', '// Clinical Focus')).toContain('appointmentPatientSelectionRef.current += 1;');
   });
-  it('starts directory history automatically only after the allowed Patients screen is ready', () => {
-    const auto = section(app, "if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId", "if (currentView !== 'finance')");
-    expect(auto).toContain("currentView !== 'patients'");
-    expect(auto).toContain("!canAccessView('patients')");
-    expect(auto).toContain('loadedLazyView !== `${currentLocationId}:patients`');
-    expect(auto).toContain('historyScope === currentLocationId || historyLoading || historyError) return;');
-    expect(auto).toContain('void loadDirectoryHistory();');
-  });
-  it('guards background progress and publishes complete datasets together', () => {
-    const sync = section(app, 'const loadDirectoryHistory =', "if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId");
+  it('keeps full directory history as an explicit filter action after Patients is ready', () => {
+    expect(app).toContain('// Advanced directory filters are an explicit opt-in.');
+    expect(app).not.toContain('void loadDirectoryHistory();');
+    expect(app).toContain('onLoadHistory={loadDirectoryHistory}');
+    const sync = section(app, 'const loadDirectoryHistory =', 'const fetchMedicines =');
     expect(sync).toContain('historyInFlightRef.current?.scope === scope');
     expect(sync).toContain('currentLocationIdRef.current === scope');
     expect(sync).toContain('if (!isCurrent()) return;');

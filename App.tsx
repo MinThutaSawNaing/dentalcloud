@@ -2844,10 +2844,21 @@ const App: React.FC = () => {
     setLoadedLazyView('');
     const load = async () => {
       if (view === 'expenses') {
+        // ExpensesView only shows treatment/medicine revenue for the current
+        // month and charts expenses over six months. Load exactly that window,
+        // not the clinic's complete history.
+        const expenseRangeStart = new Date();
+        expenseRangeStart.setDate(1);
+        expenseRangeStart.setMonth(expenseRangeStart.getMonth() - 5);
+        const expenseDateFrom = [
+          expenseRangeStart.getFullYear(),
+          String(expenseRangeStart.getMonth() + 1).padStart(2, '0'),
+          String(expenseRangeStart.getDate()).padStart(2, '0')
+        ].join('-');
         const [expenseData, sales, records] = await cached(() => Promise.all([
           api.expenses.getAll(scope, { throwOnError: true }),
-          api.medicines.getSales(scope, undefined, { throwOnError: true }),
-          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true })
+          api.medicines.getSales(scope, undefined, { throwOnError: true, dateFrom: expenseDateFrom }),
+          api.treatments.getAllRecords(scope, { limit: null, dateFrom: expenseDateFrom, throwOnError: true })
         ]));
         if (!isCurrent()) return;
         setExpenses(expenseData);
@@ -3024,14 +3035,8 @@ const App: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (!leanStaffStartup || !isAuthenticated || initialSyncActive || !currentLocationId
-      || startupScope !== currentLocationId || currentView !== 'patients'
-      || !canAccessView('patients') || loadedLazyView !== `${currentLocationId}:patients`
-      || historyScope === currentLocationId || historyLoading || historyError) return;
-    void loadDirectoryHistory();
-  }, [leanStaffStartup, isAuthenticated, initialSyncActive, currentLocationId, startupScope,
-    currentView, allowedViews, loadedLazyView, historyScope, historyLoading, historyError]);
+  // Advanced directory filters are an explicit opt-in. The visible patient page
+  // uses bounded summaries, so startup and slow networks never wait for branch history.
 
   useEffect(() => {
     if (currentView !== 'finance') {

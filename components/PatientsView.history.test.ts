@@ -37,58 +37,48 @@ describe('PatientsView optional history readiness', () => {
     expect(markup).not.toMatch(/<fieldset[^>]*\sdisabled=""/);
   });
 
-  it('shows placeholders on desktop/mobile and disables only history controls', () => {
+  it('keeps the list usable and defers only history-dependent filters', () => {
     const markup = render({ historyReady: false });
-    expect(markup).toContain('Patient history syncs automatically in the background. You can keep using the patient list.');
-    expect(markup).not.toContain('Load history');
-    expect(markup).not.toContain('>Retry</button>');
+    expect(markup).toContain('Patient rows load first. Visit, doctor and treatment filters need the full history, so they stay off until it is loaded.');
+    expect(markup).toContain('>Load history filters</button>');
     expect(markup).toMatch(/<fieldset disabled="" aria-label="Patient history filters"/);
-    expect(markup.match(/Next : Syncing history/g)).toHaveLength(2);
-    expect(markup.match(/>Syncing history</g)).toHaveLength(4);
-    expect(markup).toContain('title="Syncing history"');
-    expect(markup).not.toContain('No visits');
-    expect(markup).not.toContain('Next : -');
+    expect(markup.match(/Next : Loading…/g)).toHaveLength(2);
+    expect(markup).not.toContain('Syncing history');
     const registrationControls = markup.split('<fieldset')[0];
     expect(registrationControls).toContain('type="date"');
     expect(registrationControls).not.toContain('disabled=""');
   });
 
-  it.each([0, 37, 99])('exposes numeric sync progress %i accessibly', (progress) => {
+  it.each([0, 37, 99])('exposes numeric filter-loading progress %i accessibly', (progress) => {
     const markup = render({ historyReady: false, historyLoading: true, historyProgress: progress });
     expect(markup).toMatch(new RegExp(`<div role="progressbar"[^>]*aria-valuenow="${progress}"`));
     expect(markup).toContain('aria-valuemin="0" aria-valuemax="100"');
     expect(markup).toContain(`aria-valuetext="${progress}% downloaded"`);
     expect(markup).toContain(`>${progress}%</span>`);
-    expect(markup).not.toContain('Load history');
+    expect(markup).not.toContain('>Load history filters</button>');
   });
 
   it('exposes nullable progress as indeterminate without aria-valuenow', () => {
-    const markup = render({ historyReady: false, historyProgress: null, onLoadHistory: undefined });
+    const markup = render({ historyReady: false, historyLoading: true, historyProgress: null, onLoadHistory: undefined });
     expect(markup).toContain('role="progressbar"');
     expect(markup).not.toContain('aria-valuenow');
-    expect(markup).toContain('aria-valuetext="Preparing history sync"');
-    expect(markup).toContain('Preparing sync…');
-    expect(markup).not.toContain('Load history');
-    expect(markup).not.toContain('>Retry</button>');
+    expect(markup).toContain('aria-valuetext="Preparing history data"');
+    expect(markup).toContain('Preparing…');
+    expect(markup).not.toContain('Syncing history');
   });
 
-  it('shows failed placeholders and Retry, disabling the action while busy', () => {
+  it('shows failed history filtering with Retry and never blocks row data', () => {
     const failed = render({ historyReady: false, historyError: 'History request failed' });
     expect(failed).toContain('role="alert"');
-    expect(failed).toContain('Patient history sync failed.');
     expect(failed).toContain('History request failed');
-    expect(failed).toMatch(/<button type="button" class="[^"]*">Retry<\/button>/);
-    expect(failed.match(/Next : History unavailable/g)).toHaveLength(2);
-    expect(failed.match(/>History unavailable</g)).toHaveLength(4);
-    expect(failed).toContain('title="History unavailable"');
+    expect(failed).toMatch(/<button type="button" class="[^"]*">Retry history filters<\/button>/);
+    expect(failed).toContain('Next : Loading…');
     expect(failed).not.toContain('Syncing history');
-    expect(failed).not.toContain('Load history');
     expect(failed).not.toContain('role="progressbar"');
     const busy = render({ historyReady: false, historyLoading: true, historyError: 'History request failed' });
-    expect(busy).toMatch(/<button type="button" disabled=""[^>]*>Retrying…<\/button>/);
-    expect(busy).toContain('Next : History unavailable');
+    expect(busy).not.toContain('>Retry history filters</button>');
     expect(render({ historyReady: false, historyError: 'History request failed', onLoadHistory: undefined }))
-      .toMatch(/<button type="button" disabled=""[^>]*>Retry<\/button>/);
+      .toMatch(/<button type="button" disabled=""[^>]*>Retry history filters<\/button>/);
   });
 
   it('ignores previously active history filters after readiness resets', () => {
@@ -103,13 +93,12 @@ describe('PatientsView optional history readiness', () => {
     expect(markup).toMatch(/<fieldset disabled=""[\s\S]*value="2020-01-01"/);
   });
 
-  it('keeps details from claiming no treatments when history is unavailable', () => {
+  it('keeps patient details independent from the directory history filters', () => {
     state.overrides.set(20, patient);
     const markup = render({ historyReady: false });
     expect(markup).toContain('Treatment and Diagnosis');
-    expect(markup).toContain('>Syncing history</p>');
-    expect(render({ historyReady: false, historyError: 'History request failed' })).toContain('>History unavailable</p>');
-    expect(markup).not.toContain('No Treatment and Diagnosis records available.');
+    expect(markup).not.toContain('>Syncing history</p>');
+    expect(markup).not.toContain('history filters</p>');
     expect(render()).toContain('No Treatment and Diagnosis records available.');
   });
 
@@ -118,7 +107,7 @@ describe('PatientsView optional history readiness', () => {
     const markup = render({ searchResults: [{ ...patient, id: 'remote', name: 'Remote Result' }] });
     expect(markup).toContain('Remote Result');
     expect(markup).not.toContain('Synthetic Patient');
-    expect(markup).not.toContain('Patient history syncs automatically');
+    expect(markup).not.toContain('Patient rows load first');
     expect(markup).not.toContain('role="progressbar"');
   });
 });

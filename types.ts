@@ -45,6 +45,14 @@ export interface Patient {
   username?: string | null;
 }
 
+export interface PatientDirectorySummary {
+  patientId: string;
+  lastVisit: string | null;
+  nextAppointment: Pick<Appointment, 'id' | 'date' | 'time' | 'status'> | null;
+  treatments: Array<Pick<ClinicalRecord, 'id' | 'date' | 'description' | 'doctor_id' | 'doctor_name'>>;
+  doctorNames: string[];
+}
+
 export interface PatientType {
   id: string;
   name: string;

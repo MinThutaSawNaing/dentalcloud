@@ -1,7 +1,7 @@
 import { secureAuthRequest } from './secureAuth';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
-import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee } from '../types';
+import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee, PatientDirectorySummary } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -1968,6 +1968,36 @@ export const api = {
         console.warn('Error searching patients:', err);
         throw err;
       }
+    },
+    // Directory rows only need the current page's summaries. This never downloads
+    // branch-wide history, so slow connections do not block the patient table.
+    getDirectorySummaries: async (
+      locationId: string | undefined,
+      patientIds: string[]
+    ): Promise<PatientDirectorySummary[]> => {
+      const ids = [...new Set(patientIds.filter(Boolean))].slice(0, 100);
+      if (ids.length === 0) return [];
+      const { data, error } = await supabase.rpc('patient_directory_summaries', {
+        p_location_id: locationId ?? null,
+        p_patient_ids: ids
+      });
+      if (error) throw new Error(isMissingFunctionError(error, 'patient_directory_summaries')
+        ? 'Patient summaries are not installed yet. Apply the patient directory summary migration.'
+        : error.message);
+      return (data || []).map((row: any) => ({
+        patientId: row.patient_id,
+        lastVisit: row.last_visit || null,
+        nextAppointment: row.next_appointment
+          ? {
+              id: row.next_appointment.id,
+              date: row.next_appointment.date,
+              time: row.next_appointment.time,
+              status: row.next_appointment.status
+            }
+          : null,
+        treatments: Array.isArray(row.treatments) ? row.treatments : [],
+        doctorNames: Array.isArray(row.doctor_names) ? row.doctor_names.filter(Boolean) : []
+      }));
     },
     getAll: async (locationId?: string, options?: { throwOnError?: boolean }): Promise<Patient[]> => {
       try {
@@ -6921,7 +6951,7 @@ export const api = {
         loyalty_reversal: result.loyalty_reversal || null
       };
     },
-    getSales: async (locationId?: string, patientId?: string, options?: { throwOnError?: boolean }): Promise<MedicineSale[]> => {
+    getSales: async (locationId?: string, patientId?: string, options?: { throwOnError?: boolean; dateFrom?: string; dateTo?: string }): Promise<MedicineSale[]> => {
       try {
         const buildSalesQuery = (columns: string) => (from: number, to: number) => {
           let query = supabase
@@ -6932,6 +6962,8 @@ export const api = {
             .range(from, to);
           if (locationId) query = query.eq('location_id', locationId);
           if (patientId) query = query.eq('patient_id', patientId);
+          if (options?.dateFrom) query = query.gte('date', options.dateFrom);
+          if (options?.dateTo) query = query.lte('date', options.dateTo);
           return query;
         };
 

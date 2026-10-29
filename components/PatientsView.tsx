@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Search, Plus, Loader2, ChevronRight, Award, User, ShieldCheck, ShieldAlert, Key, Edit, MoreVertical, ArrowLeft, Calendar, Clock, Filter, AlertTriangle, RotateCw } from 'lucide-react';
-import { Patient, LoyaltyRule, Appointment, ClinicalRecord, PatientType, TreatmentType, Doctor, Location } from '../types';
+import { Patient, LoyaltyRule, Appointment, ClinicalRecord, PatientType, TreatmentType, Doctor, Location, PatientDirectorySummary } from '../types';
 import { formatCurrency, Currency } from '../utils/currency';
 import { exportPatientsToPDF } from '../utils/pdfExport';
 import { exportPatientsToExcel } from '../utils/excelExport';
@@ -124,6 +124,8 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   const [openActionMenuPatientId, setOpenActionMenuPatientId] = useState<string | null>(null);
   const [treatmentRecordsByPatientId, setTreatmentRecordsByPatientId] = useState<Record<string, ClinicalRecord[]>>({});
   const [treatmentRecordsLoadingForPatientId, setTreatmentRecordsLoadingForPatientId] = useState<string | null>(null);
+  const [directorySummaries, setDirectorySummaries] = useState<Record<string, PatientDirectorySummary>>({});
+  const [directorySummaryError, setDirectorySummaryError] = useState<string | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const deletePatientIdRef = useRef<string | null>(null);
   const deletePatientNameRef = useRef<string>('this patient');
@@ -212,7 +214,6 @@ const PatientsView: React.FC<PatientsViewProps> = ({
   };
 
   const formatAppointmentDate = (dateString?: string) => {
-    if (!historyReady) return historyError ? 'History unavailable' : 'Syncing history';
     if (!dateString) return '-';
 
     const isoDateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -295,7 +296,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
       .sort((a, b) => a.localeCompare(b));
   };
 
-  const getUniquePatientDoctorNames = (records: ClinicalRecord[]) => (
+  const getUniquePatientDoctorNames = (records: Array<{ doctor_name?: string }>) => (
     [...new Set(records.map((record) => normalizeDoctorName(record.doctor_name)).filter(Boolean))]
   );
 
@@ -490,6 +491,33 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     return filteredPatients.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredPatients, currentPage, showAll]);
 
+  // Fetch summaries only for the rows currently visible. Full branch history is
+  // an explicit action used by the advanced filters, never a table prerequisite.
+  const visiblePatientIds = useMemo(
+    () => paginatedPatients.map((patient) => patient.id).filter(Boolean),
+    [paginatedPatients]
+  );
+  const visiblePatientKey = visiblePatientIds.join('|');
+  useEffect(() => {
+    if (historyReady || visiblePatientIds.length === 0) return;
+    let cancelled = false;
+    const locationId = paginatedPatients[0]?.location_id;
+    setDirectorySummaryError(null);
+    api.patients.getDirectorySummaries(locationId, visiblePatientIds)
+      .then((summaries) => {
+        if (cancelled) return;
+        setDirectorySummaries((previous) => {
+          const next = { ...previous };
+          summaries.forEach((summary) => { next[summary.patientId] = summary; });
+          return next;
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) setDirectorySummaryError(error?.message || 'Patient summaries could not load.');
+      });
+    return () => { cancelled = true; };
+  }, [historyReady, visiblePatientKey]);
+
   // Background batches append patients; do not interrupt someone browsing a later page.
   React.useEffect(() => {
     setCurrentPage(1);
@@ -649,22 +677,23 @@ const PatientsView: React.FC<PatientsViewProps> = ({
     {!historyReady && (
       <div role="status" className="px-4 md:px-6 py-3 border-b border-amber-200 bg-amber-50 text-sm text-amber-900 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p>{historyError ? 'Patient history sync failed.' : 'Patient history syncs automatically in the background. You can keep using the patient list.'}</p>
-          {!historyError && <div className="mt-2 flex items-center gap-3">
-            <div role="progressbar" aria-label="Patient history sync" aria-valuemin={0} aria-valuemax={100}
+          <p>Patient rows load first. Visit, doctor and treatment filters need the full history, so they stay off until it is loaded.</p>
+          {historyLoading && <div className="mt-2 flex items-center gap-3">
+            <div role="progressbar" aria-label="Patient history filters load" aria-valuemin={0} aria-valuemax={100}
               aria-valuenow={historyProgress ?? undefined}
-              aria-valuetext={historyProgress === null ? 'Preparing history sync' : `${historyProgress}% downloaded`}
+              aria-valuetext={historyProgress === null ? 'Preparing history data' : `${historyProgress}% downloaded`}
               className="h-2 w-40 overflow-hidden rounded-full bg-amber-200">
               <div className={`h-full bg-amber-700 ${historyProgress === null ? 'w-1/3 motion-safe:animate-pulse' : ''}`}
                 style={historyProgress === null ? undefined : { width: `${historyProgress}%` }} />
             </div>
-            <span className="text-xs font-semibold">{historyProgress === null ? 'Preparing sync…' : `${historyProgress}%`}</span>
+            <span className="text-xs font-semibold">{historyProgress === null ? 'Preparing…' : `${historyProgress}%`}</span>
           </div>}
           {historyError && <p role="alert" className="mt-1 text-red-700">{historyError}</p>}
+          {directorySummaryError && <p role="alert" className="mt-1 text-red-700">Row summaries: {directorySummaryError}</p>}
         </div>
-        {historyError && <button type="button" onClick={() => void onLoadHistory?.()} disabled={historyLoading || !onLoadHistory}
+        {!historyLoading && <button type="button" onClick={() => void onLoadHistory?.()} disabled={!onLoadHistory}
           className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">
-          {historyLoading ? 'Retrying…' : 'Retry'}
+          {historyError ? 'Retry history filters' : 'Load history filters'}
         </button>}
       </div>
     )}
@@ -847,9 +876,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Treatment and Diagnosis</p>
-                  {!historyReady ? (
-                    <p className="mt-2 text-sm leading-6 text-gray-900">{historyError ? 'History unavailable' : 'Syncing history'}</p>
-                  ) : isTreatmentRecordsLoading ? (
+                  {isTreatmentRecordsLoading ? (
                     <p className="mt-2 text-sm leading-6 text-gray-900">Loading treatment records...</p>
                   ) : treatmentRecords.length === 0 ? (
                     <p className="mt-2 text-sm leading-6 text-gray-900">No Treatment and Diagnosis records available.</p>
@@ -943,8 +970,19 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                 </thead>
                 <tbody>
                   {paginatedPatients.map((patient, index) => {
-                        const patientRecords = treatmentRecordsByPatientIdMap.get(patient.id) || [];
-                        const nextAppointment = nextAppointmentByPatientId.get(patient.id);
+                        const summary = directorySummaries[patient.id];
+                        const patientRecords = historyReady
+                          ? treatmentRecordsByPatientIdMap.get(patient.id) || []
+                          : summary?.treatments || [];
+                        const nextAppointment = historyReady
+                          ? nextAppointmentByPatientId.get(patient.id)
+                          : summary?.nextAppointment || undefined;
+                        const lastVisit = historyReady ? patientLastVisitMap.get(patient.id) : summary?.lastVisit || undefined;
+                        const patientDoctorNames = historyReady
+                          ? getUniquePatientDoctorNames(patientRecords)
+                          : summary?.doctorNames || [];
+                        const summaryPending = !historyReady && !summary && !directorySummaryError;
+                        const summaryUnavailable = !historyReady && !summary && !!directorySummaryError;
                         return (
                     <tr
                       key={patient.id}
@@ -979,7 +1017,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                               )}
                             </div>
                             <div className="patient-next-appointment-chip mt-1 inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold">
-                              Next : {formatAppointmentDate(nextAppointment?.date)}
+                              Next : {summaryPending ? 'Loading…' : summaryUnavailable ? 'Unavailable' : formatAppointmentDate(nextAppointment?.date)}
                             </div>
                           </div>
                         </div>
@@ -988,15 +1026,15 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                         {formatCreatedDate(patient.created_at)}
                       </td>
                       <td className="px-3 py-3 align-top whitespace-nowrap">
-                        {!historyReady ? (
-                          <span className="text-xs text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
-                        ) : patientLastVisitMap.get(patient.id) ? (
+                        {summaryPending ? (
+                          <span className="text-xs text-gray-400">Loading…</span>
+                        ) : lastVisit ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                             <Calendar size={10} className="text-teal-500" />
-                            {formatDate(patientLastVisitMap.get(patient.id)!)}
+                            {formatDate(lastVisit)}
                           </span>
                         ) : (
-                          <span className="text-xs text-gray-400 italic">No visits</span>
+                          <span className="text-xs text-gray-400 italic">{!historyReady && !summary ? 'Unavailable' : 'No visits'}</span>
                         )}
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700">
@@ -1011,9 +1049,9 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                         </div>
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700 max-w-[200px]">
-                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={historyReady ? patientRecords.map(r => r.description).filter(Boolean).join(', ') : historyError ? 'History unavailable' : 'Syncing history'}>
-                          {!historyReady ? (
-                            <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
+                        <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5" title={historyReady ? patientRecords.map(r => r.description).filter(Boolean).join(', ') : summaryPending ? 'Loading treatment summary' : summary?.treatments.map(r => r.description).filter(Boolean).join(', ') || '-'}>
+                          {summaryPending ? (
+                            <span className="text-gray-400">Loading…</span>
                           ) : patientRecords.length > 0 ? (
                             patientRecords.slice(0, 4).map((r, i) => (
                               <div key={i} className="flex items-start gap-1">
@@ -1022,7 +1060,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                               </div>
                             ))
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400">{summaryUnavailable ? 'Unavailable' : '-'}</span>
                           )}
                           {historyReady && patientRecords.length > 4 && (
                             <div className="text-[10px] text-gray-400 font-medium mt-0.5">+{patientRecords.length - 4} more</div>
@@ -1031,20 +1069,20 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                       </td>
                       <td className="px-3 py-3 align-top text-gray-700">
                         <div className="text-[11px] font-medium text-gray-700 leading-tight max-h-[48px] overflow-y-auto space-y-0.5">
-                          {!historyReady ? (
-                            <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
-                          ) : patientRecords.length > 0 ? (
-                            getUniquePatientDoctorNames(patientRecords).slice(0, 2).map((name, i) => (
+                          {summaryPending ? (
+                            <span className="text-gray-400">Loading…</span>
+                          ) : patientDoctorNames.length > 0 ? (
+                            patientDoctorNames.slice(0, 2).map((name, i) => (
                               <div key={i} className="flex items-start gap-1">
                                 <span className="text-gray-400 mt-0.5 shrink-0">•</span>
                                 <span className="truncate">{formatDoctorName(name)}</span>
                               </div>
                             ))
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400">{summaryUnavailable ? 'Unavailable' : '-'}</span>
                           )}
-                          {historyReady && getUniquePatientDoctorNames(patientRecords).length > 2 && (
-                            <div className="text-[10px] text-gray-400 font-medium mt-0.5">+{getUniquePatientDoctorNames(patientRecords).length - 2} more</div>
+                          {historyReady && patientDoctorNames.length > 2 && (
+                            <div className="text-[10px] text-gray-400 font-medium mt-0.5">+{patientDoctorNames.length - 2} more</div>
                           )}
                         </div>
                       </td>
@@ -1114,7 +1152,13 @@ const PatientsView: React.FC<PatientsViewProps> = ({
         {/* Mobile Card View */}
         <div className="md:hidden divide-y divide-gray-100 overflow-y-auto flex-1 min-h-0">
           {paginatedPatients.map((patient) => {
-            const nextAppointment = nextAppointmentByPatientId.get(patient.id);
+            const summary = directorySummaries[patient.id];
+            const nextAppointment = historyReady
+              ? nextAppointmentByPatientId.get(patient.id)
+              : summary?.nextAppointment || undefined;
+            const lastVisit = historyReady ? patientLastVisitMap.get(patient.id) : summary?.lastVisit || undefined;
+            const summaryPending = !historyReady && !summary && !directorySummaryError;
+            const summaryUnavailable = !historyReady && !summary && !!directorySummaryError;
             return (
             <div 
               key={patient.id} 
@@ -1153,21 +1197,21 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                       )}
                     </div>
                     <div className="patient-next-appointment-chip mt-1 inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold">
-                      Next : {formatAppointmentDate(nextAppointment?.date)}
+                      Next : {summaryPending ? 'Loading…' : summaryUnavailable ? 'Unavailable' : formatAppointmentDate(nextAppointment?.date)}
                     </div>
                     <div className="text-xs text-gray-500">{patient.phone}</div>
                     <div className="text-[11px] text-gray-400 mt-1">Created Date: {formatCreatedDate(patient.created_at)}</div>
                     <div className="text-[11px] text-gray-400 mt-1">
                       Last Visit:{' '}
-                      {!historyReady ? (
-                        <span className="text-gray-400">{historyError ? 'History unavailable' : 'Syncing history'}</span>
-                      ) : patientLastVisitMap.get(patient.id) ? (
+                      {summaryPending ? (
+                        <span className="text-gray-400">Loading…</span>
+                      ) : lastVisit ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200">
                           <Calendar size={9} className="text-teal-500" />
-                          {formatDate(patientLastVisitMap.get(patient.id)!)}
+                          {formatDate(lastVisit)}
                         </span>
                       ) : (
-                        <span className="text-gray-400 italic">No visits</span>
+                        <span className="text-gray-400 italic">{!historyReady && !summary ? 'Unavailable' : 'No visits'}</span>
                       )}
                     </div>
                   </div>
