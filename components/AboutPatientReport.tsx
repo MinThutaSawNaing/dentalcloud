@@ -260,7 +260,7 @@ const AboutPatientReport: React.FC<AboutPatientReportProps> = ({
           </div>
           {!paymentsAvailable && <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">Paid amounts, remaining treatment amounts, and payment details are not available to your role. Treatment fees remain visible.</div>}
           {report.treatmentLedger.length ? (
-            <div className="overflow-x-auto">
+            <div role="region" aria-label="Patient treatment ledger" tabIndex={0} className="table-scroll">
               <table className="w-full min-w-[64rem] text-left text-sm">
                 <thead className="border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
                   <tr><th className="py-3 pr-4">Treatment</th><th className="px-4 py-3">Date & clinician</th><th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3 text-right">Paid</th><th className="px-4 py-3 text-right">Remaining</th><th className="py-3 pl-4">Payment dates & info</th></tr>
@@ -296,7 +296,7 @@ const AboutPatientReport: React.FC<AboutPatientReportProps> = ({
             {report.paymentHistory && <span className="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">{report.paymentHistory.length} payments</span>}
           </div>
           {!report.paymentHistory ? <EmptyPanel>Payment history is not available to your role.</EmptyPanel> : report.paymentHistory.length ? (
-            <div className="overflow-x-auto"><table className="w-full min-w-[48rem] text-left text-sm">
+            <div role="region" aria-label="Patient payment history" tabIndex={0} className="table-scroll"><table className="w-full min-w-[48rem] text-left text-sm">
               <thead className="border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="py-3 pr-4">Payment date</th><th className="px-4 py-3">Method</th><th className="px-4 py-3">Receipt</th><th className="px-4 py-3 text-right">Amount</th><th className="py-3 pl-4 text-right">Patient balance after</th></tr></thead>
               <tbody className="divide-y divide-slate-100">{report.paymentHistory.map((payment) => (
                 <tr key={payment.id}><td className="whitespace-nowrap py-3 pr-4 font-semibold">{formatReportDate(payment.date)}</td><td className="px-4 py-3 font-medium">{payment.allocations?.length ? formatPaymentAllocations(payment.allocations) : formatPaymentMethod(payment.paymentMethod)}</td><td className="px-4 py-3 text-slate-500">{payment.receiptNumber || payment.receiptSnapshot?.receiptNumber || '—'}</td><td className="whitespace-nowrap px-4 py-3 text-right font-black text-emerald-700">{formatCurrency(payment.clearedAmount ?? payment.amount, currency)}</td><td className="whitespace-nowrap py-3 pl-4 text-right font-bold">{formatCurrency(payment.patientCurrentBalance ?? payment.remainingBalance, currency)}</td></tr>
@@ -310,7 +310,7 @@ const AboutPatientReport: React.FC<AboutPatientReportProps> = ({
             <div><h3 className="font-black text-slate-950">Appointment ledger</h3><p className="mt-1 text-xs text-slate-500">Dates, times, doctors, types, and current status.</p></div>
             <span className="w-fit rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">{report.appointments.length} appointments</span>
           </div>
-          <div className="overflow-x-auto">
+          <div role="region" aria-label="Patient appointment ledger" tabIndex={0} className="table-scroll">
             <table className="w-full min-w-[44rem] text-left text-sm">
               <thead className="border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="py-3 pr-4">Date & time</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Doctor</th><th className="px-4 py-3">Status</th><th className="py-3 pl-4">Notes</th></tr></thead>
               <tbody className="divide-y divide-slate-100">

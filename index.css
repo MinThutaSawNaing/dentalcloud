@@ -689,6 +689,75 @@ body {
   background: #a8a8a8;
 }
 
+/* Each screen table owns its scrolling; filters and pagination stay outside. */
+.table-scroll {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(65vh, 40rem);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c7c7c7 #f1f1f1;
+  scrollbar-gutter: stable;
+  -ms-overflow-style: auto;
+}
+
+/* Only desktop gives Patients a bounded flex height; tablets keep the cap above. */
+@media (min-width: 1024px) {
+  .table-scroll-fill {
+    height: 100%;
+    max-height: none;
+  }
+}
+
+.table-scroll::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.table-scroll::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.table-scroll::-webkit-scrollbar-thumb {
+  background: #c7c7c7;
+  border-radius: 9999px;
+}
+
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+.table-scroll:focus-visible {
+  outline: 2px solid var(--hover-500);
+  outline-offset: -2px;
+}
+
+.table-scroll > table > thead {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+/* Keep each table's existing header palette; transparent headers need a backing. */
+.table-scroll > table > thead:not([class*="bg-"]) {
+  background-color: #fff;
+}
+
+@media print {
+  .table-scroll {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .table-scroll > table > thead {
+    position: static;
+  }
+}
+
 .sidebar-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;

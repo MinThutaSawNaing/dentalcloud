@@ -194,9 +194,9 @@ const UsersView: React.FC<UsersViewProps> = ({
         </div>
       ) : (
         <div className="p-4 sm:p-6">
-          <div className="hidden overflow-x-auto md:block">
+          <div role="region" aria-label="Users table" tabIndex={0} className="table-scroll hidden md:block">
             <table className="min-w-[760px] w-full">
-              <thead>
+              <thead className="bg-white">
                 <tr className="border-b border-gray-200">
                   <th className="text-left py-3 px-4 text-xs font-black text-gray-500 uppercase tracking-wider">Username</th>
                   <th className="text-left py-3 px-4 text-xs font-black text-gray-500 uppercase tracking-wider">Role</th>

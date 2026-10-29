@@ -5743,7 +5743,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                                 },
                                 pre: ({node, ...props}) => <pre className="my-3 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-3" {...props} />,
                                 blockquote: ({node, ...props}) => <blockquote className="my-3 border-l-4 border-slate-300 pl-4 italic text-slate-600" {...props} />,
-                                table: ({node, ...props}) => <div role="region" aria-label="Scrollable response table" tabIndex={0} className="my-3 max-w-full overflow-x-auto overscroll-x-contain rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400"><table className="min-w-full border border-slate-200 bg-white" {...props} /></div>,
+                                table: ({node, ...props}) => <div role="region" aria-label="Scrollable response table" tabIndex={0} className="table-scroll my-3 max-w-full overflow-x-auto overscroll-x-contain rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400"><table className="min-w-full border border-slate-200 bg-white" {...props} /></div>,
                                 th: ({node, ...props}) => <th className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-left text-sm font-semibold text-slate-900" {...props} />,
                                 td: ({node, ...props}) => <td className="border-b border-slate-100 px-4 py-2 text-sm text-slate-700" {...props} />,
                                 a: ({node, ...props}) => <a className="font-medium text-indigo-600 underline hover:text-indigo-800" {...props} />,

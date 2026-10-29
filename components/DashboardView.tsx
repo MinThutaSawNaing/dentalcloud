@@ -1136,7 +1136,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           {recentPayments.length === 0 ? (
             <p className="text-sm italic text-gray-400">No payments in this range.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div role="region" aria-label="Recent payment collections table" tabIndex={0} className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-100 text-xs uppercase text-gray-400">
                   <tr>
@@ -1235,7 +1235,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           {topExpenses.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No expenses recorded in this range.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div role="region" aria-label="Largest expenses table" tabIndex={0} className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="text-xs uppercase text-gray-400 border-b border-gray-100">
                   <tr>
@@ -1266,7 +1266,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           {topPatientsByRevenue.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No patient revenue data in this range.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div role="region" aria-label="Top patients table" tabIndex={0} className="table-scroll">
               <table className="w-full text-sm">
                 <thead className="text-xs uppercase text-gray-400 border-b border-gray-100">
                   <tr>
@@ -1302,7 +1302,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         {doctorEarningsData.length === 0 ? (
           <p className="text-sm text-gray-400 italic">No doctor earnings data in this range.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div role="region" aria-label="Doctor earnings table" tabIndex={0} className="table-scroll">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-gray-400 border-b border-gray-100">
                 <tr>
@@ -1339,7 +1339,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         {doctorCommissionBreakdown.length === 0 ? (
           <p className="text-sm text-gray-400 italic">No treatment records with commission in this range.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div role="region" aria-label="Doctor commission breakdown table" tabIndex={0} className="table-scroll">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-gray-400 border-b border-gray-100">
                 <tr>
@@ -1382,7 +1382,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         {topAppointmentCreators.length === 0 ? (
           <p className="text-sm text-gray-400 italic">No appointment creator data in this range.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div role="region" aria-label="Appointment makers table" tabIndex={0} className="table-scroll">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-gray-400 border-b border-gray-100">
                 <tr>

@@ -272,7 +272,7 @@ const TreatmentAnalysisView: React.FC<TreatmentAnalysisViewProps> = ({
                 <button type="button" onClick={() => setSearch('')} className="mt-2 text-sm font-bold text-indigo-600 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">Clear search</button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div role="region" aria-label="Treatment analysis table" tabIndex={0} className="table-scroll">
                 <table className="w-full min-w-[1050px] text-left">
                   <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
                     <tr>

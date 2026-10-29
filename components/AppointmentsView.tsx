@@ -1006,7 +1006,7 @@ const AppointmentsView: React.FC<AppointmentsViewProps> = ({
 
                 return (
                   <div className="rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
-                    <div className="max-h-[calc(100vh-260px)] overflow-auto">
+                    <div role="region" aria-label="Appointments table" tabIndex={0} className="table-scroll">
                       <table className="min-w-[960px] w-full text-sm">
                         <thead className="bg-indigo-50 border-b border-indigo-200">
                           <tr className="text-indigo-700">

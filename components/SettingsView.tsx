@@ -2288,48 +2288,50 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         ) : activeStaffMembers.length === 0 ? (
           <div className="px-6 py-10 text-sm text-gray-500">No active staff sessions found right now.</div>
         ) : (
-          <>
-            <div className="hidden md:grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.2fr)_minmax(170px,1.1fr)_minmax(120px,0.8fr)_minmax(150px,1fr)_minmax(190px,1.2fr)] gap-4 px-6 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 bg-white border-b border-gray-100">
-              <span>Name / Username</span>
-              <span>Email</span>
-              <span>Phone</span>
-              <span>Role</span>
-              <span>Branch</span>
-              <span>Last Active</span>
-            </div>
+          <div role="region" aria-label="Active staff sessions table" tabIndex={0} className="table-scroll">
+            <div className="min-w-0 md:min-w-[1200px]">
+              <div className="sticky top-0 z-30 hidden md:grid grid-cols-[minmax(220px,2fr)_minmax(180px,1.2fr)_minmax(170px,1.1fr)_minmax(120px,0.8fr)_minmax(150px,1fr)_minmax(190px,1.2fr)] gap-4 px-6 py-3 text-[11px] font-black uppercase tracking-wider text-gray-500 bg-white border-b border-gray-100">
+                <span>Name / Username</span>
+                <span>Email</span>
+                <span>Phone</span>
+                <span>Role</span>
+                <span>Branch</span>
+                <span>Last Active</span>
+              </div>
 
-            <div className="divide-y divide-gray-100">
-              {activeStaffMembers.map((member) => (
-                <div
-                  key={member.session_id}
-                  className="grid gap-4 px-6 py-4 md:grid-cols-[minmax(220px,2fr)_minmax(180px,1.2fr)_minmax(170px,1.1fr)_minmax(120px,0.8fr)_minmax(150px,1fr)_minmax(190px,1.2fr)]"
-                >
-                  <div>
-                    <p className="font-semibold text-gray-900">{member.display_name}</p>
-                    <p className="text-sm text-gray-500">@{member.username}</p>
+              <div className="divide-y divide-gray-100">
+                {activeStaffMembers.map((member) => (
+                  <div
+                    key={member.session_id}
+                    className="grid gap-4 px-6 py-4 md:grid-cols-[minmax(220px,2fr)_minmax(180px,1.2fr)_minmax(170px,1.1fr)_minmax(120px,0.8fr)_minmax(150px,1fr)_minmax(190px,1.2fr)]"
+                  >
+                    <div>
+                      <p className="font-semibold text-gray-900">{member.display_name}</p>
+                      <p className="text-sm text-gray-500">@{member.username}</p>
+                    </div>
+                    <div className="text-sm text-gray-700 break-all">{member.email || '-'}</div>
+                    <div className="text-sm text-gray-700">{member.phone || '-'}</div>
+                    <div>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                        member.role === 'admin'
+                          ? 'bg-red-100 text-red-700'
+                          : member.role === 'doctor'
+                            ? 'bg-sky-100 text-sky-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {member.role}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-700">{member.location_name || 'All branches'}</div>
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <Clock className="w-4 h-4 text-gray-400" />
+                      {new Date(member.last_seen).toLocaleString()}
+                    </div>
                   </div>
-                  <div className="text-sm text-gray-700 break-all">{member.email || '-'}</div>
-                  <div className="text-sm text-gray-700">{member.phone || '-'}</div>
-                  <div>
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
-                      member.role === 'admin'
-                        ? 'bg-red-100 text-red-700'
-                        : member.role === 'doctor'
-                          ? 'bg-sky-100 text-sky-700'
-                          : 'bg-emerald-100 text-emerald-700'
-                    }`}>
-                      {member.role}
-                    </span>
-                  </div>
-                  <div className="text-sm text-gray-700">{member.location_name || 'All branches'}</div>
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    {new Date(member.last_seen).toLocaleString()}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

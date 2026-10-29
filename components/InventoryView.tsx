@@ -290,7 +290,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({
       ) : (
         <>
           {/* Desktop Table */}
-          <div className="hidden md:block overflow-x-auto">
+          <div role="region" aria-label="Inventory table" tabIndex={0} className="table-scroll hidden md:block">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>

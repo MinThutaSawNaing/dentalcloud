@@ -459,7 +459,7 @@ const ExpensesView: React.FC<ExpensesViewProps> = ({
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div role="region" aria-label="Expenses table" tabIndex={0} className="table-scroll">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
                   <tr>

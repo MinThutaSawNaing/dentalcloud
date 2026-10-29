@@ -919,7 +919,7 @@ const PatientsView: React.FC<PatientsViewProps> = ({
         {/* Desktop Table View */}
         <div className="hidden md:block flex-1 min-h-0 p-6 pt-0 overflow-hidden">
           <div className="h-full rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
-            <div className="h-full overflow-auto">
+            <div role="region" aria-label="Patients table" tabIndex={0} className="table-scroll table-scroll-fill">
               <table className="min-w-[1040px] w-full text-sm">
                 <thead className="bg-indigo-50 border-b border-indigo-200">
                   <tr className="text-indigo-700">

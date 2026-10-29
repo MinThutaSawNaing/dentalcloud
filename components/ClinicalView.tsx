@@ -866,7 +866,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
               {treatmentHistoryLoading ? 'Loading…' : treatmentHistoryError ? 'Unable to load' : `${treatmentHistory.length} ${treatmentHistory.length === 1 ? 'record' : 'records'}`}
             </span>
           </div>
-          <div className="max-h-[34rem] min-h-[18rem] overflow-auto custom-scrollbar">
+          <div role="region" aria-label="Clinical treatment history" tabIndex={0} className="table-scroll min-h-[18rem]">
             <table className="w-full min-w-[48rem] text-left text-[15px]">
               <thead className="sticky top-0 border-b border-violet-100 bg-violet-50/90 text-xs uppercase tracking-wide text-violet-700 backdrop-blur-sm">
                 <tr>
@@ -943,7 +943,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
             </span>
           </div>
 
-          <div className="max-h-[28rem] min-h-[12rem] overflow-auto custom-scrollbar">
+          <div role="region" aria-label="Clinical medicine history" tabIndex={0} className="table-scroll min-h-[12rem]">
             <table className="w-full min-w-[42rem] text-left text-[15px]">
               <thead className="sticky top-0 border-b border-gray-100 bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
                 <tr>
@@ -1040,7 +1040,7 @@ const ClinicalView: React.FC<ClinicalViewProps> = ({
             </span>
           </div>
 
-          <div className="max-h-[28rem] min-h-[12rem] overflow-auto custom-scrollbar">
+          <div role="region" aria-label="Clinical payment history" tabIndex={0} className="table-scroll min-h-[12rem]">
             <table className="w-full min-w-[62rem] text-left text-[15px]">
               <thead className="sticky top-0 border-b border-violet-100 bg-violet-50/90 text-xs uppercase tracking-wide text-violet-700 backdrop-blur-sm">
                 <tr>

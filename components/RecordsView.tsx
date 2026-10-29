@@ -458,7 +458,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
         </div>
       ) : (
         <>
-          <div ref={desktopTableScrollRef} className="hidden lg:block overflow-x-auto">
+          <div ref={desktopTableScrollRef} role="region" aria-label="Audit records table" tabIndex={0} className="table-scroll hidden lg:block">
             <table className={`${isPaymentOnlyView ? 'min-w-[1080px]' : 'min-w-[1480px]'} w-full table-auto`}>
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
