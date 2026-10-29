@@ -694,8 +694,11 @@ body {
   position: relative;
   min-width: 0;
   max-width: 100%;
-  max-height: min(65vh, 40rem);
-  overflow: auto;
+  /* Normal tabs show all 100 rows in the page flow; only Patient Directory
+     keeps a fixed-height inner viewport through .table-scroll-fill. */
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
   scrollbar-width: thin;
   scrollbar-color: #c7c7c7 #f1f1f1;
   scrollbar-gutter: stable;
@@ -707,6 +710,7 @@ body {
   .table-scroll-fill {
     height: 100%;
     max-height: none;
+    overflow-y: auto;
   }
 }
 

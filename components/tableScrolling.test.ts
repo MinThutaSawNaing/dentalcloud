@@ -46,7 +46,7 @@ describe('screen table scroll regions (structural guards, not browser layout tes
       return result;
     };
     expect(declarations('.table-scroll')).toMatchObject({
-      'max-height': 'min(65vh, 40rem)', overflow: 'auto',
+      'max-height': 'none', 'overflow-x': 'auto', 'overflow-y': 'visible',
       'scrollbar-width': 'thin', 'scrollbar-gutter': 'stable'
     });
     expect(declarations('.table-scroll-fill')['max-height']).not.toBe('none');
