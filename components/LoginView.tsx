@@ -3,6 +3,7 @@ import { Shield, Eye, EyeOff, RefreshCw, Lock, User, Building2, Mail, Calendar, 
 import { auth } from '../services/auth';
 import { otpService } from '../services/otp';
 import PatientSelfRegistration from './PatientSelfRegistration';
+import { APP_VERSION } from '../constants';
 
 interface LoginViewProps {
   onLoginSuccess: () => void;
@@ -307,6 +308,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, appName = '', app
         
         <div className="text-indigo-300 text-xs">
           &copy; {new Date().getFullYear()} WinterArc Myanmar Company Limited. All rights reserved.
+          <span className="mt-1 block">Version {APP_VERSION}</span>
         </div>
       </div>
       
@@ -697,6 +699,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, appName = '', app
           
           <div className="text-center mt-4 text-xs text-gray-500">
             <p>&copy; {new Date().getFullYear()} WinterArc Myanmar. All rights reserved.</p>
+            <p className="mt-1">Version {APP_VERSION}</p>
           </div>
         </div>
       </div>

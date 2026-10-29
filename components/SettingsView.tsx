@@ -7,6 +7,7 @@ import { auth } from '../services/auth';
 import { dataCache } from '../utils/dataCache';
 import { supabase } from '../services/supabase';
 import { EMAIL_SETTINGS_KEY, EmailSettings, loadEmailSettings, loadEmailSettingsAsync, saveEmailSettings as persistEmailSettings, saveEmailSettingsAsync } from '../utils/emailSettings';
+import { APP_VERSION } from '../constants';
 
 interface SettingsViewProps {
   currency: 'USD' | 'MMK';
@@ -2227,6 +2228,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             <p className="text-xs text-gray-500">
               &copy; {new Date().getFullYear()} WinterArc Myanmar Company Limited. All rights reserved.
             </p>
+            <p className="mt-1 text-xs font-semibold text-indigo-600">Version {APP_VERSION}</p>
           </div>
         </div>
       </div>

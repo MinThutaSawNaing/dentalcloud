@@ -19,6 +19,7 @@ export const TREATMENT_CATEGORIES = [
 
 export const DEFAULT_PATIENT_TYPE_NAME = 'Walk-in';
 export const AUTO_ONP_PATIENT_TYPE_NAME = 'ONP';
+export const APP_VERSION = '1.4.11.2';
 
 export const DEFAULT_PATIENT_TYPE_OPTIONS = [
   'Walk-in',

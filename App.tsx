@@ -69,6 +69,7 @@ import {
   DOCTOR_DASHBOARD_TABS,
   FLEXIBLE_STAFF_TABS,
   FULL_ACCESS_TAB_PERMISSIONS,
+  APP_VERSION,
   type AppTabPermission
 } from './constants';
 import { api } from './services/api';
@@ -5554,6 +5555,7 @@ const App: React.FC = () => {
                 {isLoggingOut ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
                 {isLoggingOut ? 'Logging out...' : 'Logout'}
               </button>
+              <p className="mt-3 text-center text-[10px] theme-nav-muted">Version {APP_VERSION}</p>
            </div>
         </div>
         
