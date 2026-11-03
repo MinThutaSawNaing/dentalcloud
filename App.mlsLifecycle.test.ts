@@ -15,16 +15,14 @@ const section = (start: string, end: string) => {
 describe('MLS branch/session lifecycle source guards', () => {
   const loader = () => section('// MLS reads are owned by the branch/session', '// Fetch only the selected screen');
 
-  it('starts on MLS visit once ready and deduplicates the scope/session/version flight', () => {
+  it('starts on MLS visit once ready and caches by scope/session/version/permissions/query', () => {
     const source = loader();
     expect(source).toContain("currentView !== 'material-cost'");
     expect(source).toContain('startupScope !== currentLocationId || initialSyncActive');
     expect(source).toContain('!isAuthenticated');
-    expect(source).toContain('existing?.scope === scope');
-    expect(source).toContain('existing.startupRequestId === startupRequestId');
-    expect(source).toContain('existing.cacheVersion === cacheVersion');
+    expect(source).toContain('`mls-page:${clinicScope}:${startupRequestId}:${cacheVersion}:${permissions}:${JSON.stringify(mlsQuery)}`');
+    expect(source).toContain('dataCache.getOrLoad(key,');
     expect(source).not.toContain('return () =>');
-    expect(source).not.toContain('cancelled');
     expect(source).not.toContain('lazyViewRequestRef');
   });
 
@@ -34,21 +32,21 @@ describe('MLS branch/session lifecycle source guards', () => {
     expect(source).toContain('initialDataFetchRequestRef.current === startupRequestId');
     expect(source).toContain('mlsCacheVersionRef.current === cacheVersion');
     expect(source).toContain('if (!isCurrent()) return;');
-    expect(source).toContain('if (isCurrent()) {');
+    expect(source).toContain('isSameAuthSession(session, auth.getSession())');
+    expect(source).toContain('if (isCurrent()) setMlsPageLoading(false)');
     expect(source).toContain('if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null');
   });
 
-  it('publishes only after both complete reads succeed and caps intermediate progress', () => {
+  it('publishes a complete database page rather than loading full histories', () => {
     const source = loader();
-    expect(source).toContain('Promise.allSettled');
-    expect(source).toContain('await Promise.race');
-    expect(source).toContain('clearTimeout(timeout)');
-    expect(source).toContain('getMlsSyncPercentage(fractions)');
-    const publication = source.indexOf('setMlsRecords(records.value)');
-    expect(source.indexOf("if (records.status === 'rejected') throw records.reason")).toBeLessThan(publication);
-    expect(source.indexOf("if (payments.status === 'rejected') throw payments.reason")).toBeLessThan(publication);
-    expect(source.indexOf('const mergedPayments =')).toBeLessThan(publication);
+    expect(source).toContain('loadMlsDirectoryPage(scope, mlsQuery, controller.signal)');
+    for (const [setter, field] of [['setMlsRecords', 'records'], ['setMlsPayments', 'payments'],
+      ['setMlsAllocationPayments', 'allocationPayments'], ['setMlsTotal', 'total']]) {
+      expect(source).toContain(`${setter}(bundle.${field})`);
+    }
     expect(source).toContain('setMlsScope(scope)');
+    expect(source).not.toContain('getAllRecords(');
+    expect(source).not.toContain('getPayments(');
     expect(source).not.toContain('setGlobalRecords(');
   });
 
@@ -62,11 +60,11 @@ describe('MLS branch/session lifecycle source guards', () => {
     expect(mlsBranch).not.toContain('cached(');
   });
 
-  it('retains a separate error across navigation and clears it on retry/session reset', () => {
-    expect(loader()).toContain('|| mlsSyncError) return;');
+  it('exposes a separate page error and clears it on retry/session reset', () => {
+    expect(loader()).toContain('setMlsSyncError(null)');
     expect(loader()).toContain('if (isCurrent()) setMlsSyncError(');
     const component = section("{currentView === 'material-cost' &&", "{currentView === 'records' &&");
-    expect(component).toContain('loadError={leanStaffStartup ? mlsSyncError : null}');
+    expect(component).toContain('loadError={mlsSyncError}');
     expect(component).toContain('mlsScope !== currentLocationId && !mlsSyncError');
     expect(component.match(/setMlsSyncError\(null\)/g)).toHaveLength(1);
     expect(component).toContain('onCostsSaved={refreshMlsAfterCostSave}');

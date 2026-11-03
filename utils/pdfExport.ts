@@ -4,7 +4,7 @@ import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, Doctor,
 import { formatCurrency, Currency } from './currency';
 import { usesFlatVisitCommission } from './doctorCommission';
 import { formatTeethWithPosition } from './toothNumbering';
-import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, type AuditLogFilterOptions } from './auditLogExport';
+import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, type AuditLogFilterOptions, type AuditExportRow } from './auditLogExport';
 import { formatDoctorName, normalizeDoctorName } from './doctorName';
 import { buildRecallsCancelsExportRows, type RecallsCancelsExportRow } from './recallsCancels';
 import { buildPatientReport } from './patientReport';
@@ -450,6 +450,7 @@ export const exportRecallsCancelsToPDF = (
 };
 
 interface ClinicalRecordsExportOptions extends AuditLogFilterOptions {
+  auditRows?: AuditExportRow[];
   appointments?: Appointment[];
   payments?: PaymentRecord[];
   rescheduleLogs?: AppointmentRescheduleLog[];
@@ -461,7 +462,7 @@ export const AUDIT_LOG_PDF_COLUMN_WIDTHS = [15, 23, 22, 20, 40, 24, 21, 17, 17, 
 
 export const exportClinicalRecordsToPDF = (records: ClinicalRecord[], currency: Currency, options: ClinicalRecordsExportOptions = {}) => {
   const exportRows = filterAuditLogRowsForExport(
-    buildAuditLogRows(records, options.appointments || [], options.includeAppointments ?? false, options.payments || [], options.rescheduleLogs || []),
+    options.auditRows ?? buildAuditLogRows(records, options.appointments || [], options.includeAppointments ?? false, options.payments || [], options.rescheduleLogs || []),
     options
   );
   const tableRows = buildAuditLogExportTableRows(exportRows, currency);

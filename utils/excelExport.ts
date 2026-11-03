@@ -1,7 +1,7 @@
 import { Appointment, AppointmentRescheduleLog, ClinicalRecord, Doctor, Expense, Medicine, Patient, PaymentRecord } from '../types';
 import { Currency } from './currency';
 import { usesFlatVisitCommission } from './doctorCommission';
-import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, type AuditLogFilterOptions } from './auditLogExport';
+import { buildAuditLogExportTableRows, buildAuditLogRows, filterAuditLogRowsForExport, type AuditLogFilterOptions, type AuditExportRow } from './auditLogExport';
 import { formatAppointmentNotesForDisplay } from './appointmentClinicalFocus';
 import { formatDoctorName, normalizeDoctorName } from './doctorName';
 import { buildRecallsCancelsExportRows, type RecallsCancelsExportRow } from './recallsCancels';
@@ -294,6 +294,7 @@ export const exportRecallsCancelsToExcel = async (
 };
 
 interface ClinicalRecordsExcelExportOptions extends AuditLogFilterOptions {
+  auditRows?: AuditExportRow[];
   appointments?: Appointment[];
   payments?: PaymentRecord[];
   rescheduleLogs?: AppointmentRescheduleLog[];
@@ -316,7 +317,7 @@ export const exportClinicalRecordsToExcel = async (records: ClinicalRecord[], cu
     { header: 'Doctor Earned', width: 18, format: 'currency' }
   ];
   const exportRows = filterAuditLogRowsForExport(
-    buildAuditLogRows(records, options.appointments || [], options.includeAppointments ?? false, options.payments || [], options.rescheduleLogs || []),
+    options.auditRows ?? buildAuditLogRows(records, options.appointments || [], options.includeAppointments ?? false, options.payments || [], options.rescheduleLogs || []),
     options
   );
   const rows = buildAuditLogExportTableRows(exportRows, currency).map((row) => ({

@@ -27,7 +27,8 @@ const getEntryKey = (entry: DoctorEarningEntry): string => (
 
 export const buildMaterialCostPaymentRows = (
   records: ClinicalRecord[],
-  payments: PaymentRecord[]
+  payments: PaymentRecord[],
+  allocationPayments: PaymentRecord[] = payments
 ): MaterialCostPaymentRow[] => {
   const uniquePayments = dedupePaymentRecords(payments);
   const treatmentById = new Map(records.map((record) => [record.id, record]));
@@ -38,7 +39,7 @@ export const buildMaterialCostPaymentRows = (
       date: record.date,
       cost: Math.max(0, Number(record.cost || 0))
     })),
-    uniquePayments.map((payment) => ({
+    dedupePaymentRecords(allocationPayments).map((payment) => ({
       id: payment.id,
       patientId: payment.patientId,
       date: payment.date,

@@ -133,28 +133,30 @@ const section = (source: string, start: string, end: string) => {
     expect(section(app, 'const handleSaveAppName =', 'const handleDeleteAppLogo =')).toMatch(/await api.appSettings.saveAppName\(name\);\s*invalidateNavigationCache\(\);/);
   });
 
-  it('keeps MLS progress guarded and independent from other datasets', () => {
+  it('keeps the paginated MLS loader guarded and independent from other datasets', () => {
     const mls = section(app, '// MLS reads are owned by the branch/session', '// Fetch only the selected screen');
-    expect(mls).toContain('Promise.allSettled');
-    expect(mls).toContain('await Promise.race');
+    expect(mls).toContain('loadMlsDirectoryPage(scope, mlsQuery, controller.signal)');
     expect(mls).toContain('if (!isCurrent()) return;');
-    expect(mls).toContain("if (records.status === 'rejected') throw records.reason");
-    expect(mls).toContain("if (payments.status === 'rejected') throw payments.reason");
-    expect(mls).toContain('setMlsRecords(records.value)');
-    expect(mls).toContain('setMlsPayments(mergedPayments)');
-    expect(mls).toContain('setMlsSyncProgress(100)');
+    expect(mls).toContain('setMlsRecords(bundle.records)');
+    expect(mls).toContain('setMlsPayments(bundle.payments)');
+    expect(mls).toContain('setMlsAllocationPayments(bundle.allocationPayments)');
+    expect(mls).toContain('setMlsTotal(bundle.total)');
     expect(mls).toContain('setMlsScope(scope)');
     expect(mls).toContain('mlsCacheVersionRef.current === cacheVersion');
     expect(mls).not.toContain('setGlobalRecords(');
     expect(mls).not.toContain('setPaymentRecords(');
+    expect(mls).not.toContain('getAllRecords(');
+    expect(mls).not.toContain('getPayments(');
     const component = section(app, "{currentView === 'material-cost' &&", "{currentView === 'records' &&");
     expect(component).toContain('key={currentLocationId}');
-    expect(component).toContain('loadError={leanStaffStartup ? mlsSyncError : null}');
-    expect(component).toContain("setLoadedLazyView('')");
-    expect(component).toContain('setLazyViewRevision((value) => value + 1)');
+    expect(component).toContain('loadError={mlsSyncError}');
+    expect(component).toContain('totalItems={mlsTotal}');
+    expect(component).toContain('onQueryChange={handleMlsQueryChange}');
+    expect(component).toContain('invalidateMaterialCostCaches();');
+    expect(component).toContain('setMlsSyncError(null);');
   });
 
-  it('reuses complete branch MLS data before clearing lazy readiness or starting requests', () => {
+  it('keeps generic lazy MLS readiness separate from the query loader', () => {
     const lazy = section(app, 'const key = `${scope}:${view}`;', "if (view === 'expenses')");
     const cached = section(lazy, "if (view === 'material-cost')", 'const requestId =');
     expect(cached).toContain('setLoadedLazyView(key)');
@@ -178,7 +180,7 @@ const section = (source: string, start: string, end: string) => {
     expect(app).toContain('if (force) invalidateMlsMemory();');
     expect(app).toMatch(/const refreshGlobalRecordsForPatient = [^\n]+\n\s*invalidateMlsMemory\(\)/);
     expect(app).toMatch(/const invalidateMaterialCostCaches = [^\n]+\n\s*if \(preserveMls\) invalidateNavigationCache\(\);\n\s*else invalidateMlsMemory\(\)/);
-    expect(app).toContain('leanStaffStartup, allowedViews, mlsCacheRevision, mlsScope, mlsSyncError]');
+    expect(app).toContain('leanStaffStartup, allowedViews, mlsCacheRevision, mlsQuery]');
   });
 
   it('places screen content behind the branch/loading/error gate with a retry action', () => {

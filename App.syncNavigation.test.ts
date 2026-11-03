@@ -4,7 +4,6 @@ import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dataCache } from './utils/dataCache';
 import { mergePatientsById } from './utils/patientMerge';
-import { getMlsSyncPercentage, getMlsStageFraction } from './utils/mlsSyncProgress';
 
 beforeEach(() => dataCache.clear());
 
@@ -60,6 +59,7 @@ const payments = [{ id: 'payment-1' }];
 function harness(code = mlsCode) {
   const treatmentReads: ReturnType<typeof deferred<any[]>>[] = [];
   const paymentReads: ReturnType<typeof deferred<any[]>>[] = [];
+  const pageReads: ReturnType<typeof deferred<any>>[] = [];
   const patientReads: ReturnType<typeof deferred<any[]>>[] = [];
   const pending = (reads: typeof treatmentReads) => {
     const read = deferred<any[]>();
@@ -80,6 +80,14 @@ function harness(code = mlsCode) {
       finance: { getPayments: vi.fn(() => pending(paymentReads)) },
       patients: { getPage: vi.fn(() => pending(patientReads)) },
     },
+    mlsQuery: { dateFrom: '2026-10-25', dateTo: '2026-10-25', page: 1, pageSize: 100, showAll: false },
+    loadMlsDirectoryPage: vi.fn(() => {
+      const read = deferred<any>();
+      pageReads.push(read);
+      return read.promise;
+    }),
+    isSameAuthSession: (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b),
+    setMlsAllocationPayments: vi.fn(), setMlsTotal: vi.fn(), setMlsPageLoading: vi.fn(),
     // Collaborators are mocked; loader control flow is always the actual App source.
     getHistorySyncPercentage: vi.fn((reads: { done: boolean }[]) =>
       reads.every(read => read.done) ? 100 : 50),
@@ -92,10 +100,9 @@ function harness(code = mlsCode) {
     patients: [{ id: 'existing', name: 'Old' }],
     setPatients: vi.fn((update: (previous: any[]) => any[]) => { context.patients = update(context.patients); }),
     mergePatientsById,
-    getMlsSyncPercentage, getMlsStageFraction,
     dataCache, navigationCacheVersionRef: { current: 0 },
     auth: { getSession: vi.fn(() => ({ role: 'admin', location_id: 'branch-a' })), isAdmin: vi.fn(() => true) },
-    isAdmin: true, getClinicCacheScope: (scope: string) => `tenant-a:${scope}`,
+    isAdmin: true, clinicTenant: 'tenant-a', getClinicCacheScope: (scope: string) => `${context.clinicTenant}:${scope}`,
     getSessionRestrictedLocationId: vi.fn(() => undefined),
     dashboardLocationId: 'branch-a', dashboardFetchRequestRef: { current: 0 },
     dashboardRange: { dateFrom: '2026-10-25', dateTo: '2026-10-25' },
@@ -113,289 +120,136 @@ function harness(code = mlsCode) {
     paymentReads[index].resolve(payments);
     await flush();
   };
-  return { context, render, counts, settle, treatmentReads, paymentReads, patientReads };
+  return { context, render, counts, settle, treatmentReads, paymentReads, patientReads, pageReads };
 }
 
 
-// Cleanup runs on navigation so future cancellation regressions fail.
-describe('App MLS navigation runtime regression', () => {
-  it('leaves preparing with a retryable error when a read never settles', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      h.render('material-cost');
-      h.treatmentReads[0].resolve(records);
-      await flush();
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(h.context.setMlsSyncError).toHaveBeenCalledWith(expect.stringMatching(/timed out.*retry/i));
-      expect(h.context.mlsInFlightRef.current).toBeNull();
-      expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-      expect(h.context.api.treatments.getAllRecords.mock.calls[0][1].signal.aborted).toBe(true);
-      expect(h.context.api.finance.getPayments.mock.calls[0][1].signal.aborted).toBe(true);
-      h.render('patients');
-      h.render('material-cost');
-      h.counts(1); // Failed attempts stay stopped until explicit Retry.
-      h.context.setMlsSyncError(null);
-      h.render('material-cost');
-      h.counts(2);
-      await h.settle(1);
-      h.paymentReads[0].resolve([{ id: 'stale-payment' }]);
-      await flush();
-      expect(h.context.setMlsPayments).toHaveBeenCalledExactlyOnceWith(payments);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+// Run the actual App effect with deferred loader responses and the real shared cache.
+describe('App MLS paginated navigation runtime regression', () => {
+  const bundle = { records, payments, allocationPayments: [{ id: 'allocation-1' }], total: 235 };
+  const settlePage = async (h: ReturnType<typeof harness>, index = 0) => {
+    h.pageReads[index].resolve(bundle);
+    await flush();
+  };
 
-  it('finishes delayed financial enrichment without any navigation rerender', async () => {
+  it('loads only the current query and publishes one complete page with its total', async () => {
     const h = harness();
     h.render('material-cost');
-    const treatmentOptions = h.context.api.treatments.getAllRecords.mock.calls[0][1];
-    const paymentOptions = h.context.api.finance.getPayments.mock.calls[0][1];
-    treatmentOptions.onProgress(100, 100);
-    paymentOptions.onProgress(100, 100);
-    treatmentOptions.onRowsDownloaded();
-    paymentOptions.onRowsDownloaded();
-    expect(h.context.setMlsFinalizing).toHaveBeenLastCalledWith(true);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(33);
-    expect(h.context.setMlsScope).not.toHaveBeenCalled();
-    treatmentOptions.onEnrichmentProgress('commission', 1, 2);
-    paymentOptions.onEnrichmentProgress('commission', 1, 2);
-    paymentOptions.onEnrichmentProgress('cost-audits', 2, 2);
-    paymentOptions.onEnrichmentProgress('cost-items', 1, 2);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(75);
-    h.treatmentReads[0].resolve(records);
-    await flush();
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(83);
-    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-    h.paymentReads[0].resolve(payments);
-    await flush();
-    expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
-    expect(h.context.setMlsFinalizing).toHaveBeenLastCalledWith(false);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
-    h.counts(1);
-  });
-
-  it('allows a slow progressing MLS sync beyond the old one-minute total deadline', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      h.render('material-cost');
-      const treatmentOptions = h.context.api.treatments.getAllRecords.mock.calls[0][1];
-      const paymentOptions = h.context.api.finance.getPayments.mock.calls[0][1];
-      expect(paymentOptions.signal).toBe(treatmentOptions.signal);
-      for (let page = 1; page <= 4; page++) {
-        await vi.advanceTimersByTimeAsync(70_000);
-        treatmentOptions.onProgress(page * 1000, 4000);
-        paymentOptions.onProgress(page * 1000, 4000);
-        expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
-      }
-      treatmentOptions.onRowsDownloaded();
-      paymentOptions.onRowsDownloaded();
-      for (let batch = 1; batch <= 3; batch++) {
-        await vi.advanceTimersByTimeAsync(70_000);
-        treatmentOptions.onEnrichmentProgress('commission', batch, 3);
-        paymentOptions.onEnrichmentProgress('cost-items', batch, 3);
-      }
-      expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
-      expect(treatmentOptions.signal.aborted).toBe(false);
-      await h.settle();
-      expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
-      expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
-      expect(vi.getTimerCount()).toBe(0);
-      h.counts(1);
-    } finally { vi.useRealTimers(); }
-  });
-
-  it('stops two minutes after the last progress, not two minutes after startup', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      h.render('material-cost');
-      await vi.advanceTimersByTimeAsync(100_000);
-      const options = h.context.api.finance.getPayments.mock.calls[0][1];
-      options.onProgress(1000, 2000);
-      await vi.advanceTimersByTimeAsync(119_999);
-      expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(h.context.setMlsSyncError).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/without progress/));
-      expect(options.signal.aborted).toBe(true);
-      await h.settle();
-      expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally { vi.useRealTimers(); }
-  });
-
-  it('fails promptly and aborts the other read instead of waiting for a hung sibling', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      h.render('material-cost');
-      h.treatmentReads[0].reject(new Error('Treatment download failed'));
-      await flush();
-      expect(h.context.setMlsSyncError).toHaveBeenCalledExactlyOnceWith('Treatment download failed');
-      expect(h.context.api.finance.getPayments.mock.calls[0][1].signal.aborted).toBe(true);
-      expect(h.context.mlsInFlightRef.current).toBeNull();
-      expect(vi.getTimerCount()).toBe(0);
-      h.paymentReads[0].resolve(payments);
-      await flush();
-      expect(h.context.setMlsPayments).not.toHaveBeenCalled();
-    } finally { vi.useRealTimers(); }
-  });
-
-  it('does not restart failed MLS on focus or online events', () => {
-    const visibilityStart = app.lastIndexOf('  useEffect(() => {', app.indexOf('const refreshVisibleReads ='));
-    const visibilityEnd = app.indexOf('  const loadDirectoryHistory =', visibilityStart);
-    const h = harness(compile(app.slice(visibilityStart, visibilityEnd)));
-    const handlers: Record<string, () => void> = {};
-    const events = { addEventListener: vi.fn((event: string, callback: () => void) => { handlers[event] = callback; }),
-      removeEventListener: vi.fn() };
-    h.context.document = { ...events, visibilityState: 'visible' };
-    h.context.window = events;
-    h.context.mlsSyncError = 'Connection timed out';
-    h.context.lazyViewError = null;
-    h.context.appointmentPageError = null;
-    h.render('material-cost');
-    for (let i = 0; i < 5; i++) {
-      handlers.visibilitychange();
-      handlers.online();
-    }
-    expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
-    expect(h.context.mlsSyncError).toBe('Connection timed out');
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledExactlyOnceWith('branch-a', h.context.mlsQuery, expect.any(AbortSignal));
     h.counts(0);
-  });
-  it('deduplicates pending visits, completes away, and reuses ready data', async () => {
-    const h = harness();
-    h.render('patients');
-    h.counts(0);
-    h.render('material-cost');
-    h.counts(1);
-    expect(h.context.api.treatments.getAllRecords).toHaveBeenCalledWith('branch-a', {
-      limit: null, throwOnError: true, onProgress: expect.any(Function),
-      signal: expect.any(AbortSignal),
-      countMode: 'exact', onEnrichmentProgress: expect.any(Function),
-      commissionRequestConcurrency: 3,
-      onRowsDownloaded: expect.any(Function),
-    });
-    expect(h.context.api.finance.getPayments).toHaveBeenCalledWith('branch-a', {
-      signal: expect.any(AbortSignal),
-      countMode: 'exact', includeCorrections: false, onEnrichmentProgress: expect.any(Function),
-      commissionRequestConcurrency: 3,
-      onProgress: expect.any(Function),
-      onRowsDownloaded: expect.any(Function),
-    });
-    h.render('patients');
-    h.render('material-cost');
-    h.counts(1);
-    h.render('patients');
-    h.treatmentReads[0].resolve(records);
-    await flush();
+    expect(h.context.setMlsPageLoading).toHaveBeenLastCalledWith(true);
     expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
-    expect(h.context.setMlsScope).not.toHaveBeenCalled();
-    h.paymentReads[0].resolve(payments);
-    await flush();
+    await settlePage(h);
     expect(h.context.setMlsRecords).toHaveBeenCalledExactlyOnceWith(records);
     expect(h.context.setMlsPayments).toHaveBeenCalledExactlyOnceWith(payments);
-    expect(h.context.mergeLegacyPaymentRecords).toHaveBeenCalledExactlyOnceWith(payments, 'branch-a');
+    expect(h.context.setMlsAllocationPayments).toHaveBeenCalledExactlyOnceWith(bundle.allocationPayments);
+    expect(h.context.setMlsTotal).toHaveBeenCalledExactlyOnceWith(235);
     expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(100);
-    expect(h.context.mlsInFlightRef.current).toBeNull();
-    h.render('material-cost');
-    h.counts(1);
+    expect(h.context.setMlsPageLoading).toHaveBeenLastCalledWith(false);
   });
 
-  it.each(['treatment', 'payment'])('does not retry a %s failure until error is cleared', async (failed) => {
+  it('shares pending pages across navigation and reuses completed pages', async () => {
     const h = harness();
     h.render('material-cost');
     h.render('patients');
-    if (failed === 'treatment') {
-      h.treatmentReads[0].reject(new Error('read failed'));
-      h.paymentReads[0].resolve(payments);
-    } else {
-      h.treatmentReads[0].resolve(records);
-      h.paymentReads[0].reject(new Error('read failed'));
-    }
-    await flush();
-    expect(h.context.setMlsSyncError).toHaveBeenCalledExactlyOnceWith('read failed');
-    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
-    expect(h.context.setMlsScope).not.toHaveBeenCalled();
-    expect(h.context.mlsInFlightRef.current).toBeNull();
     h.render('material-cost');
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(1);
+    await settlePage(h);
+    expect(h.context.setMlsRecords).toHaveBeenCalledTimes(1);
     h.render('patients');
     h.render('material-cost');
-    h.counts(1);
-    h.context.setMlsSyncError(null);
+    await flush();
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(1);
+    expect(h.context.setMlsRecords).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['page', 'patientSearch', 'doctorSearch', 'treatmentSearch', 'dateFrom', 'dateTo', 'showAll'])('isolates cached pages when %s changes', async (field) => {
+    const h = harness();
+    const original = h.context.mlsQuery;
     h.render('material-cost');
-    h.counts(2);
-    await h.settle(1);
-    expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith('branch-a');
+    await settlePage(h);
+    h.context.mlsQuery = { ...original, [field]: field === 'page' ? 2 : field === 'showAll' ? true : 'changed' };
+    h.render('material-cost');
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(2);
+    await settlePage(h, 1);
+    h.context.mlsQuery = original;
+    h.render('material-cost');
+    await flush();
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not publish a failed bundle and retries without caching the failure', async () => {
+    const h = harness();
+    h.render('material-cost');
+    h.pageReads[0].reject(new Error('page failed'));
+    await flush();
+    expect(h.context.setMlsSyncError).toHaveBeenLastCalledWith('page failed');
+    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+    expect(h.context.setMlsTotal).not.toHaveBeenCalled();
+    expect(h.context.setMlsPageLoading).toHaveBeenLastCalledWith(false);
+    h.render('material-cost');
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(2);
+    expect(h.context.setMlsSyncError).toHaveBeenLastCalledWith(null);
+    await settlePage(h, 1);
     expect(h.context.setMlsRecords).toHaveBeenCalledExactlyOnceWith(records);
   });
 
-  it.each(['cache version', 'session', 'branch', 'authentication'])('ignores stale progress and results after %s changes', async (change) => {
+  it.each(['cache version', 'startup session', 'branch', 'clinic', 'permissions'])('does not reuse a cached page after %s changes', async (change) => {
     const h = harness();
     h.render('material-cost');
-    const treatmentProgress = h.context.api.treatments.getAllRecords.mock.calls[0][1].onProgress;
-    const paymentProgress = h.context.api.finance.getPayments.mock.calls[0][1].onProgress;
-    const financialProgress = h.context.api.finance.getPayments.mock.calls[0][1].onEnrichmentProgress;
-    treatmentProgress(1, 10);
-    expect(h.context.setMlsSyncProgress).toHaveBeenLastCalledWith(1);
+    await settlePage(h);
     if (change === 'cache version') h.context.mlsCacheVersionRef.current++;
-    if (change === 'session') h.context.initialDataFetchRequestRef.current++;
+    if (change === 'startup session') h.context.initialDataFetchRequestRef.current++;
     if (change === 'branch') {
       h.context.currentLocationId = 'branch-b';
       h.context.startupScope = 'branch-b';
       h.context.currentLocationIdRef.current = 'branch-b';
     }
-    if (change === 'authentication') {
-      h.context.isAuthenticated = false;
-      h.context.mlsAuthenticatedRef.current = false;
-    }
-    h.render('patients');
-    h.context.setMlsSyncProgress.mockClear();
-    treatmentProgress(10, 10);
-    paymentProgress(10, 10);
-    financialProgress('commission', 1, 1);
-    financialProgress('cost-items', 1, 1);
-    await h.settle();
-    expect(h.context.setMlsSyncProgress).not.toHaveBeenCalled();
-    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
-    expect(h.context.setMlsScope).not.toHaveBeenCalled();
-    expect(h.context.setMlsSyncError).not.toHaveBeenCalled();
-    expect(h.context.mlsInFlightRef.current).toBeNull();
+    if (change === 'clinic') h.context.clinicTenant = 'tenant-b';
+    if (change === 'permissions') h.context.allowedViews = ['material-cost'];
+    h.render('material-cost');
+    expect(h.context.loadMlsDirectoryPage).toHaveBeenCalledTimes(2);
+    await settlePage(h, 1);
+    expect(h.context.setMlsRecords).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['cache version', 'session', 'branch'])('old completion cannot clear a replacement %s flight', async (change) => {
+  it.each(['cache version', 'startup session', 'branch', 'authentication', 'auth session', 'clinic scope'])('rejects stale completion after %s changes', async (change) => {
     const h = harness();
     h.render('material-cost');
     if (change === 'cache version') h.context.mlsCacheVersionRef.current++;
-    if (change === 'session') h.context.initialDataFetchRequestRef.current++;
-    if (change === 'branch') {
-      h.context.currentLocationId = 'branch-b';
-      h.context.startupScope = 'branch-b';
-      h.context.currentLocationIdRef.current = 'branch-b';
-    }
-    const oldSignal = h.context.api.finance.getPayments.mock.calls[0][1].signal;
+    if (change === 'startup session') h.context.initialDataFetchRequestRef.current++;
+    if (change === 'branch') h.context.currentLocationIdRef.current = 'branch-b';
+    if (change === 'authentication') h.context.mlsAuthenticatedRef.current = false;
+    if (change === 'auth session') h.context.auth.getSession = () => ({ role: 'staff' });
+    if (change === 'clinic scope') h.context.clinicTenant = 'tenant-b';
+    await settlePage(h);
+    expect(h.context.setMlsRecords).not.toHaveBeenCalled();
+    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
+    expect(h.context.setMlsTotal).not.toHaveBeenCalled();
+    expect(h.context.setMlsScope).not.toHaveBeenCalled();
+  });
+
+  it('does not let an older query publish or clear its replacement flight', async () => {
+    const h = harness();
     h.render('material-cost');
-    h.counts(2);
-    expect(oldSignal.aborted).toBe(true);
+    h.context.mlsQuery = { ...h.context.mlsQuery, page: 2 };
+    h.render('material-cost');
     const replacement = h.context.mlsInFlightRef.current;
-    await h.settle(0);
+    await settlePage(h);
     expect(h.context.mlsInFlightRef.current).toBe(replacement);
     expect(h.context.setMlsRecords).not.toHaveBeenCalled();
-    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
-    expect(h.context.setMlsScope).not.toHaveBeenCalled();
-    h.render('patients');
-    h.render('material-cost');
-    h.counts(2);
-    await h.settle(1);
+    await settlePage(h, 1);
     expect(h.context.setMlsRecords).toHaveBeenCalledExactlyOnceWith(records);
-    expect(h.context.setMlsPayments).toHaveBeenCalledExactlyOnceWith(payments);
-    expect(h.context.setMlsScope).toHaveBeenCalledExactlyOnceWith(change === 'branch' ? 'branch-b' : 'branch-a');
     expect(h.context.mlsInFlightRef.current).toBeNull();
+  });
+
+  it.each(['startup', 'auth', 'permission'])('does not load until %s readiness permits it', (gate) => {
+    const h = harness();
+    if (gate === 'startup') h.context.initialSyncActive = true;
+    if (gate === 'auth') h.context.isAuthenticated = false;
+    if (gate === 'permission') h.context.canAccessView.mockReturnValue(false);
+    h.render('material-cost');
+    expect(h.context.loadMlsDirectoryPage).not.toHaveBeenCalled();
   });
 });
 

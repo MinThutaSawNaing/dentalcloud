@@ -72,6 +72,18 @@ describe('treatments.getAllRecords', () => {
     expect(supabaseMock.calls).toContainEqual({ action: 'range', from: 0, to: 49 });
   });
 
+  it('applies MLS ID and patient bounds together', async () => {
+    await api.treatments.getAllRecords('branch-1', { ids: ['t-1'], patientIds: ['p-1'], limit: null });
+    expect(supabaseMock.calls).toContainEqual({ action: 'in', column: 'id', value: ['t-1'] });
+    expect(supabaseMock.calls).toContainEqual({ action: 'in', column: 'patient_id', value: ['p-1'] });
+    expect(supabaseMock.calls).toContainEqual({ action: 'eq', column: 'location_id', value: 'branch-1' });
+  });
+
+  it.each([{ ids: [] }, { patientIds: [] }, { treatmentIds: [] }])('does not broaden empty selection (%j)', async (options) => {
+    expect(await api.treatments.getAllRecords('branch-1', options)).toEqual([]);
+    expect(supabaseMock.from).not.toHaveBeenCalled();
+  });
+
   it('applies bounded overview treatment IDs without commission enrichment', async () => {
     supabaseMock.rows = [{ id: 'old', cost: 100, date: '2025-01-01', location_id: 'branch-1' }];
     const result = await api.treatments.getAllRecords('branch-1', {

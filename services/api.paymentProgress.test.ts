@@ -83,6 +83,22 @@ const assertQueries = (progress: boolean) => {
 };
 
 describe('finance payment pagination progress', () => {
+  it('retains explicit payment and patient ID bounds in optional-relation fallback queries', async () => {
+    mock.state.relation = 'payment_allocations';
+    const result = await fetchPayments({ ids: ['payment-1'], patientIds: ['patient-1'], includeEnrichment: false });
+    expect(result.map((payment) => payment.id)).toEqual(['payment-1']);
+    expect(paymentCalls()).toHaveLength(2);
+    for (const call of paymentCalls()) {
+      expect(call.filters).toContainEqual(['in', 'id', ['payment-1']]);
+      expect(call.filters).toContainEqual(['in', 'patient_id', ['patient-1']]);
+    }
+  });
+
+  it.each([{ ids: [] }, { patientIds: [] }])('short circuits empty bounded selectors (%j)', async (options) => {
+    expect(await fetchPayments(options)).toEqual([]);
+    expect(mock.from).not.toHaveBeenCalled();
+  });
+
   it('reports cumulative rows beyond 1000 with only the first count and no enrichment completion event', async () => {
     const onProgress = vi.fn();
     const result = await fetchPayments({ onProgress });

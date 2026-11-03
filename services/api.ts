@@ -2686,6 +2686,7 @@ export const api = {
       };
     },
     getAll: async (locationId?: string, options?: {
+      ids?: string[];
       dateFrom?: string;
       dateTo?: string;
       doctorId?: string;
@@ -2693,6 +2694,7 @@ export const api = {
       throwOnError?: boolean;
       onProgress?: (loaded: number, total: number | null) => void;
     }): Promise<Appointment[]> => {
+      if (options?.ids?.length === 0) return [];
       try {
         const pageSize = 1000;
         const appointments: any[] = [];
@@ -2714,6 +2716,7 @@ export const api = {
             if (options?.dateTo) query = query.lte('date', options.dateTo);
             if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
             if (options?.patientId) query = query.eq('patient_id', options.patientId);
+            if (options?.ids) query = query.in('id', options.ids);
             return query;
           };
 
@@ -3166,10 +3169,12 @@ export const api = {
 
   appointmentRescheduleLogs: {
     getAll: async (locationId?: string, options?: {
+      ids?: string[];
       dateFrom?: string;
       dateTo?: string;
       throwOnError?: boolean;
     }): Promise<AppointmentRescheduleLog[]> => {
+      if (options?.ids?.length === 0) return [];
       try {
         const { data, error } = await fetchAllRows<any>((from, to) => {
           let query = supabase
@@ -3179,6 +3184,7 @@ export const api = {
             .order('id')
             .range(from, to);
           if (locationId) query = query.eq('location_id', locationId);
+          if (options?.ids) query = query.in('id', options.ids);
           if (options?.dateFrom) query = query.gte('created_at', getLocalDateBoundaryISO(options.dateFrom));
           if (options?.dateTo) query = query.lt('created_at', getLocalDateBoundaryISO(options.dateTo, 1));
           return query;
@@ -4038,6 +4044,8 @@ export const api = {
       })
     }, locationId, range),
     getAllRecords: async (locationId?: string, options?: {
+      ids?: string[];
+      patientIds?: string[];
       limit?: number | null;
       dateFrom?: string;
       dateTo?: string;
@@ -4053,6 +4061,7 @@ export const api = {
       onRowsDownloaded?: () => void;
       signal?: AbortSignal;
     }): Promise<ClinicalRecord[]> => {
+      if (options?.ids?.length === 0 || options?.patientIds?.length === 0 || options?.treatmentIds?.length === 0) return [];
       const signal = options?.signal;
       try {
         signal?.throwIfAborted();
@@ -4077,6 +4086,8 @@ export const api = {
           if (options?.doctorId) query = query.eq('doctor_id', options.doctorId);
           if (options?.patientId) query = query.eq('patient_id', options.patientId);
           if (options?.treatmentIds) query = query.in('id', options.treatmentIds);
+          if (options?.ids) query = query.in('id', options.ids);
+          if (options?.patientIds) query = query.in('patient_id', options.patientIds);
           if (signal) query = query.abortSignal(signal);
           let { data, error, count } = await query;
           throwIfReadAborted(signal, error);
@@ -4096,6 +4107,8 @@ export const api = {
             if (options?.doctorId) fallbackQuery = fallbackQuery.eq('doctor_id', options.doctorId);
             if (options?.patientId) fallbackQuery = fallbackQuery.eq('patient_id', options.patientId);
             if (options?.treatmentIds) fallbackQuery = fallbackQuery.in('id', options.treatmentIds);
+            if (options?.ids) fallbackQuery = fallbackQuery.in('id', options.ids);
+            if (options?.patientIds) fallbackQuery = fallbackQuery.in('patient_id', options.patientIds);
             if (signal) fallbackQuery = fallbackQuery.abortSignal(signal);
             const fallback = await fallbackQuery;
             throwIfReadAborted(signal, fallback.error);
@@ -4966,6 +4979,8 @@ export const api = {
       return payments;
     },
     getPayments: async (locationId?: string, options?: {
+      ids?: string[];
+      patientIds?: string[];
       dateFrom?: string;
       dateTo?: string;
       patientId?: string;
@@ -4978,6 +4993,7 @@ export const api = {
       onRowsDownloaded?: () => void;
       signal?: AbortSignal;
     }): Promise<PaymentRecord[]> => {
+      if (options?.ids?.length === 0 || options?.patientIds?.length === 0) return [];
       const signal = options?.signal;
       signal?.throwIfAborted();
       const buildPaymentQuery = (columns: string) => (from: number, to: number) => {
@@ -4992,6 +5008,8 @@ export const api = {
         if (options?.dateFrom) query = query.gte('payment_date', options.dateFrom);
         if (options?.dateTo) query = query.lte('payment_date', options.dateTo);
         if (options?.patientId) query = query.eq('patient_id', options.patientId);
+        if (options?.ids) query = query.in('id', options.ids);
+        if (options?.patientIds) query = query.in('patient_id', options.patientIds);
         if (signal) query = query.abortSignal(signal);
         return query;
       };
