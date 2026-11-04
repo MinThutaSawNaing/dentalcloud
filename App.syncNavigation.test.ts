@@ -4,6 +4,7 @@ import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dataCache } from './utils/dataCache';
 import { mergePatientsById } from './utils/patientMerge';
+import { createExpenseLoadStages } from './components/ExpensesLoadProgress';
 
 beforeEach(() => dataCache.clear());
 
@@ -386,6 +387,9 @@ describe('Assistant parallel module/data startup runtime', () => {
 // Actual App effect and real cache, with deferred API bundles.
 function bundleHarness(bundle: typeof bundles[number]) {
   const h = harness(lazyCode);
+  h.context.expenseProgressRef = { current: null };
+  h.context.setExpenseLoadStages = vi.fn();
+  h.context.createExpenseLoadStages = createExpenseLoadStages;
   const reads = bundle.reads.map((path) => {
     const pending: ReturnType<typeof deferred<any[]>>[] = [];
     const mock = vi.fn(() => {
@@ -411,6 +415,73 @@ function bundleHarness(bundle: typeof bundles[number]) {
   };
   return { ...h, reads, rows, counts, published, settle };
 }
+
+describe('Expense stage progress ownership', () => {
+  const bundle = bundles.find(bundle => bundle.view === 'expenses')!;
+  it('does not let remaining reads from a failed attempt update retry counts', async () => {
+    const h = bundleHarness(bundle);
+    h.render('expenses');
+    h.reads[0].pending[0].reject(new Error('expense read failed'));
+    await flush();
+    h.render('material-cost');
+    h.render('expenses');
+    h.context.setExpenseLoadStages.mockClear();
+    h.reads[1].pending[0].resolve(h.rows[1]);
+    h.reads[2].pending[0].resolve(h.rows[2]);
+    await flush();
+    expect(h.context.setExpenseLoadStages).not.toHaveBeenCalled();
+    await h.settle(1);
+    h.published(1);
+  });
+
+  it('reports parallel completed row counts without publishing partial financial data', async () => {
+    const h = bundleHarness(bundle);
+    h.render('expenses');
+    expect(h.context.setExpenseLoadStages).toHaveBeenLastCalledWith(createExpenseLoadStages());
+    h.reads[1].pending[0].resolve([]);
+    await flush();
+    expect(h.context.setExpenseLoadStages).toHaveBeenLastCalledWith([
+      { label: 'Expenses and derived material costs', count: null },
+      { label: 'Medicine sales', count: 0 },
+      { label: 'Treatment revenue', count: null },
+    ]);
+    h.published(0);
+    h.render('material-cost');
+    h.context.setExpenseLoadStages.mockClear();
+    h.reads[0].pending[0].resolve(h.rows[0]);
+    await flush();
+    expect(h.context.setExpenseLoadStages).not.toHaveBeenCalled();
+    h.render('expenses');
+    expect(h.context.setExpenseLoadStages).toHaveBeenLastCalledWith([
+      { label: 'Expenses and derived material costs', count: 1 },
+      { label: 'Medicine sales', count: 0 },
+      { label: 'Treatment revenue', count: null },
+    ]);
+    h.counts(1);
+    h.reads[2].pending[0].resolve(h.rows[2]);
+    await flush();
+    expect(h.context.setExpenses).toHaveBeenCalledOnce();
+    expect(h.context.setExpenseLoadStages.mock.lastCall[0].map((stage: any) => stage.count)).toEqual([1, 0, 1]);
+  });
+
+  it.each(['branch', 'session', 'version', 'revision', 'permission'])('rejects stale %s progress and restarts stages', async change => {
+    const h = bundleHarness(bundle);
+    h.render('expenses');
+    if (change === 'branch') h.context.currentLocationId = h.context.startupScope = h.context.currentLocationIdRef.current = 'branch-b';
+    if (change === 'session') h.context.initialDataFetchRequestRef.current++;
+    if (change === 'version') h.context.navigationCacheVersionRef.current++;
+    if (change === 'revision') h.context.lazyViewRevision++;
+    if (change === 'permission') h.context.allowedViews = [...h.context.allowedViews, 'doctors'];
+    h.render('expenses');
+    h.context.setExpenseLoadStages.mockClear();
+    await h.settle(0);
+    expect(h.context.setExpenseLoadStages).not.toHaveBeenCalled();
+    h.published(0);
+    await h.settle(1);
+    expect(h.context.setExpenseLoadStages.mock.lastCall[0].map((stage: any) => stage.count)).toEqual([1, 1, 1]);
+    h.published(1);
+  });
+});
 
 describe.each(bundles)('App generic $view navigation cache runtime', (bundle) => {
   it.each(['branch', 'version', 'revision', 'session', 'permission'])('isolates %s changes from old flights', async (change) => {

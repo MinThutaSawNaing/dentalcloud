@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
 import { getHistorySyncPercentage, type HistoryReadProgress } from './utils/historySyncProgress';
+import ExpensesLoadProgress, { createExpenseLoadStages, type ExpenseLoadStage } from './components/ExpensesLoadProgress';
 import { databaseFilteredDirectories } from './utils/directoryFeature';
 import { loadMlsDateRange, type MlsDateRange, type MlsLoadProgress } from './services/mlsDateRange';
 import { loadMlsDirectoryPage, type MlsDirectoryQuery } from './services/mlsDirectory';
@@ -460,6 +461,8 @@ const App: React.FC = () => {
   const startupNavigationDoneRef = useRef(false);
   const leanStaffStartup = import.meta.env.VITE_LEAN_STAFF_STARTUP !== 'false' && !isDoctor;
   const [loadedLazyView, setLoadedLazyView] = useState('');
+  const [expenseLoadStages, setExpenseLoadStages] = useState<ExpenseLoadStage[] | null>(null);
+  const expenseProgressRef = useRef<{ key: string; stages: ExpenseLoadStage[]; publish: () => void } | null>(null);
   const [lazyViewError, setLazyViewError] = useState<string | null>(null);
   const [lazyViewRevision, setLazyViewRevision] = useState(0);
   const navigationCacheVersionRef = useRef(0);
@@ -2912,11 +2915,32 @@ const App: React.FC = () => {
           String(expenseRangeStart.getMonth() + 1).padStart(2, '0'),
           String(expenseRangeStart.getDate()).padStart(2, '0')
         ].join('-');
-        const [expenseData, sales, records] = await cached(() => Promise.all([
-          api.expenses.getAll(scope, { throwOnError: true }),
-          api.medicines.getSales(scope, undefined, { throwOnError: true, dateFrom: expenseDateFrom }),
-          api.treatments.getAllRecords(scope, { limit: null, dateFrom: expenseDateFrom, throwOnError: true })
-        ]));
+        // The shared cache owns the flight, while the latest mounted effect owns publication.
+        // Re-entry observes the same stages without allowing old branches/sessions to publish.
+        if (expenseProgressRef.current?.key !== cacheKey) {
+          expenseProgressRef.current = { key: cacheKey, stages: createExpenseLoadStages(), publish: () => {} };
+        }
+        const progress = expenseProgressRef.current;
+        progress.publish = () => {
+          if (isCurrent()) setExpenseLoadStages(progress.stages.map(stage => ({ ...stage })));
+        };
+        progress.publish();
+        const [expenseData, sales, records] = await cached(() => {
+          const stages = createExpenseLoadStages();
+          progress.stages = stages;
+          progress.publish();
+          const track = async <T,>(index: number, read: Promise<T[]>): Promise<T[]> => {
+            const rows = await read;
+            stages[index].count = rows.length;
+            if (progress.stages === stages) progress.publish();
+            return rows;
+          };
+          return Promise.all([
+            track(0, api.expenses.getAll(scope, { throwOnError: true })),
+            track(1, api.medicines.getSales(scope, undefined, { throwOnError: true, dateFrom: expenseDateFrom })),
+            track(2, api.treatments.getAllRecords(scope, { limit: null, dateFrom: expenseDateFrom, throwOnError: true }))
+          ]);
+        });
         if (!isCurrent()) return;
         setExpenses(expenseData);
         setMedicineSales(sales);
@@ -5599,7 +5623,7 @@ const App: React.FC = () => {
                     if (startupScope !== currentLocationId) void fetchInitialData(currentLocationId || undefined);
                     else setLazyViewRevision((value) => value + 1);
                   }}>Retry</button>
-                </> : <><Loader2 className="animate-spin text-indigo-600" /><p>Loading {currentView === 'finance' ? 'patient chart' : currentView}...</p></>}
+                </> : currentView === 'expenses' ? <ExpensesLoadProgress stages={startupScope === currentLocationId && !initialSyncActive ? expenseLoadStages : null} /> : <><Loader2 className="animate-spin text-indigo-600" /><p>Loading {currentView === 'finance' ? 'patient chart' : currentView}...</p></>}
               </div>
             ) : <>
             {leanStaffStartup && error && <div role="alert" className="m-3 rounded-lg bg-amber-50 p-3 text-amber-900">{error}<button type="button" className="ml-3 underline" onClick={() => void fetchInitialData(currentLocationId || undefined)}>Refresh</button></div>}
@@ -5942,7 +5966,14 @@ const App: React.FC = () => {
                 currentLocationId={currentLocationId}
                 loading={loading}
                 currency={currency}
-                onRefresh={async () => { await Promise.all([fetchExpenses(true), fetchMedicineSales(true)]); }}
+                onRefresh={async () => {
+                  if (leanStaffStartup) {
+                    invalidateNavigationCache();
+                    setLoadedLazyView('');
+                    setExpenseLoadStages(null);
+                    setLazyViewRevision(value => value + 1);
+                  } else await Promise.all([fetchExpenses(true), fetchMedicineSales(true)]);
+                }}
                 onAdd={() => {setEditingExpense(null); setNewExpenseData(getDefaultExpenseFormData()); setShowExpenseModal(true);}}
                 onEdit={(expense) => {setEditingExpense(expense); setNewExpenseData({ description: expense.description, amount: expense.amount, category: expense.category, date: expense.date }); setShowExpenseModal(true);}}
                 onDelete={handleDeleteExpense}

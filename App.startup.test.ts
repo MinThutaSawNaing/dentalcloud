@@ -109,8 +109,14 @@ const section = (source: string, start: string, end: string) => {
       ["} else if (view === 'ai-assistant')", "} else if (view === 'users')"]
     ]) {
       const bundle = section(lazy, start, end);
-      expect(bundle).toContain('await cached(() => Promise.all([');
-      expect(bundle).toMatch(/\]\)\);\s*if \(!isCurrent\(\)/);
+      if (start === "if (view === 'expenses')") {
+        expect(bundle).toContain('await cached(() => {');
+        expect(bundle).toContain('return Promise.all([');
+        expect(bundle).toMatch(/\]\);\s*\}\);\s*if \(!isCurrent\(\)/);
+      } else {
+        expect(bundle).toContain('await cached(() => Promise.all([');
+        expect(bundle).toMatch(/\]\)\);\s*if \(!isCurrent\(\)/);
+      }
     }
     const cleanup = section(lazy, '// Cancel publication only:', '}, [currentView');
     expect(cleanup).toContain('return () => { cancelled = true; };');
