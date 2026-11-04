@@ -26,6 +26,7 @@ type Entry = { kind: 'treatment' | 'appointment' | 'payment' | 'reschedule'; ids
 const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100));
 
 export async function getAuditDirectoryPage(locationId: string, query: AuditQuery, doctorId?: string): Promise<AuditDirectoryPage> {
+  if (!locationId) throw new Error('A branch is required to load the audit directory.');
   const { data, error } = await supabase.rpc('audit_directory', {
     p_location_id: locationId, p_date_from: query.dateFrom, p_date_to: query.dateTo,
     p_filter: doctorId ? 'treatments' : query.auditFilter, p_search: query.searchTerm.trim(),
@@ -33,7 +34,11 @@ export async function getAuditDirectoryPage(locationId: string, query: AuditQuer
   });
   if (error) throw new Error(error.code === 'PGRST202' || error.code === '42883'
     ? 'Audit filtering is not installed yet. Apply the audit directory migration.' : error.message);
-  if (!data || !Array.isArray(data.rows)) throw new Error('Invalid audit directory response.');
+  if (!data || !Array.isArray(data.rows) || !Number.isSafeInteger(Number(data.total)) || Number(data.total) < 0
+    || !data.counts || !['appointments', 'reschedules', 'treatments', 'payments'].every((kind) =>
+      Number.isSafeInteger(Number(data.counts[kind])) && Number(data.counts[kind]) >= 0)) {
+    throw new Error('Invalid audit directory response.');
+  }
   const selected = data.rows as Entry[];
   const entries = [...selected, ...(data.context || [])] as Entry[];
   const idsFor = (kind: Entry['kind']) => [...new Set(entries.filter((entry) => entry.kind === kind).flatMap((entry) => entry.ids))];

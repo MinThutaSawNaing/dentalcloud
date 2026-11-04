@@ -58,6 +58,13 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
   const [materialSummaries, setMaterialSummaries] = useState<Record<string, TreatmentCostSummary>>({});
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
   const itemsPerPage = 100;
+  const serverPagination = displayRows !== undefined;
+  React.useEffect(() => {
+    if (!loading && serverPagination && directoryMeta && !showAll) {
+      const lastPage = Math.max(1, Math.ceil(directoryMeta.total / itemsPerPage));
+      if (currentPage > lastPage) setCurrentPage(lastPage);
+    }
+  }, [loading, serverPagination, directoryMeta, showAll, currentPage]);
 
   const handleDateFromChange = (value: string) => {
     setDateFrom(value);
@@ -199,9 +206,9 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
   );
 
   const filteredRows = useMemo(() => {
-    if (onQueryChange) return displayRows || [];
+    if (serverPagination) return displayRows || [];
     return filterAuditLogRowsForExport(auditRows, buildRecordsViewFilterOptions({ isDoctor, auditFilter, dateFrom, dateTo, searchTerm }));
-  }, [auditRows, displayRows, onQueryChange, auditFilter, searchTerm, dateFrom, dateTo, isDoctor]);
+  }, [auditRows, displayRows, serverPagination, auditFilter, searchTerm, dateFrom, dateTo, isDoctor]);
   const isPaymentOnlyView = auditFilter === 'payments';
 
   React.useEffect(() => {
@@ -209,10 +216,10 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
   }, [auditFilter]);
 
   const paginatedRows = useMemo(() => {
-    if (onQueryChange || showAll) return filteredRows;
+    if (serverPagination || showAll) return filteredRows;
     const startIndex = (currentPage - 1) * itemsPerPage;
     return filteredRows.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredRows, currentPage, showAll]);
+  }, [filteredRows, currentPage, showAll, serverPagination]);
 
   React.useEffect(() => {
     if (loading) return;
@@ -258,7 +265,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
   }, [paginatedRows, loading, cacheScope, cacheRevision]);
 
   const filteredSummary = useMemo(() => {
-    if (onQueryChange && directoryMeta) return directoryMeta.counts;
+    if (serverPagination && directoryMeta) return directoryMeta.counts;
     return filteredRows.reduce(
       (summary, row) => {
         if (row.kind === 'appointment') summary.appointments += 1;
@@ -270,7 +277,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
       },
       { appointments: 0, reschedules: 0, treatments: 0, payments: 0 }
     );
-  }, [filteredRows, directoryMeta, onQueryChange]);
+  }, [filteredRows, directoryMeta, serverPagination]);
 
   React.useEffect(() => {
     setCurrentPage(1);
@@ -876,7 +883,7 @@ const RecordsView: React.FC<RecordsViewProps> = ({ records, appointments = [], r
         </>
       )}
 
-      {!loading && filteredRows.length > 0 && (
+      {!loading && (directoryMeta?.total ?? filteredRows.length) > 0 && (
         <Pagination
           totalItems={directoryMeta?.total ?? filteredRows.length}
           itemsPerPage={itemsPerPage}

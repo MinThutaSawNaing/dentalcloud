@@ -27,18 +27,19 @@ interface MaterialCostViewProps {
   totalItems?: number;
   onQueryChange?: (query: MlsDirectoryQuery) => void;
   allocationPayments?: PaymentRecord[];
+  initialQuery?: MlsDirectoryQuery;
 }
 
 type MaterialCostFilter = 'all' | 'tomorrow' | 'today' | 'custom';
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments, initialQuery }) => {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [showAll, setShowAll] = useState(false);
-  const [patientSearchTerm, setPatientSearchTerm] = useState('');
-  const [doctorSearchTerm, setDoctorSearchTerm] = useState('');
-  const [treatmentSearchTerm, setTreatmentSearchTerm] = useState('');
-  const [materialFilter, setMaterialFilter] = useState<MaterialCostFilter>('today');
+  const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1);
+  const [showAll, setShowAll] = useState(initialQuery?.showAll ?? false);
+  const [patientSearchTerm, setPatientSearchTerm] = useState(initialQuery?.patientSearch ?? '');
+  const [doctorSearchTerm, setDoctorSearchTerm] = useState(initialQuery?.doctorSearch ?? '');
+  const [treatmentSearchTerm, setTreatmentSearchTerm] = useState(initialQuery?.treatmentSearch ?? '');
+  const [materialFilter, setMaterialFilter] = useState<MaterialCostFilter>(initialQuery ? (initialQuery.dateFrom || initialQuery.dateTo ? 'custom' : 'all') : 'today');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTableScrollable, setIsTableScrollable] = useState(false);
   const [editingRow, setEditingRow] = useState<MaterialCostPaymentRow | null>(null);
@@ -48,8 +49,8 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   React.useEffect(() => { refreshRef.current = onRefresh; }, [onRefresh]);
   const todayKey = useMemo(() => toLocalISODate(new Date()), []);
   const tomorrowKey = useMemo(() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); return toLocalISODate(tomorrow); }, []);
-  const [dateFrom, setDateFrom] = useState(todayKey);
-  const [dateTo, setDateTo] = useState(todayKey);
+  const [dateFrom, setDateFrom] = useState(initialQuery ? initialQuery.dateFrom || '' : todayKey);
+  const [dateTo, setDateTo] = useState(initialQuery ? initialQuery.dateTo || '' : todayKey);
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
   const itemsPerPage = 100;
 
@@ -77,6 +78,15 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
 
   const filterKey = JSON.stringify([patientSearchTerm, doctorSearchTerm, treatmentSearchTerm, dateFrom, dateTo]);
   const appliedFilterRef = React.useRef(filterKey);
+  React.useEffect(() => {
+    if (!onQueryChange) setCurrentPage(1);
+  }, [paymentRecords, onQueryChange]);
+  React.useEffect(() => {
+    if (!loading && totalItems !== undefined && !showAll) {
+      const lastPage = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+      if (currentPage > lastPage) setCurrentPage(lastPage);
+    }
+  }, [loading, totalItems, showAll, currentPage]);
   React.useEffect(() => {
     const filtersChanged = appliedFilterRef.current !== filterKey;
     appliedFilterRef.current = filterKey;

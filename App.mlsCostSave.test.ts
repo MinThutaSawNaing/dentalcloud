@@ -32,7 +32,7 @@ describe('MLS save targeted refresh regression', () => {
   });
 
   it.each(['patient-a', null, undefined])('invalidates the filtered page after saving costs for %s without history reads', async (patientId) => {
-    const start = source.indexOf('  const refreshMlsAfterCostSave =');
+    const start = source.indexOf('  const refreshDatabaseMlsAfterCostSave =');
     expect(start).toBeGreaterThanOrEqual(0);
     const end = source.indexOf('  const handlePaymentCorrected =', start);
     expect(end).toBeGreaterThan(start);
@@ -42,7 +42,7 @@ describe('MLS save targeted refresh regression', () => {
       api: { treatments: { getAllRecords: vi.fn() }, finance: { getPayments: vi.fn() } },
       refreshGlobalRecordsForPatient: vi.fn(),
     };
-    const run = new Function(...Object.keys(context), `${code}\nreturn refreshMlsAfterCostSave;`)(...Object.values(context));
+    const run = new Function(...Object.keys(context), `${code}\nreturn refreshDatabaseMlsAfterCostSave;`)(...Object.values(context));
     await run(patientId);
     expect(context.invalidateMaterialCostCaches).toHaveBeenCalledExactlyOnceWith('branch-a');
     expect(context.api.treatments.getAllRecords).not.toHaveBeenCalled();

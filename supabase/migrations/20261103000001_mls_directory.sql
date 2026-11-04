@@ -12,6 +12,10 @@ DECLARE
   total_remaining numeric; allocatable numeric; share numeric; allocated numeric;
   treatment_value numeric; medicine_value numeric; service_fee numeric;
   eligible uuid[]; tid uuid; i integer;
+  snapshot jsonb; line jsonb; normalized_lines jsonb; raw_value jsonb;
+  numeric_value numeric; line_kind text; numeric_text text;
+  -- ECMAScript String.trim whitespace (not just PostgreSQL's default space).
+  trim_chars text := E' \t\n\r\f\013' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
 BEGIN
   FOR t IN SELECT id, cost FROM public.treatments
     WHERE location_id = p_location_id AND patient_id = p_patient_id
@@ -22,23 +26,102 @@ BEGIN
     WHERE location_id = p_location_id AND patient_id = p_patient_id
     ORDER BY payment_date, created_at, id
   LOOP
+    -- Only the normalized receipt used by api.mapPayment may affect allocation.
+    -- Missing/invalid headers reject the entire snapshot, not just its lines.
+    snapshot := p.receipt_snapshot;
+    IF NOT coalesce(
+      jsonb_typeof(snapshot->'receiptNumber') = 'string' AND btrim(snapshot->>'receiptNumber', trim_chars) <> ''
+      AND jsonb_typeof(snapshot->'receiptDate') = 'string' AND btrim(snapshot->>'receiptDate', trim_chars) <> ''
+      AND snapshot->>'currency' IN ('USD', 'MMK')
+      AND snapshot->'payment'->>'status' IN ('FULL', 'PARTIAL'), false) THEN
+      snapshot := '{}'::jsonb;
+    END IF;
+    service_fee := 0; treatment_value := 0; medicine_value := 0;
+    -- Normalize only allocation-relevant fields. Nonarrays are empty, and invalid
+    -- lines are discarded just like normalizeTreatmentLine/normalizeMedicineLine.
+    FOREACH line_kind IN ARRAY ARRAY['treatments', 'medicines', 'payment'] LOOP
+      normalized_lines := '[]'::jsonb;
+      FOR line IN SELECT value FROM jsonb_array_elements(
+        CASE WHEN line_kind = 'payment' THEN jsonb_build_array(snapshot->'payment')
+          WHEN jsonb_typeof(snapshot->line_kind) = 'array' THEN snapshot->line_kind
+          ELSE '[]'::jsonb END)
+      LOOP
+        IF line_kind <> 'payment' THEN
+          CONTINUE WHEN NOT coalesce(
+            jsonb_typeof(line->'id') = 'string' AND btrim(line->>'id', trim_chars) <> ''
+            AND jsonb_typeof(line->'date') = 'string' AND btrim(line->>'date', trim_chars) <> ''
+            AND CASE WHEN line_kind = 'treatments' THEN
+              jsonb_typeof(line->'description') = 'string' AND btrim(line->>'description', trim_chars) <> ''
+            ELSE
+              jsonb_typeof(coalesce(nullif(line->'medicineName', 'null'::jsonb), line->'medicine_name')) = 'string'
+              AND btrim(coalesce(nullif(line->'medicineName', 'null'::jsonb), line->'medicine_name') #>> '{}', trim_chars) <> ''
+            END, false);
+        END IF;
+        raw_value := CASE line_kind
+          WHEN 'treatments' THEN coalesce(nullif(line->'finalCost', 'null'::jsonb),
+            nullif(line->'final_cost', 'null'::jsonb), line->'cost')
+          WHEN 'medicines' THEN coalesce(nullif(line->'total_price', 'null'::jsonb), line->'totalPrice')
+          ELSE line->'serviceFeeAmount' END;
+        -- Number(value) failures/nonfinite values become zero. Catch bad text and
+        -- overflow locally so one legacy receipt cannot abort the directory RPC.
+        BEGIN
+          -- Number([x]) coerces through its string form; multi-element arrays
+          -- cannot be numbers. Repeated singleton arrays behave the same way.
+          IF jsonb_typeof(raw_value) = 'array' THEN
+            WHILE jsonb_typeof(raw_value) = 'array' LOOP
+              IF jsonb_array_length(raw_value) = 1 THEN raw_value := raw_value->0;
+              ELSE raw_value := 'null'::jsonb; EXIT; END IF;
+            END LOOP;
+            IF jsonb_typeof(raw_value) = 'boolean' THEN raw_value := 'null'::jsonb; END IF;
+          END IF;
+          numeric_text := btrim(raw_value #>> '{}', trim_chars);
+          IF numeric_text ~* '^0(x[0-9a-f]+|b[01]+|o[0-7]+)$' THEN
+            numeric_value := 0;
+            FOR i IN 3..length(numeric_text) LOOP
+              numeric_value := numeric_value * CASE lower(substr(numeric_text, 2, 1))
+                WHEN 'x' THEN 16 WHEN 'b' THEN 2 ELSE 8 END
+                + strpos('0123456789abcdef', lower(substr(numeric_text, i, 1))) - 1;
+            END LOOP;
+          ELSE
+            numeric_value := CASE WHEN raw_value = 'true'::jsonb THEN 1
+              WHEN raw_value = 'false'::jsonb THEN 0
+              ELSE coalesce(nullif(numeric_text, '')::numeric, 0) END;
+          END IF;
+          IF numeric_value::double precision IN ('NaN'::double precision,
+            'Infinity'::double precision, '-Infinity'::double precision) THEN
+            numeric_value := 0;
+          END IF;
+        EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+          numeric_value := 0;
+        END;
+        numeric_value := greatest(0, numeric_value);
+        IF line_kind = 'treatments' THEN
+          treatment_value := treatment_value + numeric_value;
+          normalized_lines := normalized_lines || jsonb_build_array(jsonb_build_object('id', btrim(line->>'id', trim_chars)));
+        ELSIF line_kind = 'medicines' THEN
+          medicine_value := medicine_value + (floor(numeric_value::double precision * 100 + 0.5) / 100)::numeric;
+        ELSE
+          service_fee := numeric_value;
+        END IF;
+      END LOOP;
+      IF line_kind = 'treatments' THEN
+        snapshot := jsonb_set(snapshot, '{treatments}', normalized_lines);
+      END IF;
+    END LOOP;
     -- Match JS Set insertion order, including the residual-cent recipient.
     SELECT coalesce(array_agg(x.id ORDER BY x.first_ord), '{}'::uuid[]) INTO explicit_ids FROM (
       SELECT id, min(ord) AS first_ord FROM (
         SELECT id, ord FROM unnest(p.treatment_ids) WITH ORDINALITY a(id, ord)
         UNION ALL
-        SELECT (line->>'id')::uuid, cardinality(p.treatment_ids) + ord
-          FROM jsonb_array_elements(coalesce(p.receipt_snapshot->'treatments', '[]'::jsonb)) WITH ORDINALITY a(line, ord)
-          WHERE line->>'id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        SELECT (a.receipt_line->>'id')::uuid, coalesce(cardinality(p.treatment_ids), 0) + ord
+          FROM jsonb_array_elements(snapshot->'treatments') WITH ORDINALITY a(receipt_line, ord)
+          WHERE a.receipt_line->>'id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       ) ordered_ids GROUP BY id
     ) x;
     linked := explicit_ids;
-    service_fee := greatest(0, coalesce((p.receipt_snapshot->'payment'->>'serviceFeeAmount')::numeric, 0));
-    SELECT coalesce(sum(greatest(0, coalesce((line->>'finalCost')::numeric, 0))), 0)
-      INTO treatment_value FROM jsonb_array_elements(coalesce(p.receipt_snapshot->'treatments', '[]'::jsonb)) line;
-    SELECT coalesce(sum(greatest(0, coalesce((line->>'totalPrice')::numeric, 0))), 0)
-      INTO medicine_value FROM jsonb_array_elements(coalesce(p.receipt_snapshot->'medicines', '[]'::jsonb)) line;
     amount_left := round(greatest(0, coalesce(p.cleared_amount, p.amount) - service_fee), 2);
+    -- getPaymentTreatmentShare retains the service-fee-only fallback when
+    -- normalized receipt lines have no positive prices (including empty arrays).
     IF treatment_value + medicine_value > 0 THEN
       amount_left := round(least(treatment_value, greatest(0, coalesce(p.cleared_amount, p.amount) - service_fee - medicine_value)), 2);
     END IF;

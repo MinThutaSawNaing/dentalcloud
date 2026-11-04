@@ -67,6 +67,7 @@ function harness(code = mlsCode) {
     return read.promise;
   };
   const context: Context = {
+    databaseFilteredDirectories: true,
     leanStaffStartup: true, isAuthenticated: true, currentLocationId: 'branch-a',
     startupScope: 'branch-a', initialSyncActive: false, allowedViews: ['material-cost', 'patients'],
     mlsScope: '', mlsSyncError: null, mlsCacheRevision: 0, lazyViewRevision: 0,

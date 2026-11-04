@@ -10,6 +10,13 @@ const query = { dateFrom: '2026-11-01', dateTo: '2026-11-03', auditFilter: 'all'
 const counts = { treatments: 0, appointments: 0, payments: 0, reschedules: 0 };
 beforeEach(() => { vi.resetAllMocks(); Object.values(mocks).slice(1).forEach((mock) => mock.mockResolvedValue([])); });
 describe('audit directory', () => {
+  it('rejects absent branch scope and invalid server totals', async () => {
+    await expect(getAuditDirectoryPage('', query)).rejects.toThrow('branch');
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    mocks.rpc.mockResolvedValue({ data: { total: 'invalid', counts, rows: [] } });
+    await expect(getAuditDirectoryPage('branch', query)).rejects.toThrow('Invalid audit');
+    expect(mocks.records).not.toHaveBeenCalled();
+  });
   it('filters and pages at the database and skips empty source hydration', async () => {
     mocks.rpc.mockResolvedValue({ data: { total: 0, counts, rows: [] }, error: null });
     expect((await getAuditDirectoryPage('branch', query)).total).toBe(0);

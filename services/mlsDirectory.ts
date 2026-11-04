@@ -62,7 +62,13 @@ export async function loadMlsDirectoryPage(
     signal?.throwIfAborted();
     if (error) throw new Error(`Unable to load MLS directory: ${error.message}`);
     const selection = (Array.isArray(data) ? data[0] : data) as Selection | null;
-    if (!selection) throw new Error('MLS directory returned no selection.');
+    if (!selection || !Array.isArray(selection.payment_ids) || !Array.isArray(selection.patient_ids)
+      || !Number.isSafeInteger(Number(selection.total)) || Number(selection.total) < 0) {
+      throw new Error('MLS directory returned an invalid selection.');
+    }
+    if (selection.payment_ids.some((id) => paymentIds.includes(id))) {
+      throw new Error('MLS rows changed while loading. Please refresh.');
+    }
     total = Number(selection.total);
     paymentIds.push(...selection.payment_ids);
     selection.patient_ids.forEach((id) => patientIds.add(id));
@@ -89,5 +95,6 @@ export async function loadMlsDirectoryPage(
   signal?.throwIfAborted();
   const byId = new Map(allocationPayments.map((payment) => [payment.id, payment]));
   const payments = paymentIds.map((id) => byId.get(id)).filter((payment): payment is PaymentRecord => Boolean(payment));
+  if (payments.length !== paymentIds.length) throw new Error('MLS rows changed while loading. Please refresh.');
   return { records, payments, total, allocationPayments };
 }

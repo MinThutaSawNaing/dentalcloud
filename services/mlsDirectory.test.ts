@@ -53,6 +53,17 @@ describe('MLS bounded directory', () => {
     expect(mocks.payments).not.toHaveBeenCalled();
   });
 
+  it('rejects missing hydrated payments rather than publishing partial financial rows', async () => {
+    mocks.payments.mockResolvedValue([prior]);
+    await expect(loadMlsDirectoryPage('branch-1', query)).rejects.toThrow('MLS rows changed');
+  });
+
+  it('rejects malformed selections and repeated pages during an explicit full read', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: { total: -1, payment_ids: [], patient_ids: [] } });
+    await expect(loadMlsDirectoryPage('branch-1', query)).rejects.toThrow('invalid selection');
+    await expect(loadMlsDirectoryPage('branch-1', { ...query, showAll: true })).rejects.toThrow('MLS rows changed');
+  });
+
   it('enumerates bounded RPC batches only when showAll is explicit', async () => {
     mocks.rpc.mockResolvedValueOnce({ data: { total: 2, payment_ids: ['selected'], patient_ids: ['patient-1'], treatment_ids: [] } })
       .mockResolvedValueOnce({ data: { total: 2, payment_ids: ['prior'], patient_ids: ['patient-1'], treatment_ids: [] } });

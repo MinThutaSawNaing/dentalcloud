@@ -1,8 +1,21 @@
 # Database-filtered MLS and audit directories
 
-## Deployment
+## Status: pending feature, disabled by default
 
-Apply these migrations to the Supabase database **before** deploying the frontend:
+Database-filtered MLS and audit directories are **not Patient-equivalent** and are
+not enabled for production by this change. With the flag unset (or anything other
+than the exact string `true`), the frontend retains the original `ae49495` MLS
+loader, cost-save refresh, and audit range loader. No directory migrations are
+required to deploy that default-disabled frontend.
+
+## Opt-in deployment
+
+Only set `VITE_DATABASE_FILTERED_DIRECTORIES=true` at build time after staging
+verification and migration review. Vite embeds this flag in the build; changing
+it requires rebuilding/redeploying. To disable, remove it or set it to `false`
+and rebuild. There is no automatic fallback to legacy on an enabled-path error.
+
+Apply these migrations to the Supabase database **before** enabling the flag:
 
 1. `supabase/migrations/20261103000001_mls_directory.sql`
 2. `supabase/migrations/20261103000002_audit_directory.sql`
@@ -42,3 +55,10 @@ multiple treatments, exports spanning multiple pages, and branch switching.
 
 SQL source guards and mocked service tests are not a substitute for executing
 the migrations against the actual PostgreSQL schema and permissions on staging.
+
+A disposable PostgreSQL 15 smoke test is checked in at
+`test/directory-postgres-smoke.sql`. Run it with `psql -v ON_ERROR_STOP=1 -f`
+against an **empty local test database only**; it creates fixture tables and
+roles. It covers function execution, branch isolation, payment-method search,
+cross-date audit context, malformed legacy receipts, and allocation ordering.
+This fixture is not a production migration and does not replace staging/RLS tests.
