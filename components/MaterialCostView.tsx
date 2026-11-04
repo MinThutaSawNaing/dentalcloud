@@ -11,7 +11,7 @@ import Pagination from './Pagination';
 import PaymentMlsCostModal from './PaymentMlsCostModal';
 import ProgressBar from './ProgressBar';
 import type { MlsDirectoryQuery } from '../services/mlsDirectory';
-import type { MlsDateRange } from '../services/mlsDateRange';
+import type { MlsDateRange, MlsLoadProgress } from '../services/mlsDateRange';
 
 interface MaterialCostViewProps {
   records: ClinicalRecord[];
@@ -23,6 +23,7 @@ interface MaterialCostViewProps {
   onRefresh: () => void | Promise<void>;
   onCostsSaved?: (patientId?: string | null) => Promise<void> | void;
   syncProgress?: number | null;
+  loadProgress?: MlsLoadProgress | null;
   loadError?: string | null;
   finalizing?: boolean;
   totalItems?: number;
@@ -35,7 +36,7 @@ interface MaterialCostViewProps {
 
 type MaterialCostFilter = 'all' | 'tomorrow' | 'today' | 'custom';
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments, initialQuery, initialDateRange, onDateRangeChange }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments, initialQuery, initialDateRange, onDateRangeChange }) => {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1);
   const [showAll, setShowAll] = useState(initialQuery?.showAll ?? false);
@@ -210,7 +211,15 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
       <button type="button" disabled={isRefreshing} onClick={() => void handleRefresh()} className="mt-3 min-h-11 rounded-lg border border-red-200 px-4 py-2 font-semibold">Retry</button>
     </div> : loading ? <div className="px-4 py-10 sm:px-6">
       <p className="mb-3 text-sm text-slate-600">MLS syncs automatically. You can set filters or use another tab while it loads. Financial rows appear when the sync is complete.</p>
-      <ProgressBar progress={syncProgress} label={finalizing ? 'Records downloaded. Loading doctor commissions and MLS cost totals…' : syncProgress === null ? 'Preparing MLS sync…' : 'Downloading MLS records…'} />
+      <ProgressBar progress={rangePending ? null : loadProgress?.percentage ?? syncProgress} label={rangePending ? 'Preparing selected date range...' : loadProgress?.label ?? (finalizing ? 'Records downloaded. Loading doctor commissions and MLS cost totals…' : syncProgress === null ? 'Preparing MLS sync…' : 'Downloading MLS records…')} />
+      {loadProgress && !rangePending && <div className="mt-4 space-y-2" role="status" aria-live="polite" aria-atomic="true">
+        {loadProgress.stages.map(stage => <div key={stage.label} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+          <span className={stage.status === 'active' ? 'font-bold text-slate-800' : 'text-slate-500'}>{stage.label}</span>
+          <span className="tabular-nums text-slate-600">{stage.status === 'waiting' ? 'Waiting' : stage.total === null ? stage.completed > 0 ? `${stage.completed} ${stage.unit} downloaded` : 'In progress...' : `${stage.completed} / ${stage.total} ${stage.unit}`}{stage.status === 'complete' ? ' — Complete' : stage.status === 'active' ? ' — In progress' : ''}</span>
+          {stage.detail && <span className="w-full text-slate-500">{stage.detail}</span>}
+        </div>)}
+        <p className="text-xs text-slate-500">You can use another tab. The table will open automatically when financial checks finish.</p>
+      </div>}
       <p className="mt-2 text-xs text-slate-500">Percentage measures completed sync stages, not time remaining. Downloading and financial checks can run at different speeds.</p>
       {finalizing && <p role="status" className="mt-3 text-sm text-slate-600">Still working. This may take longer on a slow connection. The table will open automatically when financial checks finish.</p>}
     </div> : <>

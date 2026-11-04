@@ -70,7 +70,7 @@ function harness(code = mlsCode) {
   const context: Context = {
     databaseFilteredDirectories: true,
     mlsDateRange: { dateFrom: '2026-11-04', dateTo: '2026-11-04' },
-    setMlsLoadedDateKey: vi.fn(), readPaymentRecords: vi.fn(() => []),
+    setMlsLoadedDateKey: vi.fn(), setMlsLoadProgress: vi.fn(), readPaymentRecords: vi.fn(() => []),
     loadMlsDateRange: vi.fn(() => {
       const read = deferred<any>(); pageReads.push(read); return read.promise;
     }),
@@ -134,6 +134,20 @@ function harness(code = mlsCode) {
 // Run the actual App effect with deferred loader responses and the real shared cache.
 describe('App date-scoped MLS runtime regression', () => {
   const bundle = { records, payments, allocationPayments: payments };
+  it('publishes live progress but ignores callbacks from superseded ranges', async () => {
+    const h = harness(dateCode); h.context.databaseFilteredDirectories = false;
+    h.render('material-cost');
+    const report = h.context.loadMlsDateRange.mock.calls[0][2].onLoadProgress;
+    const progress = { percentage: 40, label: 'Loading doctor commissions', stages: [] };
+    report(progress);
+    expect(h.context.setMlsLoadProgress).toHaveBeenLastCalledWith(progress);
+    h.context.mlsDateRange = {};
+    h.render('material-cost');
+    h.context.setMlsLoadProgress.mockClear();
+    report(progress);
+    expect(h.context.setMlsLoadProgress).not.toHaveBeenCalled();
+    h.pageReads.forEach(read => read.resolve(bundle)); await flush();
+  });
   it('fetches one date bundle, reuses it on return and never invokes clinic-wide loaders', async () => {
     const h = harness(dateCode); h.context.databaseFilteredDirectories = false;
     h.render('material-cost');

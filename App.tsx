@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
 import { getHistorySyncPercentage, type HistoryReadProgress } from './utils/historySyncProgress';
 import { databaseFilteredDirectories } from './utils/directoryFeature';
-import { loadMlsDateRange, type MlsDateRange } from './services/mlsDateRange';
+import { loadMlsDateRange, type MlsDateRange, type MlsLoadProgress } from './services/mlsDateRange';
 import { loadMlsDirectoryPage, type MlsDirectoryQuery } from './services/mlsDirectory';
 import {
   Home,
@@ -475,6 +475,7 @@ const App: React.FC = () => {
   const mlsAuthenticatedRef = useRef(isAuthenticated);
   mlsAuthenticatedRef.current = isAuthenticated;
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
+  const [mlsLoadProgress, setMlsLoadProgress] = useState<MlsLoadProgress | null>(null);
   const [mlsFinalizing, setMlsFinalizing] = useState(false);
   const [mlsRecords, setMlsRecords] = useState<ClinicalRecord[]>([]);
   const [mlsPayments, setMlsPayments] = useState<PaymentRecord[]>([]);
@@ -2782,8 +2783,13 @@ const App: React.FC = () => {
     setMlsSyncError(null);
     setMlsSyncProgress(null);
     setMlsFinalizing(false);
+    setMlsLoadProgress(null);
     void dataCache.getOrLoad(key, () => loadMlsDateRange(scope, mlsDateRange, {
-      signal: controller.signal, legacyPayments: readPaymentRecords(), onProgress: touch
+      signal: controller.signal, legacyPayments: readPaymentRecords(), onProgress: touch,
+      onLoadProgress: progress => {
+        if (!isCurrent() || controller.signal.aborted) return;
+        setMlsLoadProgress(progress);
+      }
     }), Infinity).then(bundle => {
       if (!isCurrent()) return;
       setMlsRecords(bundle.records);
@@ -5917,6 +5923,7 @@ const App: React.FC = () => {
               allocationPayments={mlsAllocationPayments}
               initialDateRange={mlsDateRange}
               onDateRangeChange={handleMlsDateRangeChange}
+              loadProgress={mlsLoadProgress}
               loading={loading || mlsPageLoading || (!mlsSyncError && (mlsScope !== currentLocationId || mlsLoadedDateKey !== JSON.stringify(mlsDateRange)))}
               loadError={mlsSyncError}
               currency={currency}

@@ -69,7 +69,40 @@ it('bounds historical hydration to 40 patients per request', async () => {
   const selected = Array.from({ length: 81 }, (_, i) => ({ ...today, id: `pay-${i}`, patientId: `p-${i}` }));
   mocks.payments.mockReset().mockResolvedValueOnce(selected).mockImplementation(async (_branch, options) => selected.filter(p => options.patientIds.includes(p.patientId)));
   mocks.records.mockResolvedValue([]);
-  await loadMlsDateRange('branch', { dateFrom: today.date });
+  const completed: number[] = [];
+  await loadMlsDateRange('branch', { dateFrom: today.date }, { onLoadProgress: progress => {
+    if (progress.stages[4].total === 81) completed.push(progress.stages[4].completed);
+  } });
   expect(mocks.records.mock.calls.map(call => call[1].patientIds.length)).toEqual([40, 40, 1]);
   expect(mocks.payments.mock.calls.slice(1).every(call => call[1].patientIds.length <= 40)).toBe(true);
+  expect(completed).toContain(40);
+  expect(completed).toContain(80);
+  expect(completed.at(-1)).toBe(81);
+});
+
+it('reports real download, parallel enrichment and patient-history work without reaching 100 early', async () => {
+  const updates: import('./mlsDateRange').MlsLoadProgress[] = [];
+  mocks.payments.mockReset().mockImplementation(async (_branch, options) => {
+    options.onProgress?.(1, 2);
+    options.onProgress?.(2, 2);
+    options.onRowsDownloaded?.();
+    options.onEnrichmentProgress?.('commission', 1, 2);
+    options.onEnrichmentProgress?.('cost-audits', 0, 1);
+    options.onEnrichmentProgress?.('commission', 2, 2);
+    options.onEnrichmentProgress?.('cost-audits', 1, 1);
+    options.onEnrichmentProgress?.('cost-items', 0, 0);
+    return [prior, today];
+  });
+  mocks.records.mockImplementation(async (_branch, options) => {
+    options.onProgress?.(2, null);
+    return [old, recent];
+  });
+  await loadMlsDateRange('branch', {}, { onLoadProgress: progress => updates.push(progress) });
+  expect(updates.some(p => p.stages[0].completed === 1 && p.stages[0].total === 2)).toBe(true);
+  expect(updates.some(p => p.stages[1].completed === 1 && p.stages[1].total === 2 && p.stages[2].total === 1)).toBe(true);
+  const final = updates.at(-1)!;
+  expect(final.stages.map(s => s.status)).toEqual(['complete', 'complete', 'complete', 'complete', 'complete']);
+  expect(final.stages[4]).toMatchObject({ completed: 1, total: 1, detail: '2 treatments and 0 historical payments downloaded' });
+  expect(final.label).toBe('Preparing MLS payment rows...');
+  expect(updates.every(p => p.percentage < 100)).toBe(true);
 });

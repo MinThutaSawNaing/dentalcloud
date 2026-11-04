@@ -14,6 +14,9 @@ migrations are required to deploy that default-disabled frontend.
   only their selected payment dates; clearing a date input does not request All.
 - All explicitly requests all branch payments. A loading indicator remains until
   both payments and financial context finish; partial financial rows are hidden.
+  The indicator reports payment rows, commission batches, MLS audit/cost batches,
+  and completed patient-history hydration. Unknown totals remain explicitly
+  unknown; the percentage measures equal-weight completed stages, not time left.
 - Supporting treatment and payment histories are restricted to patients in the
   selected date range, requested in batches of at most 40 patient IDs. Histories
   are not date-limited: today's payment can settle an older treatment. Historical

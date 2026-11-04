@@ -111,6 +111,25 @@ describe('MaterialCostView MLS sync UI (SSR)', () => {
     expectNoFinancialRows(markup);
   });
 
+  it('shows actual All-load stages and counts instead of a generic preparing message', () => {
+    const markup = render({ loading: true, loadProgress: {
+      percentage: 62, label: 'Loading MLS cost items', stages: [
+        { label: 'Downloading payments', unit: 'payments', completed: 2500, total: 2500, status: 'complete' },
+        { label: 'Loading MLS cost items', unit: 'batches', completed: 2, total: 6, status: 'active' },
+        { label: 'Loading patient allocation history', unit: 'patients', completed: 0, total: null, status: 'waiting' }
+      ]
+    } });
+    expect(markup).toContain('aria-valuenow="62"');
+    expect(markup).toContain('Loading MLS cost items');
+    expect(markup).toContain('2500 / 2500 payments');
+    expect(markup).toContain('2 / 6 batches');
+    expect(markup).toContain('Waiting');
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('not time remaining');
+    expect(markup).not.toContain('Preparing MLS sync');
+    expectNoFinancialRows(markup);
+  });
+
   it.each([null, undefined])('shows indeterminate pending progress for %s', (syncProgress) => {
     const markup = render({ loading: true, syncProgress });
     expect(markup).toContain('role="progressbar"');
