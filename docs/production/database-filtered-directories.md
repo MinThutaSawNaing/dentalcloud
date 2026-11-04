@@ -4,9 +4,33 @@
 
 Database-filtered MLS and audit directories are **not Patient-equivalent** and are
 not enabled for production by this change. With the flag unset (or anything other
-than the exact string `true`), the frontend retains the original `ae49495` MLS
-loader, cost-save refresh, and audit range loader. No directory migrations are
-required to deploy that default-disabled frontend.
+than the exact string `true`), MLS uses the date-scoped existing-API loader
+described below, and audit retains the original range loader. No directory
+migrations are required to deploy that default-disabled frontend.
+
+## Default MLS date-scoped loading (no migrations)
+
+- Initial selection is the local Today payment date. Tomorrow and Custom fetch
+  only their selected payment dates; clearing a date input does not request All.
+- All explicitly requests all branch payments. A loading indicator remains until
+  both payments and financial context finish; partial financial rows are hidden.
+- Supporting treatment and payment histories are restricted to patients in the
+  selected date range, requested in batches of at most 40 patient IDs. Histories
+  are not date-limited: today's payment can settle an older treatment. Historical
+  payments skip MLS/commission enrichment and are used only for allocation.
+- Search and 100-row pagination remain local to the selected range. This does not
+  provide server-side per-page selection; a busy date range still loads all its
+  payment rows and represented patients' histories before showing totals.
+- Date selections are debounced; date changes cancel superseded requests. Tab
+  navigation keeps the current request alive and reuses a completed range in the
+  current branch/session. Refresh and MLS saves invalidate these bundles.
+- Browser-local legacy payments remain branch/date filtered and deduplicated
+  against persisted receipts. Stale branch/session results cannot publish.
+
+Before production rollout, verify Today/Tomorrow/Custom/All network requests,
+cross-date balance allocations, costs/commissions, empty dates, failed requests,
+cost-save refresh, rapid range switches, and branch/logout transitions on staging
+with the actual schema/RLS. No new database migration is needed for these checks.
 
 ## Opt-in deployment
 

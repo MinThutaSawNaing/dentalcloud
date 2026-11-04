@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useLayoutEffect, Suspense, useMemo, useRef, useTransition, useCallback } from 'react';
 import { getHistorySyncPercentage, type HistoryReadProgress } from './utils/historySyncProgress';
 import { databaseFilteredDirectories } from './utils/directoryFeature';
-import { getMlsSyncPercentage, getMlsStageFraction, type MlsEnrichmentStage } from './utils/mlsSyncProgress';
+import { loadMlsDateRange, type MlsDateRange } from './services/mlsDateRange';
 import { loadMlsDirectoryPage, type MlsDirectoryQuery } from './services/mlsDirectory';
 import {
   Home,
@@ -471,7 +471,7 @@ const App: React.FC = () => {
     dataCache.invalidatePrefix(`${getClinicCacheKey('audit-range', currentLocationId)}:`);
   };
   const [mlsSyncError, setMlsSyncError] = useState<string | null>(null);
-  const mlsInFlightRef = useRef<{ scope: string; startupRequestId: number; cacheVersion: number; cancel: () => void } | null>(null);
+  const mlsInFlightRef = useRef<{ scope: string; startupRequestId: number; cacheVersion: number; key?: string; cancel: () => void } | null>(null);
   const mlsAuthenticatedRef = useRef(isAuthenticated);
   mlsAuthenticatedRef.current = isAuthenticated;
   const [mlsSyncProgress, setMlsSyncProgress] = useState<number | null>(null);
@@ -489,9 +489,19 @@ const App: React.FC = () => {
   const handleMlsQueryChange = useCallback((query: MlsDirectoryQuery) => {
     setMlsQuery((previous) => JSON.stringify(previous) === JSON.stringify(query) ? previous : query);
   }, []);
+  const [mlsDateRange, setMlsDateRange] = useState<MlsDateRange>(() => ({
+    dateFrom: toLocalISODate(new Date()), dateTo: toLocalISODate(new Date())
+  }));
+  const [mlsLoadedDateKey, setMlsLoadedDateKey] = useState('');
+  const handleMlsDateRangeChange = useCallback((range: MlsDateRange) => {
+    setMlsDateRange(previous => {
+      if ((previous.dateFrom || '') === (range.dateFrom || '') && (previous.dateTo || '') === (range.dateTo || '')) return previous;
+      return range;
+    });
+  }, []);
   const [mlsCacheRevision, setMlsCacheRevision] = useState(0);
   const mlsCacheVersionRef = useRef(0);
-  const mlsPatientRefreshRequestRef = useRef(0);
+
   const invalidateMlsMemory = () => {
     invalidateNavigationCache();
     dataCache.invalidatePrefix('mls-page:');
@@ -2737,136 +2747,60 @@ const App: React.FC = () => {
     }
   }, [currentView, currentLocationId, allowedViews, leanStaffStartup]);
 
-  // Legacy MLS loader (ae49495): default production path.
+  // Date-scoped MLS: only an explicit All selection requests branch history.
   useEffect(() => {
-    if (databaseFilteredDirectories || !leanStaffStartup || !isAuthenticated || !currentLocationId
-      || startupScope !== currentLocationId || initialSyncActive
-      || currentView !== 'material-cost' || !canAccessView('material-cost')
-      || mlsScope === currentLocationId || mlsSyncError) return;
+    if (databaseFilteredDirectories || !isAuthenticated || !currentLocationId
+      || (leanStaffStartup && (startupScope !== currentLocationId || initialSyncActive))
+      || currentView !== 'material-cost' || !canAccessView('material-cost')) return;
     const scope = currentLocationId;
     const startupRequestId = initialDataFetchRequestRef.current;
     const cacheVersion = mlsCacheVersionRef.current;
-    const existing = mlsInFlightRef.current;
-    if (existing?.scope === scope && existing.startupRequestId === startupRequestId
-      && existing.cacheVersion === cacheVersion) return;
-    existing?.cancel();
+    const session = auth.getSession();
+    const clinicScope = getClinicCacheScope(scope);
+    const key = 'mls-page:date:' + clinicScope + ':' + startupRequestId + ':' + cacheVersion + ':' + JSON.stringify(mlsDateRange);
+    const previous = mlsInFlightRef.current;
+    if (previous?.key === key) return;
+    if (previous) {
+      previous.cancel();
+      if (previous.key) dataCache.invalidate(previous.key);
+    }
     const controller = new AbortController();
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let resetIdleTimeout = () => {};
-    const flight = { scope, startupRequestId, cacheVersion, cancel: () => {
-      clearTimeout(timeout);
-      controller.abort();
-    } };
+    const flight = { scope, startupRequestId, cacheVersion, key, cancel: () => controller.abort() };
     mlsInFlightRef.current = flight;
     const isCurrent = () => mlsInFlightRef.current === flight
       && mlsAuthenticatedRef.current && currentLocationIdRef.current === scope
       && initialDataFetchRequestRef.current === startupRequestId
-      && mlsCacheVersionRef.current === cacheVersion;
-    const fractions = [0, 0, 0, 0, 0, 0];
-    const updateProgress = () => {
-      if (!isCurrent() || controller.signal.aborted) return;
-      resetIdleTimeout();
-      setMlsSyncProgress(getMlsSyncPercentage(fractions));
+      && mlsCacheVersionRef.current === cacheVersion
+      && isSameAuthSession(session, auth.getSession());
+    let timeout: ReturnType<typeof setTimeout>;
+    const touch = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => controller.abort(new Error('MLS loading timed out. Please retry.')), 120_000);
     };
-    const downloaded = [false, false];
-    const rowsDownloaded = (index: number) => {
-      if (!isCurrent() || controller.signal.aborted) return;
-      downloaded[index] = true;
-      fractions[index] = 1;
-      if (downloaded.every(Boolean)) {
-        setMlsFinalizing(true);
-      }
-      updateProgress();
-    };
-    const progress = (index: number, loaded: number, total: number | null) => {
-      if (!isCurrent() || controller.signal.aborted) return;
-      // A join fallback restarts its download; reflect the actual new work.
-      fractions[index] = getMlsStageFraction(loaded, total);
-      updateProgress();
-    };
-    const enrichmentProgress = (index: number, stage: MlsEnrichmentStage, completed: number, total: number) => {
-      if (!isCurrent() || controller.signal.aborted) return;
-      const slot = stage === 'commission' ? index + 2 : stage === 'cost-audits' ? 4 : 5;
-      fractions[slot] = getMlsStageFraction(completed, total);
-      updateProgress();
-    };
-    const done = <T,>(index: number, value: T): T => {
-      if (isCurrent()) {
-        fractions[index] = 1;
-        fractions[index + 2] = 1;
-        if (index === 1) { fractions[4] = 1; fractions[5] = 1; }
-        updateProgress();
-      }
-      return value;
-    };
-    setMlsSyncProgress(0);
+    touch();
+    setMlsPageLoading(true);
+    setMlsSyncError(null);
+    setMlsSyncProgress(null);
     setMlsFinalizing(false);
-    const load = async () => {
-      let rejectOnAbort: (() => void) | undefined;
-      try {
-        // Slow, progressing downloads may take longer than a minute. Only stop
-        // after two minutes without a completed page/batch, and cancel old reads.
-        const deadline = new Promise<never>((_, reject) => {
-          rejectOnAbort = () => reject(controller.signal.reason);
-          controller.signal.addEventListener('abort', rejectOnAbort, { once: true });
-        });
-        resetIdleTimeout = () => {
-          if (controller.signal.aborted) return;
-          clearTimeout(timeout);
-          timeout = setTimeout(() => controller.abort(new Error(
-            'MLS loading timed out after 2 minutes without progress. Check your connection and press Retry.'
-          )), 120_000);
-        };
-        resetIdleTimeout();
-        const results = await Promise.race([deadline, Promise.allSettled([
-          api.treatments.getAllRecords(scope, { limit: null, throwOnError: true,
-            signal: controller.signal,
-            countMode: 'exact',
-            onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(0, stage, completed, total),
-            commissionRequestConcurrency: 3,
-            onRowsDownloaded: () => rowsDownloaded(0),
-            onProgress: (loaded, total) => progress(0, loaded, total)
-          }).then((rows) => done(0, rows)).catch((error) => {
-            controller.abort(error);
-            throw error;
-          }),
-          api.finance.getPayments(scope, {
-            signal: controller.signal,
-            countMode: 'exact', includeCorrections: false,
-            onEnrichmentProgress: (stage, completed, total) => enrichmentProgress(1, stage, completed, total),
-            commissionRequestConcurrency: 3,
-            onRowsDownloaded: () => rowsDownloaded(1),
-            onProgress: (loaded, total) => progress(1, loaded, total)
-          }).then((rows) => done(1, rows)).catch((error) => {
-            controller.abort(error);
-            throw error;
-          })
-        ])]);
-        controller.signal.throwIfAborted();
-        if (!isCurrent()) return;
-        const [records, payments] = results;
-        if (records.status === 'rejected') throw records.reason;
-        if (payments.status === 'rejected') throw payments.reason;
-        const mergedPayments = mergeLegacyPaymentRecords(payments.value, scope);
-        setMlsRecords(records.value);
-        setMlsPayments(mergedPayments);
-        setMlsSyncProgress(100);
-        setMlsScope(scope);
-        setMlsFinalizing(false);
-      } catch (err: any) {
-        if (isCurrent()) setMlsSyncError(err?.message || 'Could not sync MLS. Please retry.');
-      } finally {
-        clearTimeout(timeout);
-        resetIdleTimeout = () => {};
-        if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort);
-        controller.abort();
-        if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null;
-      }
-    };
-    void load();
-    // No cleanup cancellation: tab switches must leave this flight running.
+    void dataCache.getOrLoad(key, () => loadMlsDateRange(scope, mlsDateRange, {
+      signal: controller.signal, legacyPayments: readPaymentRecords(), onProgress: touch
+    }), Infinity).then(bundle => {
+      if (!isCurrent()) return;
+      setMlsRecords(bundle.records);
+      setMlsPayments(bundle.payments);
+      setMlsAllocationPayments(bundle.allocationPayments);
+      setMlsScope(scope);
+      setMlsLoadedDateKey(JSON.stringify(mlsDateRange));
+    }).catch(error => {
+      if (isCurrent()) setMlsSyncError(error instanceof Error ? error.message : 'Could not load MLS. Please retry.');
+    }).finally(() => {
+      clearTimeout(timeout);
+      if (isCurrent()) setMlsPageLoading(false);
+      if (mlsInFlightRef.current === flight) mlsInFlightRef.current = null;
+    });
+    // Keep this range download alive during navigation; guards reject stale reads.
   }, [currentView, currentLocationId, startupScope, initialSyncActive, isAuthenticated,
-    leanStaffStartup, allowedViews, mlsCacheRevision, mlsScope, mlsSyncError]);
+    leanStaffStartup, allowedViews, mlsCacheRevision, mlsDateRange]);
 
   // MLS reads are owned by the branch/session and the active database query.
   useEffect(() => {
@@ -3461,53 +3395,9 @@ const App: React.FC = () => {
     }
   };
 
-  const refreshMlsAfterCostSave = async (patientId?: string | null) => {
-    const locationId = currentLocationId;
-    if (!leanStaffStartup || !patientId || mlsScope !== locationId) {
-      invalidateMaterialCostCaches(locationId);
-      if (!leanStaffStartup) await refreshGlobalRecordsForPatient(patientId);
-      return;
-    }
-
-    // Costs recalculate this patient's commission allocations, potentially across
-    // several payments. Refresh that complete patient bundle, not clinic history.
-    invalidateMaterialCostCaches(locationId, true);
-    const requestId = ++mlsPatientRefreshRequestRef.current;
-    const cacheVersion = mlsCacheVersionRef.current;
-    const startupRequestId = initialDataFetchRequestRef.current;
-    const session = auth.getSession();
-    const clinicScope = getClinicCacheScope(locationId);
-    const isCurrent = () => requestId === mlsPatientRefreshRequestRef.current
-      && mlsAuthenticatedRef.current && currentLocationIdRef.current === locationId
-      && cacheVersion === mlsCacheVersionRef.current
-      && startupRequestId === initialDataFetchRequestRef.current
-      && getClinicCacheScope(locationId) === clinicScope
-      && isSameAuthSession(session, auth.getSession());
-    try {
-      const [records, payments] = await Promise.all([
-        api.treatments.getAllRecords(locationId, {
-          patientId, limit: null, throwOnError: true, commissionRequestConcurrency: 3
-        }),
-        api.finance.getPayments(locationId, {
-          patientId, includeCorrections: false, commissionRequestConcurrency: 3
-        })
-      ]);
-      if (!isCurrent()) return;
-      const refreshedPayments = mergeLegacyPaymentRecords(payments, locationId, patientId);
-      setMlsRecords((previous) => [
-        ...previous.filter((record) => record.patient_id !== patientId), ...records
-      ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))
-        || String(a.id).localeCompare(String(b.id))));
-      setMlsPayments((previous) => [
-        ...previous.filter((payment) => payment.patientId !== patientId), ...refreshedPayments
-      ].sort((a, b) => (b.createdAt || b.date).localeCompare(a.createdAt || a.date)));
-    } catch (error) {
-      if (!isCurrent()) return;
-      // Never silently publish one half of the financial bundle or launch a
-      // clinic-wide retry loop after a successful write.
-      setMlsSyncError('MLS costs were saved, but updated totals could not load. Choose Retry to reload the latest data.');
-      throw error;
-    }
+  const refreshMlsAfterCostSave = async (_patientId?: string | null) => {
+    // Reload only the selected range and its patient allocation context.
+    invalidateMaterialCostCaches(currentLocationId);
   };
 
   const refreshDatabaseMlsAfterCostSave = async (_patientId?: string | null) => {
@@ -6021,24 +5911,17 @@ const App: React.FC = () => {
               onCostsSaved={refreshDatabaseMlsAfterCostSave}
             /> : <MaterialCostView
               key={currentLocationId}
-              records={leanStaffStartup ? mlsRecords : globalRecords}
+              records={mlsRecords}
               doctors={doctors}
-              paymentRecords={leanStaffStartup ? mlsPayments : paymentRecords}
-              loading={loading || (leanStaffStartup && mlsScope !== currentLocationId && !mlsSyncError)}
-              loadError={leanStaffStartup ? mlsSyncError : null}
-              syncProgress={leanStaffStartup ? mlsSyncProgress : (!globalRecordsReady && initialSyncActive) ? initialSyncProgress : null}
-              finalizing={leanStaffStartup && mlsFinalizing}
+              paymentRecords={mlsPayments}
+              allocationPayments={mlsAllocationPayments}
+              initialDateRange={mlsDateRange}
+              onDateRangeChange={handleMlsDateRangeChange}
+              loading={loading || mlsPageLoading || (!mlsSyncError && (mlsScope !== currentLocationId || mlsLoadedDateKey !== JSON.stringify(mlsDateRange)))}
+              loadError={mlsSyncError}
               currency={currency}
               canManageMaterials={canManageMaterialCosts(session?.role, session?.allowed_tabs)}
-              onRefresh={async () => {
-                invalidateMaterialCostCaches();
-                if (leanStaffStartup) {
-                  setLoadedLazyView('');
-                  setMlsSyncError(null);
-                  setMlsSyncProgress(null);
-                  setLazyViewRevision((value) => value + 1);
-                } else await fetchGlobalRecords(true);
-              }}
+              onRefresh={async () => { invalidateMaterialCostCaches(); setMlsSyncError(null); }}
               onCostsSaved={refreshMlsAfterCostSave}
             />)}
             {currentView === 'records' && canAccessView('records') && <RecordsView records={auditRecords} appointments={auditAppointments} rescheduleLogs={auditRescheduleLogs} payments={auditPayments} loading={auditLoading} loadError={auditLoadError} onQueryChange={databaseFilteredDirectories ? loadDatabaseAuditLog : loadAuditLog} legacyPaymentsNotice={databaseFilteredDirectories && !isDoctor && readPaymentRecords().some((payment) => payment.location_id === currentLocationId)} directoryMeta={databaseFilteredDirectories ? auditDirectoryMeta : undefined} displayRows={databaseFilteredDirectories ? auditDisplayRows : undefined} onExportAll={databaseFilteredDirectories ? exportAuditLog : undefined} onRefresh={() => setAuditRefreshKey((key) => key + 1)} onDeleteAll={isDoctor ? () => alert('Doctor accounts cannot delete patient records.') : handleDeleteAllRecords} currency={currency} isDoctor={isDoctor} initialFilter={recordsInitialFilter} onOpenPaymentReceipt={handleOpenStoredPaymentReceipt} canEditPayments={isAdmin && !isDoctor} onPaymentCorrected={handlePaymentCorrected} cacheScope={getClinicCacheScope()} cacheRevision={materialCostCacheRevision} />}

@@ -7,15 +7,15 @@ const original = JSON.parse(readFileSync(new URL('./test/fixtures/legacyDirector
 const section = (source: string, start: string, end: string) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 
 describe('directory rollout source guards', () => {
-  it('retains the exact original audit loader and cost-save refresh', () => {
+  it('retains the exact original audit loader', () => {
     expect(section(app, '  const loadAuditLog =', '  const loadDatabaseAuditLog =')).toBe(original.audit);
-    expect(section(app, '  const refreshMlsAfterCostSave =', '  const refreshDatabaseMlsAfterCostSave =')).toBe(original.refresh);
   });
-  it('retains the original MLS effect with only the legacy marker and gate added', () => {
-    const legacy = original.mls
-      .replace('// MLS reads are owned by the branch/session, never by navigation cleanup.', '// Legacy MLS loader (ae49495): default production path.')
-      .replace('if (!leanStaffStartup', 'if (databaseFilteredDirectories || !leanStaffStartup');
-    expect(section(app, '  // Legacy MLS loader', '  // MLS reads are owned')).toBe(legacy);
+  it('uses date-scoped MLS without changing the audit RPC opt-in', () => {
+    const loader = section(app, '  // Date-scoped MLS:', '  // MLS reads are owned');
+    expect(loader).toContain('loadMlsDateRange(scope, mlsDateRange');
+    expect(loader).toContain('if (databaseFilteredDirectories || !isAuthenticated');
+    expect(loader).not.toContain('getAllRecords(');
+    expect(loader).not.toContain('setGlobalRecords(');
     expect(section(app, '  // MLS reads are owned', '  // Fetch only the selected screen')).toContain('if (!databaseFilteredDirectories || !isAuthenticated');
   });
   it('routes callbacks and new-only audit props through the gate', () => {

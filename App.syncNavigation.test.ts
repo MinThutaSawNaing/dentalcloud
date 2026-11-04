@@ -56,6 +56,7 @@ async function flush() {
 }
 const records = [{ id: 'treatment-1' }];
 const payments = [{ id: 'payment-1' }];
+const dateCode = compile(section('// Date-scoped MLS:', '// MLS reads are owned'));
 function harness(code = mlsCode) {
   const treatmentReads: ReturnType<typeof deferred<any[]>>[] = [];
   const paymentReads: ReturnType<typeof deferred<any[]>>[] = [];
@@ -68,6 +69,11 @@ function harness(code = mlsCode) {
   };
   const context: Context = {
     databaseFilteredDirectories: true,
+    mlsDateRange: { dateFrom: '2026-11-04', dateTo: '2026-11-04' },
+    setMlsLoadedDateKey: vi.fn(), readPaymentRecords: vi.fn(() => []),
+    loadMlsDateRange: vi.fn(() => {
+      const read = deferred<any>(); pageReads.push(read); return read.promise;
+    }),
     leanStaffStartup: true, isAuthenticated: true, currentLocationId: 'branch-a',
     startupScope: 'branch-a', initialSyncActive: false, allowedViews: ['material-cost', 'patients'],
     mlsScope: '', mlsSyncError: null, mlsCacheRevision: 0, lazyViewRevision: 0,
@@ -126,6 +132,40 @@ function harness(code = mlsCode) {
 
 
 // Run the actual App effect with deferred loader responses and the real shared cache.
+describe('App date-scoped MLS runtime regression', () => {
+  const bundle = { records, payments, allocationPayments: payments };
+  it('fetches one date bundle, reuses it on return and never invokes clinic-wide loaders', async () => {
+    const h = harness(dateCode); h.context.databaseFilteredDirectories = false;
+    h.render('material-cost');
+    expect(h.context.loadMlsDateRange).toHaveBeenCalledExactlyOnceWith('branch-a', h.context.mlsDateRange, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    h.render('patients'); h.render('material-cost');
+    expect(h.context.loadMlsDateRange).toHaveBeenCalledTimes(1);
+    h.pageReads[0].resolve(bundle); await flush();
+    expect(h.context.setMlsPayments).toHaveBeenLastCalledWith(payments);
+    expect(h.context.setMlsAllocationPayments).toHaveBeenLastCalledWith(payments);
+    h.counts(0);
+  });
+  it('rejects late previous-date results and isolates new date selections', async () => {
+    const h = harness(dateCode); h.context.databaseFilteredDirectories = false;
+    h.render('material-cost');
+    h.context.mlsDateRange = { dateFrom: '2026-11-05', dateTo: '2026-11-05' };
+    h.render('material-cost');
+    h.pageReads[0].resolve(bundle); await flush();
+    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
+    h.pageReads[1].resolve(bundle); await flush();
+    expect(h.context.setMlsPayments).toHaveBeenCalledExactlyOnceWith(payments);
+  });
+  it.each(['branch', 'session', 'revision'])('rejects stale publication after %s changes', async (change) => {
+    const h = harness(dateCode); h.context.databaseFilteredDirectories = false;
+    h.render('material-cost');
+    if (change === 'branch') h.context.currentLocationIdRef.current = 'branch-b';
+    if (change === 'session') h.context.auth.getSession.mockReturnValue({ role: 'staff', location_id: 'branch-a' });
+    if (change === 'revision') h.context.mlsCacheVersionRef.current++;
+    h.pageReads[0].resolve(bundle); await flush();
+    expect(h.context.setMlsPayments).not.toHaveBeenCalled();
+  });
+});
+
 describe('App MLS paginated navigation runtime regression', () => {
   const bundle = { records, payments, allocationPayments: [{ id: 'allocation-1' }], total: 235 };
   const settlePage = async (h: ReturnType<typeof harness>, index = 0) => {

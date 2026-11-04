@@ -11,6 +11,7 @@ import Pagination from './Pagination';
 import PaymentMlsCostModal from './PaymentMlsCostModal';
 import ProgressBar from './ProgressBar';
 import type { MlsDirectoryQuery } from '../services/mlsDirectory';
+import type { MlsDateRange } from '../services/mlsDateRange';
 
 interface MaterialCostViewProps {
   records: ClinicalRecord[];
@@ -28,18 +29,25 @@ interface MaterialCostViewProps {
   onQueryChange?: (query: MlsDirectoryQuery) => void;
   allocationPayments?: PaymentRecord[];
   initialQuery?: MlsDirectoryQuery;
+  initialDateRange?: MlsDateRange;
+  onDateRangeChange?: (range: MlsDateRange) => void;
 }
 
 type MaterialCostFilter = 'all' | 'tomorrow' | 'today' | 'custom';
 
-const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments, initialQuery }) => {
+const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, paymentRecords, loading, currency, canManageMaterials, onRefresh, onCostsSaved, syncProgress = null, loadError = null, finalizing = false, totalItems, onQueryChange, allocationPayments, initialQuery, initialDateRange, onDateRangeChange }) => {
   const tableScrollRef = React.useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(initialQuery?.page ?? 1);
   const [showAll, setShowAll] = useState(initialQuery?.showAll ?? false);
   const [patientSearchTerm, setPatientSearchTerm] = useState(initialQuery?.patientSearch ?? '');
   const [doctorSearchTerm, setDoctorSearchTerm] = useState(initialQuery?.doctorSearch ?? '');
   const [treatmentSearchTerm, setTreatmentSearchTerm] = useState(initialQuery?.treatmentSearch ?? '');
-  const [materialFilter, setMaterialFilter] = useState<MaterialCostFilter>(initialQuery ? (initialQuery.dateFrom || initialQuery.dateTo ? 'custom' : 'all') : 'today');
+  const [materialFilter, setMaterialFilter] = useState<MaterialCostFilter>(() => {
+    const range = initialDateRange || initialQuery;
+    if (!range) return 'today';
+    if (!range.dateFrom && !range.dateTo) return 'all';
+    return range.dateFrom === toLocalISODate(new Date()) && range.dateTo === range.dateFrom ? 'today' : 'custom';
+  });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTableScrollable, setIsTableScrollable] = useState(false);
   const [editingRow, setEditingRow] = useState<MaterialCostPaymentRow | null>(null);
@@ -49,10 +57,18 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
   React.useEffect(() => { refreshRef.current = onRefresh; }, [onRefresh]);
   const todayKey = useMemo(() => toLocalISODate(new Date()), []);
   const tomorrowKey = useMemo(() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); return toLocalISODate(tomorrow); }, []);
-  const [dateFrom, setDateFrom] = useState(initialQuery ? initialQuery.dateFrom || '' : todayKey);
-  const [dateTo, setDateTo] = useState(initialQuery ? initialQuery.dateTo || '' : todayKey);
+  const [dateFrom, setDateFrom] = useState(initialDateRange ? initialDateRange.dateFrom || '' : initialQuery ? initialQuery.dateFrom || '' : todayKey);
+  const [dateTo, setDateTo] = useState(initialDateRange ? initialDateRange.dateTo || '' : initialQuery ? initialQuery.dateTo || '' : todayKey);
+  const rangePending = Boolean(onDateRangeChange && (dateFrom !== (initialDateRange?.dateFrom || '') || dateTo !== (initialDateRange?.dateTo || '')));
+  // Do not allow edits to stale rows while the date-change debounce is pending.
+  loading = loading || rangePending;
   const isTodayRange = dateFrom === todayKey && dateTo === todayKey;
   const itemsPerPage = 100;
+  React.useEffect(() => {
+    if (!onDateRangeChange || !rangePending) return;
+    const timer = setTimeout(() => onDateRangeChange({ dateFrom, dateTo }), 250);
+    return () => clearTimeout(timer);
+  }, [dateFrom, dateTo, rangePending, onDateRangeChange]);
 
   React.useEffect(() => {
     if (loading || loadError) setEditingRow(null);
@@ -138,8 +154,8 @@ const MaterialCostView: React.FC<MaterialCostViewProps> = ({ records, doctors, p
     finally { setIsRefreshing(false); }
   };
   const handleSaved = async () => { if (onCostsSaved) await onCostsSaved(editingRow?.payment.patientId || null); else await onRefresh(); };
-  const changeFrom = (value: string) => { setDateFrom(value); if (dateTo && value > dateTo) setDateTo(value); setMaterialFilter('custom'); };
-  const changeTo = (value: string) => { setDateTo(value); if (dateFrom && value < dateFrom) setDateFrom(value); setMaterialFilter('custom'); };
+  const changeFrom = (value: string) => { if (!value) return; setDateFrom(value); if (!dateTo || value > dateTo) setDateTo(value); setMaterialFilter('custom'); };
+  const changeTo = (value: string) => { if (!value) return; setDateTo(value); if (!dateFrom || value < dateFrom) setDateFrom(value); setMaterialFilter('custom'); };
   const resetToday = () => { setDateFrom(todayKey); setDateTo(todayKey); setMaterialFilter('today'); };
   const changeFilter = (filter: MaterialCostFilter) => {
     setMaterialFilter(filter);
