@@ -131,4 +131,12 @@ To deploy this application using Docker:
 * Project Link: [DentalCloud](https://dentalcloudbythuta.netlify.app/)
 
 ---
+
+## 🧪 CI/CD Workflow Test
+
+This commit is a **safe, non-functional change** made to verify the GitHub Actions CI/CD workflow (`deploy-mydentist2.yml`). Pushing to `main` triggers the workflow which installs dependencies, runs tests, and builds the production frontend.
+
+*No source code, configuration, or secrets were modified in this commit.*
+
+---
 *This project was developed as a showcase of full-stack engineering capabilities, focusing on cloud-native architecture and optimized relational database design.*
