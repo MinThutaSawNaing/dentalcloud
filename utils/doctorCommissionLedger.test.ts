@@ -574,6 +574,26 @@ describe('doctor commission ledger', () => {
     });
   });
 
+  it('keeps an assigned special doctor fee outside the percentage base and adds it as direct revenue', () => {
+    const treatments = [treatment({ commissionPercentage: 30 })];
+    const allocations = allocateCommissionablePayments(treatments, [{
+      id: 'payment-1', patientId: 'patient-1', date: '2026-11-10',
+      commissionableAmount: 100_000, treatmentIds: ['treatment-1'],
+      // The API supplies only deductible Material + Lab here. The assigned
+      // Special Doctor fee is deliberately excluded and added by the caller.
+      mlsCost: 0
+    }]);
+    const [entry] = calculateCommissionLedgerEntries(treatments, allocations);
+    const assignedSpecialDoctorFee = 10_000;
+
+    expect(entry).toMatchObject({
+      commissionBase: 100_000,
+      commissionRate: 30,
+      earnings: 30_000
+    });
+    expect(entry.earnings + assignedSpecialDoctorFee).toBe(40_000);
+  });
+
   it('keeps fixed-visit commission unchanged when payment MLS is recorded', () => {
     const treatments = [treatment({
       commissionType: 'flat_visit',

@@ -81,6 +81,8 @@ describe('assistant product knowledge', () => {
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('shared frequently used cost presets');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('does not save automatically');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Material Cost, Lab Cost, or Special Doctor Cost expense records');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Only Material and Lab costs reduce the percentage-commission base');
+    expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('Special Doctor cost does not reduce that base');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('dedicated Branch Switching permission without receiving full Settings access');
     expect(ASSISTANT_PRODUCT_KNOWLEDGE).toContain('previous branch remains active');
   });

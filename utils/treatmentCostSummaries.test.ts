@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { summarizeTreatmentCostRows } from './treatmentCostSummaries';
+import { getCommissionDeductibleCost, summarizeTreatmentCostRows } from './treatmentCostSummaries';
 
 describe('treatment cost summaries', () => {
   it('separates all treatment cost categories while preserving the combined total', () => {
@@ -36,6 +36,17 @@ describe('treatment cost summaries', () => {
       assignedSpecialDoctorTotal: 25_000,
       specialDoctorItemCount: 2
     });
+  });
+
+  it('excludes special doctor fees from the percentage commission deduction', () => {
+    const summary = {
+      materialTotal: 2_000,
+      labTotal: 3_000,
+      specialDoctorTotal: 10_000
+    };
+
+    expect(getCommissionDeductibleCost(summary)).toBe(5_000);
+    expect(getCommissionDeductibleCost(undefined)).toBeUndefined();
   });
 
   it('treats legacy rows without a cost type as material', () => {

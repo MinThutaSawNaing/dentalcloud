@@ -24,7 +24,8 @@ export interface CommissionPaymentInput {
   commissionableAmount: number;
   treatmentIds: string[];
   // Undefined means a legacy payment whose deduction still comes from its
-  // treatment. New payment-bound MLS rows always supply a value, including 0.
+  // treatment. New payment-bound MLS rows supply the deductible material + lab
+  // total, including 0. Special Doctor fees are added as direct revenue later.
   mlsCost?: number;
 }
 
@@ -70,8 +71,8 @@ const toPercentageRate = (value: unknown): number => (
   Math.min(100, toNonNegativeFiniteNumber(value))
 );
 
-// Percentage commission is paid only from the amount left after every cost
-// recorded for the treatment (both material and lab) has been recovered.
+// Percentage commission is paid only from the amount left after deductible
+// material and lab costs recorded for the treatment have been recovered.
 // Applying this per payment also makes partial payments deterministic: the
 // cost is deducted once, from the earliest collected amount(s).
 const calculatePercentageCommissionBase = (

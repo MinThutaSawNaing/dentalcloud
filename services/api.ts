@@ -16,7 +16,7 @@ import { resolveDoctorCommissionType, validateDoctorCommissionPercentage, valida
 import { allocateCommissionablePayments, calculateCommissionLedgerEntries } from '../utils/doctorCommissionLedger';
 import { enumValue, finiteNumber, strictDateString, trimOptional, trimRequired } from '../utils/validation';
 import { buildPatientCreatedAt } from '../utils/patientCreationDate';
-import { summarizeTreatmentCostRows } from '../utils/treatmentCostSummaries';
+import { getCommissionDeductibleCost, summarizeTreatmentCostRows } from '../utils/treatmentCostSummaries';
 import { buildPatientProfileUpdatePayload } from '../utils/patientProfileUpdate';
 import { chunkMonthlyReportPatientIds, type MonthlyReportSourceRecord } from '../utils/monthlyReport';
 import { chunkUniqueIds, mapWithConcurrency, REPORT_REQUEST_CONCURRENCY } from '../utils/reportBatching';
@@ -252,7 +252,7 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
     treatmentTypeId: row.treatment_type_id,
     date: row.date,
     cost: Math.max(0, Number(row.cost || 0)),
-    materialCost: materialByTreatment[row.id]?.totalAmount || 0,
+    materialCost: getCommissionDeductibleCost(materialByTreatment[row.id]) || 0,
     specialization: row.doctors?.specialization,
     commissionType: snapshottedMode || resolveDoctorCommissionType({
       commissionType: row.doctors?.commission_type,
@@ -287,8 +287,9 @@ const recalculatePatientDoctorCommissions = async (patientId: string): Promise<v
       ...getPaymentReceiptTreatmentIds(row)
     ])),
     // Missing means legacy treatment-bound MLS. New payment audits include an
-    // explicit summary, even when their total is zero.
-    mlsCost: paymentCostsByPayment[row.id]?.totalAmount
+    // explicit summary, even when their deductible material + lab total is
+    // zero. Special Doctor fees are direct revenue and never reduce this base.
+    mlsCost: getCommissionDeductibleCost(paymentCostsByPayment[row.id])
   }));
   const allocations = allocateCommissionablePayments(treatments, payments);
   const existingEntries = (existingResult.data || []).map((row: any) => ({
