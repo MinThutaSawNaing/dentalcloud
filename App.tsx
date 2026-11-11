@@ -942,18 +942,17 @@ const App: React.FC = () => {
   };
 
   const handleAutoOnpPatientTypeChange = async (enabled: boolean) => {
-    const previousValue = autoOnpPatientTypeEnabled;
+    await api.appSettings.saveAutoOnpPatientTypeEnabled(enabled);
     setAutoOnpPatientTypeEnabled(enabled);
+    invalidateNavigationCache();
     try {
-      await api.appSettings.saveAutoOnpPatientTypeEnabled(enabled);
       if (enabled) {
         await fetchInitialData(currentLocationId || undefined);
-      } else {
-        invalidateNavigationCache();
       }
     } catch (error) {
-      setAutoOnpPatientTypeEnabled(previousValue);
-      throw error;
+      // Persistence already succeeded; a refresh failure must not undo the saved
+      // UI state or report that the preference failed to save.
+      console.warn('Auto ONP setting saved, but patient refresh failed:', error);
     }
   };
   
