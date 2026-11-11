@@ -21,10 +21,10 @@ const supabaseMock = vi.hoisted(() => {
       : table === 'patients'
         ? {
             select: vi.fn(() => query),
-            update: vi.fn(() => ({ in: vi.fn(async (_column: string, ids: string[]) => {
+            update: vi.fn(() => ({ or: vi.fn(() => ({ in: vi.fn(async (_column: string, ids: string[]) => {
               state.updateBatches.push(ids);
               return { error: null };
-            }) }))
+            }) })) }))
           }
         : {})
   };

@@ -6,17 +6,17 @@ Owned migration: `20261111000000_auto_opt_patient_type.sql`. No production execu
 
 - `app_settings.auto_opt_patient_type_enabled` defaults to false. A missing singleton also disables conversion. Enabling only affects subsequent qualifying events, not existing rows.
 - Attendance evidence is a newly inserted Completed appointment, a transition from another status to Completed, or a newly inserted treatment (including one without an appointment).
-- Only an event with `date = CURRENT_DATE` qualifies. Historical/future inserts, edits to completed appointments, treatment edits, booking, cancellation, NO_SHOW outcomes, and guest appointments do not convert.
+- Only an event dated today in the configured clinical timezone qualifies. Historical/future inserts, edits to completed appointments, treatment edits, booking, cancellation, NO_SHOW outcomes, and guest appointments do not convert.
 - Current patient type must be exactly ONP or RNP. At least one Completed appointment or treatment for this patient must have a strictly earlier DATE. Same-day repeats alone do not count. Prior history can be from any branch visible to the caller.
 - Result is OPT(ONP) or OPT(RNP). Only that patient's current type changes; no appointment, treatment, fee or historical snapshot is rewritten. Transaction rollback also rolls back conversion.
-- Dates are stored clinical DATE values; CURRENT_DATE follows the database session timezone and transaction date, matching clinical SQL defaults. No timestamp-to-date conversion, fixed Myanmar timezone, registration-date fallback, or rolling 24-hour window is introduced. App clients sometimes default dates using UTC ISO strings: align client/session dates before enabling near midnight. Late entry of a past visit intentionally does not convert.
+- `app_settings.auto_opt_clinical_timezone` defaults to `Asia/Yangon`, explicitly independent of connection timezone. Confirm this clinic-timezone assumption before enabling; other regions must change this preference to a PostgreSQL timezone name. Clients must enter clinical dates in that timezone. Late entry of a past visit intentionally does not convert.
 - Auto ONP uses registration `created_at` and a one-month cutoff. That is not evidence of an actual first visit. An old registration with no earlier visit will retain ONP on its first recorded visit. The conversion uses the type present when the patient lock is acquired; if old Auto ONP has already changed RNP to ONP, provenance cannot be recovered.
 
 ## Parent integration contract
 
-Exclude **both** OPT(ONP) and OPT(RNP) from the existing `apply_auto_onp_patient_type` RPC and legacy service fallback, including the fallback's final PATCH predicate (not merely its earlier SELECT). Those files remain parent-owned and are not modified here.
+Both OPT types are excluded from the updated Auto ONP RPC and legacy service fallback, including the final PATCH predicate. Unchanged patient types are omitted from profile edits to avoid reverting a conversion when saving unrelated details.
 
-The migration independently guards OPT -> ONP on every patient update, even when the new setting is off. This closes stale fallback races. It also blocks an explicit manual OPT -> ONP write because it is indistinguishable from that fallback. Other patient fields in that write are preserved. Until the parent RPC filter is updated, its returned affected-row count can include guarded no-op type writes.
+The migration independently guards OPT -> ONP on every patient update, even when the new setting is off. This closes stale fallback races. It also blocks an explicit manual OPT -> ONP write because it is indistinguishable from that fallback. Other patient fields in that write are preserved.
 
 ## Permissions and concurrency
 
@@ -24,7 +24,15 @@ Functions use SECURITY INVOKER, fixed search paths and no new public RPC or data
 
 The trigger locks only the relevant patient FOR NO KEY UPDATE, compatible with FK KEY SHARE locks from concurrent visit inserts. Concurrent conversion and stale Auto ONP updates recheck the locked current type; conversion is idempotent. Ordinary PostgreSQL serialization/deadlock errors require whole-transaction retry.
 
-**Known integration limit:** direct appointment UPDATE locks appointment then patient; record_treatment_atomic locks patient then appointment. Simultaneous completion/treatment of the same appointment can deadlock and PostgreSQL aborts one transaction without partial conversion. Parent must align that RPC's lock ordering (and audit its wider financial advisory-lock ordering) for deadlock-free operation. The new insert concurrency regression is not a proof against this existing workflow lock inversion. Do not use SKIP LOCKED here: that could silently lose the only qualifying visit event.
+Direct appointment completion and treatment recording have opposite lock ordering. The client retries PostgreSQL `40P01` (whole transaction rolled back) at most twice on those paths. Network/timeout failures are never retried because their commit outcome is unknown. Exhausted retries are surfaced to staff. The concurrency regression tests inserts, not the full clinical RPC dependency graph; staging must exercise simultaneous completion/treatment. Do not use SKIP LOCKED: it could silently lose conversion.
+
+## Production rollout (not executed)
+
+1. Take and verify a restorable backup; record patient/appointment/treatment counts and type distribution.
+2. Rehearse this single migration against a restored staging copy, including actual RLS and clinical RPCs. Do not run full database setup/reset scripts.
+3. Schedule a low-traffic window. The migration is transactional with a 5-second lock timeout and 120-second statement timeout; index creation may lock writes. Failure rolls back the migration; investigate rather than removing timeouts.
+4. Apply only this migration, deploy the client, confirm clinical timezone, and leave the setting off until staging checks pass. Enabling changes only the singleton preference, not patient rows.
+5. Verify one ONP and one RNP return visit, same-day repeat, booking/cancellation and Auto ONP coexistence. Monitor errors and compare counts. To stop conversions, disable the setting; existing conversions are intentionally retained. Never bulk-revert classifications without a reviewed patient-specific recovery plan.
 
 ## Local regression execution
 

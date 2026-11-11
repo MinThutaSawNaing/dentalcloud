@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+SET TIME ZONE 'Asia/Yangon';
 -- ONLY for an empty disposable cluster (see run-auto-opt-postgres.ps1).
 CREATE ROLE anon;
 CREATE ROLE authenticated;
@@ -73,10 +74,10 @@ SELECT assert_type(4,'OPT(ONP)');
 
 
 SET TIME ZONE 'Pacific/Kiritimati';
-INSERT INTO treatments(patient_id,date) VALUES (lpad('5',32,'0')::uuid,CURRENT_DATE-1);
-INSERT INTO treatments(patient_id,date) VALUES (lpad('5',32,'0')::uuid,CURRENT_DATE);
+INSERT INTO treatments(patient_id,date) VALUES (lpad('5',32,'0')::uuid,(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Yangon')::date-1);
+INSERT INTO treatments(patient_id,date) VALUES (lpad('5',32,'0')::uuid,(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Yangon')::date);
 SELECT assert_type(5,'OPT(ONP)');
-SET TIME ZONE 'UTC';
+SET TIME ZONE 'Asia/Yangon';
 UPDATE app_settings SET auto_onp_patient_type_enabled = true, auto_opt_patient_type_enabled = false;
 SELECT apply_auto_onp_patient_type(NULL);
 SELECT assert_type(1,'OPT(ONP)');

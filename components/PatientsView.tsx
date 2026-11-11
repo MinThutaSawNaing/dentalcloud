@@ -1386,7 +1386,8 @@ const PatientsView: React.FC<PatientsViewProps> = ({
                   address: editData.address || undefined,
                   city: editData.city || undefined,
                   township: editData.township || undefined,
-                  patient_type: editData.patient_type
+                  ...(editData.patient_type !== normalizePatientType(editModal.patient.patient_type)
+                    ? { patient_type: editData.patient_type } : {})
                            };
                            await onUpdatePatient(editModal.patient.id, patientData);
                            setEditModal({ open: false, patient: null });

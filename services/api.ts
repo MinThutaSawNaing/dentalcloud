@@ -3,6 +3,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
 import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee, PatientDirectorySummary } from '../types';
 import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
+import { retryDeadlock } from '../utils/retryDeadlock';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
 import { buildS3FileUrl, buildSupabaseS3Url, buildSupabaseS3PublicUrl, deleteS3Object, isSupabaseS3Endpoint, isS3SettingsReady, listS3Objects, normalizeS3BaseUrl, uploadS3Object } from '../utils/s3Storage';
@@ -1212,7 +1213,7 @@ const runAutoOnpPatientTypeRefresh = async (locationId?: string): Promise<void> 
     .from('patients')
     .select('id, patient_type')
     .lte('created_at', cutoffIso)
-    .or(`patient_type.is.null,patient_type.neq.${AUTO_ONP_PATIENT_TYPE_NAME}`);
+    .or(`patient_type.is.null,and(patient_type.neq.${AUTO_ONP_PATIENT_TYPE_NAME},patient_type.not.in.("OPT(ONP)","OPT(RNP)"))`);
 
   if (locationId) {
     selectQuery = selectQuery.eq('location_id', locationId);
@@ -1225,7 +1226,7 @@ const runAutoOnpPatientTypeRefresh = async (locationId?: string): Promise<void> 
   }
 
   const eligibleIds = (eligiblePatients || [])
-    .filter((patient: any) => String(patient.patient_type || '').trim() !== AUTO_ONP_PATIENT_TYPE_NAME)
+    .filter((patient: any) => ![AUTO_ONP_PATIENT_TYPE_NAME, 'OPT(ONP)', 'OPT(RNP)'].includes(String(patient.patient_type || '').trim()))
     .map((patient: any) => patient.id)
     .filter(Boolean);
 
@@ -1239,6 +1240,7 @@ const runAutoOnpPatientTypeRefresh = async (locationId?: string): Promise<void> 
     const { error: updateError } = await supabase
       .from('patients')
       .update({ patient_type: AUTO_ONP_PATIENT_TYPE_NAME })
+      .or('patient_type.is.null,patient_type.not.in.("OPT(ONP)","OPT(RNP)")')
       .in('id', patientIdBatch);
 
     if (updateError) {
@@ -1272,7 +1274,7 @@ const completeAppointmentWithClinicalFee = async (
   skipClinicalFee = false
 ): Promise<ClinicalFeeCompletionResult> => {
   const statusToPersist = skipClinicalFee ? 'SKIPPED' : 'NOT_APPLICABLE';
-  const { data, error } = await supabase
+  const { data, error } = await retryDeadlock(() => supabase
     .from('appointments')
     .update({
       status: 'Completed',
@@ -1283,16 +1285,16 @@ const completeAppointmentWithClinicalFee = async (
     })
     .eq('id', appointmentId)
     .select('id, clinical_fee_status, clinical_fee_amount, clinical_fee_patient_category')
-    .single();
+    .single());
 
   if (error) {
     if (isMissingColumnError(error, 'clinical_fee_status')) {
-      const legacyResult = await supabase
+      const legacyResult = await retryDeadlock(() => supabase
         .from('appointments')
         .update({ status: 'Completed' })
         .eq('id', appointmentId)
         .select('id')
-        .single();
+        .single());
 
       if (legacyResult.error) {
         throw new Error(legacyResult.error.message);
@@ -4282,7 +4284,7 @@ export const api = {
       }
 
       const treatmentDate = getLocalISODate();
-      const { data: rpcResult, error } = await supabase.rpc('record_treatment_atomic', {
+      const { data: rpcResult, error } = await retryDeadlock(() => supabase.rpc('record_treatment_atomic', {
         p_location_id: data.location_id,
         p_patient_id: data.patient_id,
         p_doctor_id: data.doctor_id || null,
@@ -4295,7 +4297,7 @@ export const api = {
         p_pricing_note: data.pricingNote || null,
         p_medications: data.medications || [],
         p_treatment_date: treatmentDate
-      });
+      }));
 
       if (error) {
         if (isMissingFunctionError(error, 'record_treatment_atomic')) {
@@ -5497,6 +5499,30 @@ export const api = {
     },
     saveEmailSettings: async (settings: EmailSettings): Promise<EmailSettings> => {
       return saveEmailSettingsAsync(settings);
+    },
+    getAutoOptPatientTypeEnabled: async (): Promise<boolean> => {
+      const { data, error } = await supabase.from('app_settings')
+        .select('auto_opt_patient_type_enabled').eq('id', APP_SETTINGS_SINGLETON_ID).maybeSingle();
+      if (error) {
+        if (!isMissingColumnError(error, 'auto_opt_patient_type_enabled')) {
+          console.warn('Failed to load auto OPT patient type setting:', error.message);
+        }
+        return false;
+      }
+      return data?.auto_opt_patient_type_enabled === true;
+    },
+    saveAutoOptPatientTypeEnabled: async (enabled: boolean): Promise<void> => {
+      const { error } = await supabase.from('app_settings').upsert({
+        id: APP_SETTINGS_SINGLETON_ID,
+        auto_opt_patient_type_enabled: enabled,
+        updated_at: new Date().toISOString()
+      });
+      if (error) {
+        if (isMissingColumnError(error, 'auto_opt_patient_type_enabled')) {
+          throw new Error('Auto OPT is not installed. Apply the reviewed 20261111000000_auto_opt_patient_type.sql migration first.');
+        }
+        throw new Error(error.message);
+      }
     },
     getAutoOnpPatientTypeEnabled: async (): Promise<boolean> => {
       return getAutoOnpPatientTypeEnabled();

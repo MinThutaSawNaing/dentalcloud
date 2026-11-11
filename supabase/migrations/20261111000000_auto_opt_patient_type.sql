@@ -5,6 +5,10 @@ SET LOCAL statement_timeout = '120s';
 
 ALTER TABLE public.app_settings
   ADD COLUMN IF NOT EXISTS auto_opt_patient_type_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+-- Existing clinics use Myanmar/MMK. Explicit, reviewable clinical timezone,
+-- independent of the database connection's default (often UTC).
+ALTER TABLE public.app_settings
+  ADD COLUMN IF NOT EXISTS auto_opt_clinical_timezone TEXT NOT NULL DEFAULT 'Asia/Yangon';
 
 -- These patient-scoped indexes support existence checks across all branches.
 CREATE INDEX IF NOT EXISTS idx_appointments_auto_opt_visit
@@ -20,6 +24,8 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_type TEXT;
+  v_enabled BOOLEAN;
+  v_timezone TEXT;
 BEGIN
   IF TG_TABLE_NAME = 'appointments' THEN
     IF NEW.status IS DISTINCT FROM 'Completed' THEN RETURN NEW; END IF;
@@ -29,14 +35,13 @@ BEGIN
     END IF;
   END IF;
 
-  -- CURRENT_DATE matches the clinical RPC defaults. Backdated corrections/imports
-  -- and future-dated records are not a current actual visit. Never use created_at:
-  -- Auto ONP ages registration, which is NOT evidence of an earlier visit.
-  IF NEW.patient_id IS NULL OR NEW.date IS DISTINCT FROM CURRENT_DATE THEN
+  SELECT auto_opt_patient_type_enabled, auto_opt_clinical_timezone
+  INTO v_enabled, v_timezone FROM public.app_settings WHERE id = 1;
+  IF NOT COALESCE(v_enabled, FALSE) THEN
     RETURN NEW;
   END IF;
-  IF NOT COALESCE((SELECT auto_opt_patient_type_enabled
-                  FROM public.app_settings WHERE id = 1), FALSE) THEN
+  -- Reject backdated/future entries using the clinic's day, not session timezone.
+  IF NEW.patient_id IS NULL OR NEW.date IS DISTINCT FROM (CURRENT_TIMESTAMP AT TIME ZONE v_timezone)::DATE THEN
     RETURN NEW;
   END IF;
 
@@ -99,5 +104,33 @@ CREATE TRIGGER trg_preserve_opt_patient_type
 
 -- No new direct-call RPC, grants or RLS bypass. Trigger invocation uses existing
 -- table privileges, as do record_treatment_atomic/apply_auto_onp_patient_type.
+-- Exclude protected types before the old refresh locks/updates them. The guard
+-- above remains necessary for legacy clients and refreshes already in flight.
+CREATE OR REPLACE FUNCTION public.apply_auto_onp_patient_type(p_location_id UUID DEFAULT NULL)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE v_updated_count INTEGER := 0;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(
+    hashtextextended('apply_auto_onp_patient_type:' || COALESCE(p_location_id::TEXT, '*'), 0)
+  ) THEN RETURN 0; END IF;
+  IF NOT COALESCE((SELECT auto_onp_patient_type_enabled FROM public.app_settings WHERE id = 1), FALSE) THEN
+    RETURN 0;
+  END IF;
+  UPDATE public.patients
+  SET patient_type = 'ONP'
+  WHERE created_at <= NOW() - INTERVAL '1 month'
+    AND (patient_type IS NULL OR patient_type NOT IN ('ONP', 'OPT(ONP)', 'OPT(RNP)'))
+    AND (p_location_id IS NULL OR location_id = p_location_id);
+  GET DIAGNOSTICS v_updated_count = ROW_COUNT;
+  RETURN v_updated_count;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.apply_auto_onp_patient_type(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.apply_auto_onp_patient_type(UUID) TO anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';
 COMMIT;

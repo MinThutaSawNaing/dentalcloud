@@ -19,8 +19,8 @@ try {
     # Concurrent FK inserts must serialize without deadlocking or double conversion.
     $a = Join-Path $root 'a.sql'
     $b = Join-Path $root 'b.sql'
-    "SET statement_timeout = '15s'; SET ROLE anon; BEGIN; INSERT INTO treatments(patient_id) VALUES (lpad('7',32,'0')::uuid); SELECT pg_sleep(2); COMMIT;" | Set-Content $a
-    "SET statement_timeout = '15s'; SET ROLE authenticated; BEGIN; INSERT INTO appointments(patient_id,date,status) VALUES (lpad('7',32,'0')::uuid,CURRENT_DATE,'Completed'); COMMIT;" | Set-Content $b
+    "SET TIME ZONE 'Asia/Yangon'; SET statement_timeout = '15s'; SET ROLE anon; BEGIN; INSERT INTO treatments(patient_id) VALUES (lpad('7',32,'0')::uuid); SELECT pg_sleep(2); COMMIT;" | Set-Content $a
+    "SET TIME ZONE 'Asia/Yangon'; SET statement_timeout = '15s'; SET ROLE authenticated; BEGIN; INSERT INTO appointments(patient_id,date,status) VALUES (lpad('7',32,'0')::uuid,CURRENT_DATE,'Completed'); COMMIT;" | Set-Content $b
     $exe = Join-Path $PgBin 'psql.exe'
     $job = Start-Job -ScriptBlock { param($exe,$conn,$a) & $exe @conn -f $a; if ($LASTEXITCODE -ne 0) { throw 'concurrent session A failed' } } -ArgumentList $exe,$conn,$a
     Start-Sleep -Milliseconds 500

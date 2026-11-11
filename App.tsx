@@ -718,6 +718,7 @@ const App: React.FC = () => {
   const [receiptHeaderTitle, setReceiptHeaderTitle] = useState<string>('');
   const [receiptSize, setReceiptSize] = useState<ReceiptSize>('A4');
   const [autoOnpPatientTypeEnabled, setAutoOnpPatientTypeEnabled] = useState(false);
+  const [autoOptPatientTypeEnabled, setAutoOptPatientTypeEnabled] = useState(false);
 
   // Sync browser tab title with app name in real-time
   useEffect(() => {
@@ -933,6 +934,11 @@ const App: React.FC = () => {
       setReceiptSize(previousSize);
       throw error;
     }
+  };
+
+  const handleAutoOptPatientTypeChange = async (enabled: boolean) => {
+    await api.appSettings.saveAutoOptPatientTypeEnabled(enabled);
+    setAutoOptPatientTypeEnabled(enabled);
   };
 
   const handleAutoOnpPatientTypeChange = async (enabled: boolean) => {
@@ -1627,11 +1633,12 @@ const App: React.FC = () => {
 
     const refreshSharedAppSettings = async () => {
       try {
-        const [theme, preferences, clinicalFeeSettings, autoOnpEnabled] = await Promise.all([
+        const [theme, preferences, clinicalFeeSettings, autoOnpEnabled, autoOptEnabled] = await Promise.all([
           api.appSettings.getHoverTheme(),
           api.appSettings.getReceiptPreferences(),
           api.appSettings.getClinicalFeeSettings(),
-          api.appSettings.getAutoOnpPatientTypeEnabled()
+          api.appSettings.getAutoOnpPatientTypeEnabled(),
+          api.appSettings.getAutoOptPatientTypeEnabled()
         ]);
         if (mounted && theme) setHoverTheme(theme);
         if (mounted && preferences) {
@@ -1644,6 +1651,7 @@ const App: React.FC = () => {
           setClinicalFeeNewPatientAmount(clinicalFeeSettings.newPatientAmount);
           setClinicalFeeReturningPatientAmount(clinicalFeeSettings.returningPatientAmount);
           setAutoOnpPatientTypeEnabled(autoOnpEnabled);
+          setAutoOptPatientTypeEnabled(autoOptEnabled);
         }
       } catch (error) {
         console.warn('Failed to refresh shared app settings:', error);
@@ -1668,6 +1676,7 @@ const App: React.FC = () => {
             clinical_fee_new_patient_amount?: unknown;
             clinical_fee_returning_patient_amount?: unknown;
             auto_onp_patient_type_enabled?: unknown;
+            auto_opt_patient_type_enabled?: unknown;
           } | null;
           const nextTheme = row?.hover_theme;
           if (isHoverTheme(nextTheme)) {
@@ -1699,6 +1708,9 @@ const App: React.FC = () => {
           }
           if (typeof row?.auto_onp_patient_type_enabled === 'boolean') {
             setAutoOnpPatientTypeEnabled(row.auto_onp_patient_type_enabled);
+          }
+          if (typeof row?.auto_opt_patient_type_enabled === 'boolean') {
+            setAutoOptPatientTypeEnabled(row.auto_opt_patient_type_enabled);
           }
         }
       )
@@ -4668,7 +4680,15 @@ const App: React.FC = () => {
       setLatestTreatmentBatch((previous) => mergeTreatmentRecordsById(previous, newRecords));
       treatmentHistoryRequestRef.current += 1;
       
-      setSelectedPatient({ ...selectedPatient, balance: latestResponse?.new_balance ?? selectedPatient.balance });
+      setSelectedPatient(previous => previous?.id === selectedPatient.id
+        ? { ...previous, balance: latestResponse?.new_balance ?? previous.balance } : previous);
+      // Classification may have changed inside the visit transaction. Do not turn
+      // a failed refresh into a failed treatment, or overwrite a newer selection.
+      void api.patients.getById(selectedPatient.id, currentLocationId).then(patient => {
+        if (!patient) return;
+        setSelectedPatient(previous => previous?.id === patient.id ? { ...previous, patient_type: patient.patient_type } : previous);
+        setPatients(previous => previous.map(row => row.id === patient.id ? { ...row, patient_type: patient.patient_type } : row));
+      }).catch(error => console.warn('Failed to refresh visit patient type:', error));
       setTreatmentHistory((prev) => [...newRecords, ...prev]);
 
       const completedAppointmentIds = new Set(
@@ -6016,6 +6036,8 @@ const App: React.FC = () => {
                     onSaveClinicalFeeSettings={handleSaveClinicalFeeSettings}
                     autoOnpPatientTypeEnabled={autoOnpPatientTypeEnabled}
                     onAutoOnpPatientTypeChange={handleAutoOnpPatientTypeChange}
+                    autoOptPatientTypeEnabled={autoOptPatientTypeEnabled}
+                    onAutoOptPatientTypeChange={handleAutoOptPatientTypeChange}
                     patientTypes={patientTypes}
                     appointmentTypes={appointmentTypes}
                     onCreatePatientType={async (data) => {
