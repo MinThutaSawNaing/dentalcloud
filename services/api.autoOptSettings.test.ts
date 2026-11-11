@@ -27,6 +27,12 @@ describe('Auto OPT settings', () => {
     expect(await api.appSettings.getAutoOptPatientTypeEnabled()).toBe(true);
   });
 
+  it('reads both automation flags with one singleton request instead of adding a poll request', async () => {
+    mock.result.data = { auto_onp_patient_type_enabled: true, auto_opt_patient_type_enabled: true };
+    expect(await api.appSettings.getPatientTypeAutomationSettings()).toEqual({ autoOnpEnabled: true, autoOptEnabled: true });
+    expect(mock.from.mock.calls).toEqual([['app_settings']]);
+  });
+
   it('saves only the singleton preference without touching patients or visits', async () => {
     await api.appSettings.saveAutoOptPatientTypeEnabled(true);
     await api.appSettings.saveAutoOptPatientTypeEnabled(false);

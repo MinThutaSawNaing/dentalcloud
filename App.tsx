@@ -1631,14 +1631,16 @@ const App: React.FC = () => {
 
     let mounted = true;
 
+    let sharedSettingsRefreshInFlight = false;
     const refreshSharedAppSettings = async () => {
+      if (sharedSettingsRefreshInFlight || document.visibilityState === 'hidden') return;
+      sharedSettingsRefreshInFlight = true;
       try {
-        const [theme, preferences, clinicalFeeSettings, autoOnpEnabled, autoOptEnabled] = await Promise.all([
+        const [theme, preferences, clinicalFeeSettings, automationSettings] = await Promise.all([
           api.appSettings.getHoverTheme(),
           api.appSettings.getReceiptPreferences(),
           api.appSettings.getClinicalFeeSettings(),
-          api.appSettings.getAutoOnpPatientTypeEnabled(),
-          api.appSettings.getAutoOptPatientTypeEnabled()
+          api.appSettings.getPatientTypeAutomationSettings()
         ]);
         if (mounted && theme) setHoverTheme(theme);
         if (mounted && preferences) {
@@ -1650,11 +1652,13 @@ const App: React.FC = () => {
           setClinicalFeeEnabled(clinicalFeeSettings.enabled);
           setClinicalFeeNewPatientAmount(clinicalFeeSettings.newPatientAmount);
           setClinicalFeeReturningPatientAmount(clinicalFeeSettings.returningPatientAmount);
-          setAutoOnpPatientTypeEnabled(autoOnpEnabled);
-          setAutoOptPatientTypeEnabled(autoOptEnabled);
+          setAutoOnpPatientTypeEnabled(automationSettings.autoOnpEnabled);
+          setAutoOptPatientTypeEnabled(automationSettings.autoOptEnabled);
         }
       } catch (error) {
         console.warn('Failed to refresh shared app settings:', error);
+      } finally {
+        sharedSettingsRefreshInFlight = false;
       }
     };
 

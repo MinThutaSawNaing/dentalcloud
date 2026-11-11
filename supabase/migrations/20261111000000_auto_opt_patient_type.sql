@@ -3,18 +3,36 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
+-- Never build large indexes while holding transactional schema locks. A DBA
+-- must first run database/auto_opt_patient_type_indexes.sql in autocommit.
+DO $$
+DECLARE v_table TEXT; v_index TEXT; v_predicate TEXT;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY['appointments', 'treatments'] LOOP
+    v_index := 'idx_' || v_table || '_auto_opt_visit';
+    SELECT pg_get_expr(i.indpred, i.indrelid) INTO v_predicate
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_am am ON am.oid = c.relam
+    WHERE i.indexrelid = to_regclass('public.' || v_index)
+      AND i.indrelid = to_regclass('public.' || v_table)
+      AND i.indisvalid AND i.indisready AND am.amname = 'btree'
+      AND i.indnkeyatts = 2 AND i.indexprs IS NULL
+      AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'patient_id'
+      AND pg_get_indexdef(i.indexrelid, 2, TRUE) = 'date';
+    IF NOT FOUND OR (v_table = 'treatments' AND v_predicate IS NOT NULL)
+      OR (v_table = 'appointments' AND v_predicate IS DISTINCT FROM '((status)::text = ''Completed''::text)') THEN
+      RAISE EXCEPTION 'Missing, invalid or unexpected index %. Run and verify database/auto_opt_patient_type_indexes.sql first.', v_index;
+    END IF;
+  END LOOP;
+END $$;
+
 ALTER TABLE public.app_settings
   ADD COLUMN IF NOT EXISTS auto_opt_patient_type_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 -- Existing clinics use Myanmar/MMK. Explicit, reviewable clinical timezone,
 -- independent of the database connection's default (often UTC).
 ALTER TABLE public.app_settings
   ADD COLUMN IF NOT EXISTS auto_opt_clinical_timezone TEXT NOT NULL DEFAULT 'Asia/Yangon';
-
--- These patient-scoped indexes support existence checks across all branches.
-CREATE INDEX IF NOT EXISTS idx_appointments_auto_opt_visit
-  ON public.appointments (patient_id, date) WHERE status = 'Completed';
-CREATE INDEX IF NOT EXISTS idx_treatments_auto_opt_visit
-  ON public.treatments (patient_id, date);
 
 CREATE OR REPLACE FUNCTION public.auto_opt_patient_type_on_visit()
 RETURNS TRIGGER
@@ -115,16 +133,25 @@ AS $$
 DECLARE v_updated_count INTEGER := 0;
 BEGIN
   IF NOT pg_try_advisory_xact_lock(
-    hashtextextended('apply_auto_onp_patient_type:' || COALESCE(p_location_id::TEXT, '*'), 0)
+    hashtextextended('apply_auto_onp_patient_type:global-maintenance', 0)
   ) THEN RETURN 0; END IF;
   IF NOT COALESCE((SELECT auto_onp_patient_type_enabled FROM public.app_settings WHERE id = 1), FALSE) THEN
     RETURN 0;
   END IF;
-  UPDATE public.patients
+  -- Existing Auto ONP remains gradual maintenance, never an unbounded UPDATE.
+  -- One client request changes at most 200 patients, not the whole table.
+  WITH eligible AS MATERIALIZED (
+    SELECT id FROM public.patients
+    WHERE created_at <= NOW() - INTERVAL '1 month'
+      AND (patient_type IS NULL OR patient_type NOT IN ('ONP', 'OPT(ONP)', 'OPT(RNP)'))
+      AND (p_location_id IS NULL OR location_id = p_location_id)
+    LIMIT 200
+    FOR NO KEY UPDATE SKIP LOCKED
+  )
+  UPDATE public.patients patient
   SET patient_type = 'ONP'
-  WHERE created_at <= NOW() - INTERVAL '1 month'
-    AND (patient_type IS NULL OR patient_type NOT IN ('ONP', 'OPT(ONP)', 'OPT(RNP)'))
-    AND (p_location_id IS NULL OR location_id = p_location_id);
+  FROM eligible
+  WHERE patient.id = eligible.id;
   GET DIAGNOSTICS v_updated_count = ROW_COUNT;
   RETURN v_updated_count;
 END;

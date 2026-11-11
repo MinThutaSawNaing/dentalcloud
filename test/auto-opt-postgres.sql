@@ -8,6 +8,7 @@ CREATE TABLE public.patients (id uuid PRIMARY KEY, location_id uuid, patient_typ
 CREATE TABLE public.appointments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), patient_id uuid REFERENCES patients(id), date date NOT NULL, status varchar(20) DEFAULT 'Scheduled', cancellation_outcome text, notes text);
 CREATE TABLE public.treatments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), patient_id uuid REFERENCES patients(id), date date DEFAULT CURRENT_DATE, description text);
 \ir ../supabase/migrations/20260921000000_atomic_auto_onp_refresh.sql
+\ir ../database/auto_opt_patient_type_indexes.sql
 \ir ../supabase/migrations/20261111000000_auto_opt_patient_type.sql
 -- Reapplication must be safe.
 \ir ../supabase/migrations/20261111000000_auto_opt_patient_type.sql

@@ -1,67 +1,37 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const supabaseMock = vi.hoisted(() => {
-  const state: any = { updateBatches: [] as string[][], rpcCalls: [] as any[] };
-  const query: any = {
-    select: vi.fn(() => query),
-    order: vi.fn(() => query),
-    range: vi.fn(() => query),
-    lte: vi.fn(() => query),
-    or: vi.fn(() => query),
-    eq: vi.fn(() => query),
-    then: (resolve: any) => Promise.resolve({
-      data: Array.from({ length: 45 }, (_, index) => ({ id: `patient-${index}`, patient_type: 'Walk-in' })),
-      error: null
-    }).then(resolve)
-  };
-  return {
-    state,
-    from: vi.fn((table: string) => table === 'app_settings'
-      ? { select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn(async () => ({ data: { auto_onp_patient_type_enabled: true }, error: null })) })) })) }
-      : table === 'patients'
-        ? {
-            select: vi.fn(() => query),
-            update: vi.fn(() => ({ or: vi.fn(() => ({ in: vi.fn(async (_column: string, ids: string[]) => {
-              state.updateBatches.push(ids);
-              return { error: null };
-            }) })) }))
-          }
-        : {})
-  };
-});
-
-vi.mock('./supabase', () => ({
-  supabase: {
-    from: supabaseMock.from,
-    rpc: vi.fn(async (name: string, payload: any) => {
-      supabaseMock.state.rpcCalls.push({ name, payload });
-      return { data: null, error: { code: 'PGRST202', message: `Could not find the function ${name}` } };
-    })
-  },
-  supabaseUrl: '',
-  supabaseAnonKey: ''
-}));
-
+const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn() }));
+vi.mock('./supabase', () => ({ supabase: mock, supabaseUrl: '', supabaseAnonKey: '' }));
 import { api } from './api';
 
-describe('automatic ONP patient conversion', () => {
-  it('splits updates into URL-safe batches to avoid custom-domain proxy CORS failures', async () => {
-    await api.patients.getPage('location-1', 0, 10);
+describe('automatic ONP load safety', () => {
+  beforeEach(() => {
+    mock.from.mockReset();
+    mock.rpc.mockReset();
+    const query: any = {
+      select: vi.fn(() => query), order: vi.fn(() => query),
+      range: vi.fn(() => query), eq: vi.fn(() => query),
+      then: (resolve: any) => Promise.resolve({ data: [], count: 0, error: null }).then(resolve)
+    };
+    mock.from.mockReturnValue(query);
+  });
 
-    expect(supabaseMock.state.updateBatches.map((batch: string[]) => batch.length)).toEqual([20, 20, 5]);
-    expect(new Set(supabaseMock.state.updateBatches.flat()).size).toBe(45);
+  it('fails closed without downloading eligible IDs or issuing PATCH batches when the RPC is missing', async () => {
+    mock.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'Could not find apply_auto_onp_patient_type' } });
+    await api.patients.getPage('missing-rpc', 0, 10);
+    expect(mock.rpc).toHaveBeenCalledTimes(1);
+    // Only the ordinary paginated directory read remains; no fallback reads or writes.
+    expect(mock.from.mock.calls).toEqual([['patients']]);
   });
 
   it('deduplicates concurrent refreshes and observes the per-branch cooldown', async () => {
+    mock.rpc.mockResolvedValue({ data: 0, error: null });
     await Promise.all([
-      api.patients.getPage('location-2', 0, 10),
-      api.patients.getPage('location-2', 0, 10)
+      api.patients.getPage('deduplicated', 0, 10),
+      api.patients.getPage('deduplicated', 0, 10)
     ]);
-    await api.patients.getPage('location-2', 0, 10);
-
-    const locationCalls = supabaseMock.state.rpcCalls.filter(
-      (call: any) => call.payload.p_location_id === 'location-2'
-    );
-    expect(locationCalls).toHaveLength(1);
+    await api.patients.getPage('deduplicated', 0, 10);
+    expect(mock.rpc).toHaveBeenCalledTimes(1);
+    expect(mock.rpc).toHaveBeenCalledWith('apply_auto_onp_patient_type', { p_location_id: 'deduplicated' });
   });
 });

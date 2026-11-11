@@ -2,7 +2,7 @@ import { secureAuthRequest } from './secureAuth';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabase';
 import * as tus from 'tus-js-client';
 import { Patient, Appointment, AppointmentRescheduleLog, ClinicalRecord, TreatmentType, PatientFile, Doctor, DoctorSchedule, DoctorScheduleInput, User, Medicine, MedicineSale, Location, LoyaltyRule, LoyaltyTransaction, Expense, Message, Conversation, ScheduledTask, S3Settings, PatientType, AppointmentType, DoctorTreatmentCommission, DoctorCategoryCommission, PaymentMethod, PaymentRecord, PaymentReceiptSnapshot, ReceiptPreferences, ClinicalFeeSettings, ClinicalFeeCompletionResult, ActiveStaffMonitorEntry, PaymentCorrection, PaymentAllocation, AuditLogSourceType, PatientMaterialCost, PatientMaterialCostInput, TreatmentCostSummary, TreatmentCostType, MaterialLabCostPreset, MaterialLabCostPresetInput, CancellationOutcome, DoctorCorrectionPreview, DoctorCorrectionResult, BranchReceiptIdentity, DoctorSpecialFee, PatientDirectorySummary } from '../types';
-import { AUTO_ONP_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
+import { DEFAULT_PATIENT_TYPE_NAME, DEFAULT_PATIENT_TYPE_OPTIONS, DOCTOR_DASHBOARD_TABS, FULL_ACCESS_TAB_PERMISSIONS } from '../constants';
 import { retryDeadlock } from '../utils/retryDeadlock';
 import { resolveAllowedTabs } from '../utils/permissions';
 import { EmailSettings, loadEmailSettingsAsync, saveEmailSettingsAsync } from '../utils/emailSettings';
@@ -1164,12 +1164,6 @@ const getLocalDateBoundaryISO = (date: string, addDays = 0): string => {
   return boundary.toISOString();
 };
 
-const getOneMonthAgoISO = (date = new Date()): string => {
-  const cutoff = new Date(date);
-  cutoff.setMonth(cutoff.getMonth() - 1);
-  return cutoff.toISOString();
-};
-
 const getAutoOnpPatientTypeEnabled = async (): Promise<boolean> => {
   try {
     const { data, error } = await supabase
@@ -1203,50 +1197,9 @@ const runAutoOnpPatientTypeRefresh = async (locationId?: string): Promise<void> 
     return;
   }
 
-  // Compatibility fallback while the database migration is rolling out.
-  const enabled = await getAutoOnpPatientTypeEnabled();
-  if (!enabled) return;
-
-  const cutoffIso = getOneMonthAgoISO();
-
-  let selectQuery = supabase
-    .from('patients')
-    .select('id, patient_type')
-    .lte('created_at', cutoffIso)
-    .or(`patient_type.is.null,and(patient_type.neq.${AUTO_ONP_PATIENT_TYPE_NAME},patient_type.not.in.("OPT(ONP)","OPT(RNP)"))`);
-
-  if (locationId) {
-    selectQuery = selectQuery.eq('location_id', locationId);
-  }
-
-  const { data: eligiblePatients, error: selectError } = await selectQuery;
-  if (selectError) {
-    console.warn('Failed to find patients eligible for auto ONP conversion:', selectError.message);
-    return;
-  }
-
-  const eligibleIds = (eligiblePatients || [])
-    .filter((patient: any) => ![AUTO_ONP_PATIENT_TYPE_NAME, 'OPT(ONP)', 'OPT(RNP)'].includes(String(patient.patient_type || '').trim()))
-    .map((patient: any) => patient.id)
-    .filter(Boolean);
-
-  if (eligibleIds.length === 0) return;
-
-  // PostgREST encodes `.in()` filters in the request URL, even for PATCH calls.
-  // Large patient groups can exceed the Nginx/Kong request-line limit before the
-  // proxy adds CORS headers, which browsers misleadingly report as a CORS error.
-  // Process batches sequentially so each update stays within the custom-domain limit.
-  for (const patientIdBatch of chunkUniqueIds(eligibleIds)) {
-    const { error: updateError } = await supabase
-      .from('patients')
-      .update({ patient_type: AUTO_ONP_PATIENT_TYPE_NAME })
-      .or('patient_type.is.null,patient_type.not.in.("OPT(ONP)","OPT(RNP)")')
-      .in('id', patientIdBatch);
-
-    if (updateError) {
-      console.warn(`Failed to auto-convert ${patientIdBatch.length} patients to ONP:`, updateError.message);
-    }
-  }
+  // Fail closed: never materialize every eligible ID or fan out PATCH requests
+  // when the atomic server workflow is unavailable. Patient reads still work.
+  console.warn('Auto ONP refresh skipped: the atomic database function is not installed. No client-side bulk fallback was run.');
 };
 
 const applyAutoOnpPatientTypeIfEnabled = async (locationId?: string): Promise<void> => {
@@ -5499,6 +5452,20 @@ export const api = {
     },
     saveEmailSettings: async (settings: EmailSettings): Promise<EmailSettings> => {
       return saveEmailSettingsAsync(settings);
+    },
+    getPatientTypeAutomationSettings: async (): Promise<{ autoOnpEnabled: boolean; autoOptEnabled: boolean }> => {
+      const { data, error } = await supabase.from('app_settings')
+        .select('auto_onp_patient_type_enabled, auto_opt_patient_type_enabled')
+        .eq('id', APP_SETTINGS_SINGLETON_ID).maybeSingle();
+      if (error) {
+        // Only pre-migration schemas need a second small singleton read.
+        if (isMissingColumnError(error, 'auto_opt_patient_type_enabled')) {
+          return { autoOnpEnabled: await getAutoOnpPatientTypeEnabled(), autoOptEnabled: false };
+        }
+        console.warn('Failed to load patient type automation settings:', error.message);
+        return { autoOnpEnabled: false, autoOptEnabled: false };
+      }
+      return { autoOnpEnabled: data?.auto_onp_patient_type_enabled === true, autoOptEnabled: data?.auto_opt_patient_type_enabled === true };
     },
     getAutoOptPatientTypeEnabled: async (): Promise<boolean> => {
       const { data, error } = await supabase.from('app_settings')
