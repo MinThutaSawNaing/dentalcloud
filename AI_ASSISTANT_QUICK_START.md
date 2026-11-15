@@ -16,22 +16,21 @@ The assistant works immediately with intelligent mock responses. You can start u
 
 ### **Option 2: Enable Real AI (Recommended)**
 
-#### **Step 1: Get API Key**
+#### **Step 1: Get an API key**
 Visit: https://apifree.ai
 
-#### **Step 2: Create .env File**
-Create this file: `d:\Dental Cloud Qoder\DentalCloud-by-Thuta\.env`
+#### **Step 2: Sign in as an administrator**
+Open **Settings → AI Assistant**. This tab is administrator-only.
 
-#### **Step 3: Add Your Key**
-```env
-AI_API_KEY=your_apifree_ai_api_key_here
-```
+#### **Step 3: Save the shared key**
+Enter the API key and model, then choose **Save**. The backend encrypts it before
+storage. Every user and branch uses the same configuration, and no user has to
+enter the key again.
 
-#### **Step 4: Restart Server**
-```bash
-# Stop current server (Ctrl+C)
-npm run dev
-```
+#### **Step 4: Test the connection**
+Choose **Test connection**. Mock mode stops as soon as a key is configured.
+
+Do not place the key in `.env`, a `VITE_` variable, or a Docker build argument.
 
 ---
 
@@ -61,27 +60,22 @@ npm run dev
 
 ## 🔧 Code Locations for Customization
 
-### **Mock API Key Constant** (Line 12)
-**File:** `components/AIAssistantView.tsx`
-```typescript
-const MOCK_API_KEY = 'REPLACE_WITH_YOUR_AI_API_KEY';
-```
-⚠️ **This is just for reference** - actual key goes in `.env` file!
+### **Settings Panel**
+**File:** `components/AIAssistantSettings.tsx`
+Administrator-only key entry, connection test and removal.
 
-### **Real API Key Configuration**
-**File:** `vite.config.ts` (Lines 14-15)
-```typescript
-define: {
-  'process.env.AI_API_KEY': JSON.stringify(env.AI_API_KEY)
-}
-```
-✅ Already configured - just add key to `.env` file!
+### **Frontend AI Client**
+**File:** `services/aiAssistant.ts`
+Calls the `ai-assistant` backend function. It never holds a provider key.
 
-### **Environment Variable**
-**File:** `.env` (create this file)
-```env
-AI_API_KEY=your_actual_api_key_here
-```
+### **Backend Proxy**
+**File:** `supabase/functions/ai-assistant/index.ts`
+Checks the staff session and AI Assistant permission, decrypts the saved key
+only while calling the provider, and enforces per-user rate limits.
+
+### **Database Migration**
+**File:** `database/ai_assistant_secure_settings.sql`
+Creates the private encrypted storage and service-role-only RPCs.
 
 ---
 

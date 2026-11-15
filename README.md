@@ -83,11 +83,11 @@ To run this project locally, follow these steps:
     npm install
     ```
 
-3.  **Environment Setup:**
-    Create a `.env` file in the root directory and add your AI API key:
-    ```env
-    AI_API_KEY=your_ai_api_key_here
-    ```
+3.  **AI Assistant setup:**
+    Do not put the AI provider key in `.env` or any `VITE_` variable. After
+    signing in as an administrator, open **Settings → AI Assistant**, enter the
+    shared key and choose **Save**. The backend encrypts it, keeps it private and
+    applies it to every user and branch.
 
 4.  **Launch:**
     ```bash
@@ -105,10 +105,8 @@ To deploy this application using Docker:
     docker build -t dentalcloud-pro .
     ```
 
-2.  **Build with environment variables:**
-    ```bash
-    docker build --build-arg AI_API_KEY=your_api_key_here -t dentalcloud-pro .
-    ```
+2.  No AI key is needed at build time. Configure it once in the running app's
+    **Settings → AI Assistant** panel.
 
 3.  **Run the container:**
     ```bash

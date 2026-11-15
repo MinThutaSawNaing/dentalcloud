@@ -21,51 +21,37 @@ The AI Clinical Assistant is an intelligent chat interface powered by apifree.ai
 3. Navigate to API Keys management page
 4. Create a new API key and copy it
 
-### Step 2: Configure Your Environment
+### Step 2: Apply the secure database migration
 
-**Option A: Create .env file manually**
+Apply `supabase/migrations/20261115000000_ai_assistant_secure_settings.sql`
+(or `database/ai_assistant_secure_settings.sql`) to the clinic database. It is
+idempotent and creates the private encrypted settings storage plus
+service-role-only RPCs.
 
-1. Create a new file named `.env` in your project root:
-   ```
-   d:\Dental Cloud Qoder\DentalCloud-by-Thuta\.env
-   ```
+### Step 3: Deploy the backend function
 
-2. Add your AI API key:
-   ```env
-   AI_API_KEY=your_apifree_ai_api_key_here
-   ```
+Deploy `supabase/functions/ai-assistant` with JWT verification disabled, matching
+the existing `credential-auth` function. The function performs its own staff
+session and administrator checks.
 
-**Option B: Copy from template**
+Optional but recommended: provision a dedicated 32-byte key with
+`openssl rand -base64 32` and set it as `AI_SETTINGS_ENCRYPTION_KEY` in the Edge
+Function secrets. Without it, encryption is derived from the existing service
+role secret with HKDF-SHA256.
 
-1. Rename `.env.example` to `.env`
-2. Replace `your_apifree_ai_api_key_here` with your actual API key
+### Step 4: Save the key in the app
 
-### Step 3: File Location to Edit
+1. Sign in as an administrator.
+2. Open **Settings → AI Assistant**.
+3. Enter the API key and model, then choose **Save**.
+4. Choose **Test connection** to confirm the saved key works.
 
-**Exact file path to add your API key:**
-```
-d:\Dental Cloud Qoder\DentalCloud-by-Thuta\.env
-```
+The key is encrypted with AES-256-GCM before it is stored. It is never displayed
+again and never sent to any browser. The configuration is shared by every user,
+device and branch.
 
-**What to add:**
-```env
-AI_API_KEY=your_actual_key_here
-```
-*(Replace with your actual key from Step 1)*
-
-### Step 4: Restart Development Server
-
-After adding your API key:
-
-1. Stop the current dev server (Ctrl+C in terminal)
-2. Restart with:
-   ```bash
-   npm run dev
-   ```
-   or
-   ```bash
-   npm start
-   ```
+Do **not** add the key to `.env`, `vite.config.ts`, a `VITE_` variable, or a
+Docker build argument. The frontend bundle must never contain it.
 
 ### Step 5: Verify Setup
 
@@ -122,11 +108,16 @@ Once configured, you get:
 - ✅ Check if API key has been revoked in apifree.ai dashboard
 - ✅ Ensure no firewall blocking API requests
 
-### API key not loading
-- ✅ File must be named exactly `.env` (with the dot)
-- ✅ Place in project root: `d:\Dental Cloud Qoder\DentalCloud-by-Thuta\.env`
-- ✅ Format: `AI_API_KEY=your_key` (no spaces, no quotes)
-- ✅ Server must be restarted after adding key
+### AI Assistant says it is not configured
+- ✅ Sign in as an administrator and open **Settings → AI Assistant**.
+- ✅ Save the shared key, then choose **Test connection**.
+- ✅ Confirm the `ai-assistant` function is deployed.
+- ✅ Confirm the secure settings migration has been applied.
+- ✅ Check that the Edge Function environment still has its service role secret.
+
+### The saved key cannot be read
+- ✅ If `AI_SETTINGS_ENCRYPTION_KEY` was removed or changed, save the AI key again.
+- ✅ If the service role secret was rotated, save the AI key again.
 
 ## Code Integration Points
 
@@ -134,21 +125,27 @@ If you want to customize the AI Assistant, here are the key files:
 
 ### Main Component
 **File:** `components/AIAssistantView.tsx`
-- Lines 8-12: Mock API key constant (for reference only)
-- Lines 84-155: AI API integration logic (apifree.ai)
-- Lines 158-430: Mock response simulation
+- Mock mode is used only when the backend reports no configured key.
+- All provider completions go through `services/aiAssistant.ts`.
 
-### App Integration
-**File:** `App.tsx`
-- Line 18: Import Sparkles icon
-- Line 54: Import AIAssistantView component
-- Line 56: Add 'ai-assistant' to ViewState type
-- Line 729: Navigation item in sidebar
-- Line 792: Route to AIAssistantView
+### Settings Panel
+**File:** `components/AIAssistantSettings.tsx`
+- Administrator-only key entry, connection test and removal.
+- The saved key is never returned to this component.
 
-### Environment Configuration
+### Backend Proxy
+**File:** `supabase/functions/ai-assistant/index.ts`
+- Validates the staff session and AI Assistant permission.
+- Encrypts/decrypts the provider key and applies per-user rate limits.
+
+### Database
+**Files:** `supabase/migrations/20261115000000_ai_assistant_secure_settings.sql`
+and `database/ai_assistant_secure_settings.sql`
+- Private schema, RLS, service-role-only RPCs and audit records.
+
+### Frontend configuration
 **File:** `vite.config.ts`
-- Lines 14-15: Environment variable exposure to client (AI_API_KEY)
+- Contains no AI credential injection. Never add one.
 
 ## Using the AI Assistant
 

@@ -42,6 +42,7 @@ import {
   MemoryClassifierContext
 } from '../utils/assistantMemory';
 import { loadEmailSettingsAsync } from '../utils/emailSettings';
+import { AI_ASSISTANT_SETTINGS_EVENT, aiAssistant } from '../services/aiAssistant';
 
 // Custom CSS for animations
 const customStyles = `
@@ -598,18 +599,6 @@ if (typeof document !== 'undefined') {
   styleSheet.textContent = customStyles;
   document.head.appendChild(styleSheet);
 }
-
-// ============================================================
-// IMPORTANT: REPLACE MOCK API KEY WITH YOUR REAL API KEY FROM APIFREE.AI
-// ============================================================
-// This is a MOCK API key for demonstration purposes.
-// To use the real AI Assistant:
-// 1. Get your API key from: https://apifree.ai
-// 2. Add it to your .env file as: AI_API_KEY=your_actual_api_key_here
-// 3. The vite.config.ts is already configured to read it as process.env.AI_API_KEY
-// ============================================================
-const MOCK_API_KEY = 'REPLACE_WITH_YOUR_AI_API_KEY';
-const AI_MODEL = 'deepseek-ai/deepseek-v3.2';
 
 interface Message {
   id: string;
@@ -1424,6 +1413,7 @@ const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   }, []);
 
   const [apiStatus, setApiStatus] = useState<'ready' | 'mock' | 'error'>('mock');
+  const [aiConfigured, setAiConfigured] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -2011,14 +2001,28 @@ Need more detailed help?
     return () => clearInterval(cleanupInterval);
   }, [chatSessions]);
 
-  // Check if real API key is configured
+  // The backend reports whether a shared key exists. The key itself never reaches the browser.
   useEffect(() => {
-    const apiKey = process.env.AI_API_KEY || MOCK_API_KEY;
-    if (apiKey === MOCK_API_KEY || apiKey === 'REPLACE_WITH_YOUR_AI_API_KEY') {
-      setApiStatus('mock');
-    } else {
-      setApiStatus('ready');
-    }
+    let cancelled = false;
+    const loadAiStatus = async () => {
+      try {
+        const status = await aiAssistant.getStatus();
+        if (cancelled) return;
+        setAiConfigured(status.configured);
+        setApiStatus(status.configured ? 'ready' : 'mock');
+      } catch {
+        if (cancelled) return;
+        setAiConfigured(false);
+        setApiStatus('error');
+      }
+    };
+    void loadAiStatus();
+    const handleSettingsUpdate = () => { void loadAiStatus(); };
+    window.addEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
+    };
   }, []);
 
   const copyToClipboard = async (text: string, messageId: string) => {
@@ -2497,9 +2501,6 @@ Need more detailed help?
     }
   };
 
-  const isMockKey = (apiKey: string) =>
-    apiKey === MOCK_API_KEY || apiKey === 'REPLACE_WITH_YOUR_AI_API_KEY';
-
   const isReportingQuery = (message: string): boolean => {
     const lower = message.toLowerCase();
     return [
@@ -2544,9 +2545,8 @@ Need more detailed help?
   };
 
   const classifyMemoryCommandLLM = async (message: string, context?: MemoryClassifierContext): Promise<MemoryCommand> => {
-    const apiKey = process.env.AI_API_KEY || MOCK_API_KEY;
-    if (isMockKey(apiKey)) {
-      throw new Error('AI API key not configured for memory routing.');
+    if (!aiConfigured) {
+      throw new Error('AI Assistant is not configured for memory routing.');
     }
 
     const previousContext = context?.lastAssistantResponse
@@ -2571,31 +2571,16 @@ Rules:
 
     const userPrompt = `${previousContext}Message: """${message}"""`;
 
-    const response = await fetch(`https://api.apifree.ai/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0,
-        max_tokens: 200,
-        top_p: 0.9,
-        stream: false
-      })
+    const data = await aiAssistant.createCompletion({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0,
+      max_tokens: 200,
+      top_p: 0.9
     });
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData?.error?.message || `Memory routing failed: ${response.status}`);
-    }
-
-    const data = await response.json();
     const raw = data?.choices?.[0]?.message?.content || '';
     const jsonBlock = extractJsonBlock(raw) || raw.trim();
     const parsed = parseJsonSafe(jsonBlock) as any;
@@ -2802,7 +2787,6 @@ Examples:
   };
 
   const callAICompletionAPI = async (userMessage: string, history: Message[] = []): Promise<string> => {
-    const apiKey = process.env.AI_API_KEY || MOCK_API_KEY;
     const memorySummary = buildMemoryPromptSummary(assistantMemory);
     
     // Check if message implies an action
@@ -2871,7 +2855,7 @@ ${isAgentMode ? '• **Manage clinic data through direct API actions**' : ''}
         return `${tables}\n\n**Insights**\n${payloadInsights}${warnings}`;
       };
 
-      if (apiKey === MOCK_API_KEY || apiKey === 'REPLACE_WITH_YOUR_AI_API_KEY') {
+      if (!aiConfigured) {
         const mockPayload = { ...buildAIReportPayload(report), insights };
         return renderPayloadReport(mockPayload);
       }
@@ -2880,39 +2864,21 @@ ${isAgentMode ? '• **Manage clinic data through direct API actions**' : ''}
         const schemaTemplate = buildAIReportPayload(report);
         const schemaPrompt = `Return JSON only. Do not include markdown fences or extra text.\n\nSchema:\n{\n  \"period\": { \"today\": string, \"weekStart\": string, \"monthLabel\": string },\n  \"revenue\": { \"daily\": number, \"weekly\": number, \"monthly\": number },\n  \"expenses\": { \"daily\": number, \"weekly\": number, \"monthly\": number },\n  \"profit\": { \"monthly\": number },\n  \"inventory\": { \"totalValue\": number, \"lowStockCount\": number, \"outOfStockCount\": number },\n  \"doctors\": [ { \"name\": string, \"treatments\": number } ],\n  \"insights\": [ string ]\n}\n\nRules:\n- Use ONLY the values provided below.\n- Do not invent new numbers.\n- Provide 3 to 6 insights.\n- Insights may include numbers, but only the allowed values below.\n\nAllowed Values (copy exactly):\n${JSON.stringify(schemaTemplate, null, 2)}\n`;
 
-        const structuredResponse = await fetch(
-          `https://api.apifree.ai/v1/chat/completions`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
+        const structuredData = await aiAssistant.createCompletion({
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert clinical reporting assistant. Respond with strict JSON only.'
             },
-            body: JSON.stringify({
-              model: AI_MODEL,
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are an expert clinical reporting assistant. Respond with strict JSON only.'
-                },
-                {
-                  role: 'user',
-                  content: schemaPrompt
-                }
-              ],
-              temperature: 0.1,
-              max_tokens: 700,
-              top_p: 0.9,
-              stream: false
-            })
-          }
-        );
-
-        if (!structuredResponse.ok) {
-          return `${reportMarkdown}\n\n**Insights**\n${insightsMarkdown}${warnings}`;
-        }
-
-        const structuredData = await structuredResponse.json();
+            {
+              role: 'user',
+              content: schemaPrompt
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 700,
+          top_p: 0.9
+        });
         const rawContent = structuredData.choices?.[0]?.message?.content || '';
         const jsonBlock = extractJsonBlock(rawContent) || rawContent.trim();
         const parsed = parseJsonSafe(jsonBlock);
@@ -2931,12 +2897,12 @@ ${isAgentMode ? '• **Manage clinic data through direct API actions**' : ''}
       }
     }
 
-    // If using mock API key, return simulated response
-    if (apiKey === MOCK_API_KEY || apiKey === 'REPLACE_WITH_YOUR_AI_API_KEY') {
+    // No shared key configured: return the local simulated response.
+    if (!aiConfigured) {
       return simulateMockResponse(userMessage);
     }
 
-    // Real API call to apifree.ai
+    // AI provider requests are proxied by the backend so the key stays server-side.
     try {
       // Use optimized context based on query type and token budget
       const isComplexQuery = userMessage.toLowerCase().includes('analysis') || 
@@ -3089,41 +3055,22 @@ Example table format:
 |----------|----------------|-----------------|--------|----------|----------|
 | [Data]   | [Value]        | [Value]         | [Diff] | [Pct]    | [Action] |`
 
-      const response = await fetch(
-        `https://api.apifree.ai/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
+      const data = await aiAssistant.createCompletion({
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
           },
-          body: JSON.stringify({
-            model: AI_MODEL,
-            messages: [
-              {
-                role: "system",
-                content: systemPrompt
-              },
-              ...fullConversationHistory,
-              {
-                role: "user",
-                content: userMessage
-              }
-            ],
-            temperature: 0.7,
-            max_tokens: 10000,
-            top_p: 0.9, // Slightly reduced for more focused responses
-            stream: false
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `API request failed: ${response.status}`);
-      }
-
-      const data = await response.json();
+          ...fullConversationHistory,
+          {
+            role: "user",
+            content: userMessage
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 10000,
+        top_p: 0.9
+      });
       const aiResponse = data.choices?.[0]?.message?.content;
       
       if (!aiResponse) {
@@ -3134,7 +3081,7 @@ Example table format:
     } catch (error: any) {
       console.error('AI API Error:', error);
       setApiStatus('error');
-      return `❌ Error connecting to AI service: ${error.message || 'Unknown error'}. Please check your API key configuration and try again.`;
+      return `❌ Error connecting to AI service: ${error.message || 'Unknown error'}. Please try again, or ask an administrator to check Settings → AI Assistant.`;
     }
   };
 
@@ -5656,7 +5603,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                       <div className="text-sm text-amber-800">
                         <p className="font-medium">Mock mode is active.</p>
                         <p className="mt-1 text-amber-700">
-                          Connect to <code className="rounded bg-amber-100 px-1.5 py-0.5 text-[13px]">apifree.ai</code> to receive live AI responses.
+                          An administrator can add the shared AI key in <strong>Settings → AI Assistant</strong> to enable live responses.
                         </p>
                       </div>
                     </div>
@@ -5669,7 +5616,7 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
                       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-600" />
                       <div className="text-sm text-red-800">
                         <p className="font-medium">AI connection problem.</p>
-                        <p className="mt-1 text-red-700">Check your configuration and try again.</p>
+                        <p className="mt-1 text-red-700">Ask an administrator to check Settings → AI Assistant, then try again.</p>
                       </div>
                     </div>
                   </div>

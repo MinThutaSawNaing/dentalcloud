@@ -4,13 +4,13 @@
 # Production Docker image for DentalCloud (Vite + React static application)
 #
 # Build example:
-#   docker build --build-arg AI_API_KEY=your_key -t dentalcloud:prod .
+#   docker build -t dentalcloud:prod .
 #
 # Run example:
 #   docker run --rm -p 3000:3000 dentalcloud:prod
 #
-# Note: Vite embeds client-side environment values at build time. Do not pass
-# secrets that must remain private to AI_API_KEY or other frontend build args.
+# Note: Vite embeds client-side environment values at build time. AI credentials
+# are configured by an administrator in Settings and never belong in this image.
 ################################################################################
 
 FROM node:20-alpine AS deps
@@ -30,10 +30,6 @@ ENV NODE_ENV=production
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Vite reads this value during build via vite.config.ts.
-ARG AI_API_KEY=
-ENV AI_API_KEY=${AI_API_KEY}
 
 RUN npm run build
 

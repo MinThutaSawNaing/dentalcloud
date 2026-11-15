@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, DollarSign, MapPin, Award, Plus, Trash2, RotateCcw, Printer, Image as ImageIcon, Upload, Tags, CalendarRange, Activity, MessageCircle, Mail, HardDrive, Palette, Shield, Info, Users, RefreshCw, Clock } from 'lucide-react';
+import { Settings as SettingsIcon, DollarSign, MapPin, Award, Plus, Trash2, RotateCcw, Printer, Image as ImageIcon, Upload, Tags, CalendarRange, Activity, MessageCircle, Mail, HardDrive, Palette, Shield, Info, Users, RefreshCw, Clock, Sparkles } from 'lucide-react';
 import { BranchReceiptIdentity, Location, LoyaltyRule, S3Settings, SupabaseStorageSettings, ReceiptSize, PatientType, AppointmentType, ActiveStaffMonitorEntry } from '../types';
 import { Modal, Input } from './Shared';
 import { api } from '../services/api';
@@ -8,6 +8,7 @@ import { dataCache } from '../utils/dataCache';
 import { supabase } from '../services/supabase';
 import { EMAIL_SETTINGS_KEY, EmailSettings, loadEmailSettings, loadEmailSettingsAsync, saveEmailSettings as persistEmailSettings, saveEmailSettingsAsync } from '../utils/emailSettings';
 import { APP_VERSION } from '../constants';
+import AIAssistantSettings from './AIAssistantSettings';
 
 interface SettingsViewProps {
   currency: 'USD' | 'MMK';
@@ -134,6 +135,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     { id: 'messaging', label: 'Messaging', icon: <MessageCircle size={18} />, adminOnly: true },
     { id: 'email', label: 'Email', icon: <Mail size={18} />, adminOnly: true },
     { id: 'storage', label: 'Storage', icon: <HardDrive size={18} />, adminOnly: true },
+    { id: 'ai', label: 'AI Assistant', icon: <Sparkles size={18} />, adminOnly: true },
     { id: 'branding', label: 'Branding', icon: <Palette size={18} />, adminOnly: false },
     { id: 'monitoring', label: 'Monitoring', icon: <Users size={18} />, adminOnly: true },
     { id: 'system', label: 'System', icon: <Shield size={18} />, adminOnly: true },
@@ -2468,6 +2470,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         {activeTab === 'messaging' && renderMessagingTab()}
         {activeTab === 'email' && renderEmailTab()}
         {activeTab === 'storage' && renderStorageTab()}
+        {activeTab === 'ai' && <AIAssistantSettings />}
         {activeTab === 'branding' && renderBrandingTab()}
         {activeTab === 'monitoring' && renderMonitoringTab()}
         {activeTab === 'system' && renderSystemTab()}
