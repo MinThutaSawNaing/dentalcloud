@@ -4,10 +4,18 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 // sent to the browser, returned in a response body, or written to logs.
 const providerUrl = Deno.env.get('AI_PROVIDER_URL') || 'https://api.apifree.ai/v1/chat/completions';
 const defaultModel = 'deepseek-ai/deepseek-v3.2';
-const maxBodyBytes = 220_000;
-const maxMessages = 60;
+// These limits cover the client's legitimate worst case: the assistant always
+// sends one large system prompt (instructions, product knowledge and practice
+// data) plus up to 80 compacted history entries and the user turn. They stay
+// bounded; the endpoint is still authenticated, permission checked and rate
+// limited, and the provider payload never exceeds maxTotalChars.
+const maxBodyBytes = 500_000;
+const maxMessages = 90;
 const maxMessageChars = 24_000;
-const maxTotalChars = 120_000;
+// The system prompt is roughly 30k characters, so the system role needs its own
+// allowance. User and assistant turns keep the smaller per-message cap.
+const maxSystemChars = 64_000;
+const maxTotalChars = 220_000;
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -177,8 +185,12 @@ function normalizeMessages(value: unknown): ChatMessage[] {
     const record = item as Record<string, unknown>;
     const role = typeof record.role === 'string' ? record.role : '';
     const content = typeof record.content === 'string' ? record.content : '';
-    if (!roles.has(role) || content.length === 0 || content.length > maxMessageChars) {
+    if (!roles.has(role) || content.length === 0) {
       throw new RequestError('Invalid AI conversation.');
+    }
+    const limit = role === 'system' ? maxSystemChars : maxMessageChars;
+    if (content.length > limit) {
+      throw new RequestError('AI message is too long.');
     }
     total += content.length;
     if (total > maxTotalChars) throw new RequestError('AI conversation is too long.');

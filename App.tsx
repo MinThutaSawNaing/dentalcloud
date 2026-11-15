@@ -3002,11 +3002,11 @@ const App: React.FC = () => {
           api.appointments.getAll(queryScope, { throwOnError: true }),
           api.doctors.getAll(queryScope, { throwOnError: true }),
           api.treatments.getTypes(queryScope, { throwOnError: true }),
-          api.treatments.getAllRecords(queryScope, { limit: null, throwOnError: true }),
+          api.treatments.getAllRecords(queryScope, { limit: null, throwOnError: true, commissionRequestConcurrency: 3 }),
           api.medicines.getAll(queryScope, { throwOnError: true }),
           api.expenses.getAll(queryScope, { throwOnError: true }),
           api.medicines.getSales(queryScope, undefined, { throwOnError: true }),
-          api.finance.getPayments(queryScope)
+          api.finance.getPayments(queryScope, { commissionRequestConcurrency: 3 })
         ]));
         if (!isCurrent()) return;
         setAssistantPatients(patients);
