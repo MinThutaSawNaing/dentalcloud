@@ -217,6 +217,27 @@ async function callProvider(apiKey: string, payload: Record<string, unknown>): P
   }
 }
 
+type ProviderFailure = { status: number; message: string };
+
+// The provider can return HTTP 200 with a JSON error envelope. Treat that as a
+// failure instead of reporting a broken key as healthy.
+function providerFailure(data: any, httpStatus: number): ProviderFailure | null {
+  const code = typeof data?.code === 'number' ? data.code : null;
+  if (data && data.error) {
+    const authenticationError = code === 401 || code === 403 || data.error?.type === 'authentication_error';
+    return {
+      status: authenticationError ? 401 : code && code >= 400 ? code : httpStatus,
+      message: authenticationError
+        ? 'The AI provider rejected the saved key.'
+        : 'The AI provider rejected the request.'
+    };
+  }
+  if (code && code >= 400) {
+    return { status: code, message: 'The AI provider rejected the request.' };
+  }
+  return null;
+}
+
 async function readSecret(config: StoredConfig): Promise<string> {
   try {
     return await decryptSecret(config.api_key_ciphertext, config.api_key_iv, config.key_version);
@@ -281,8 +302,18 @@ async function handleTest(actor: Actor): Promise<Response> {
     top_p: 1,
     stream: false
   });
-  if (!result.ok) {
-    return reply({ error: 'The AI provider rejected the saved key.', providerStatus: result.status }, 502);
+  const failure = result.ok ? providerFailure(result.data, result.status) : {
+    status: result.status,
+    message: result.status === 401 || result.status === 403
+      ? 'The AI provider rejected the saved key.'
+      : 'The AI provider could not complete this request.'
+  };
+  if (failure) {
+    return reply({ error: failure.message, providerStatus: failure.status }, 502);
+  }
+  const content = result.data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) {
+    return reply({ error: 'The AI provider returned an invalid response.' }, 502);
   }
   return reply({ success: true, model: config.model });
 }
@@ -310,10 +341,15 @@ async function handleComplete(actor: Actor, body: Record<string, unknown>): Prom
     stream: false
   });
 
-  if (!result.ok) {
-    return reply({ error: 'The AI provider could not complete this request.', providerStatus: result.status }, 502);
+  const failure = result.ok ? providerFailure(result.data, result.status) : {
+    status: result.status,
+    message: 'The AI provider could not complete this request.'
+  };
+  if (failure) {
+    return reply({ error: failure.message, providerStatus: failure.status }, 502);
   }
-  if (!result.data || !Array.isArray(result.data.choices)) {
+  const content = result.data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) {
     return reply({ error: 'The AI provider returned an invalid response.' }, 502);
   }
   return reply(result.data);

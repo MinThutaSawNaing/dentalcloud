@@ -53,6 +53,8 @@ describe('AI assistant credential security guards', () => {
     expect(edgeFunction).toContain("action === 'remove'");
     expect(edgeFunction).toContain("action === 'test'");
     expect(edgeFunction).toContain('ai_assistant_rate_limit');
+    expect(edgeFunction).toContain('providerFailure');
+    expect(edgeFunction).toContain("data.error?.type === 'authentication_error'");
     expect(edgeFunction).not.toMatch(/reply\(\{[^}]*apiKey/);
     expect(edgeFunction).not.toMatch(/console\.(log|error)\([^)]*(token|apiKey|ciphertext)/i);
   });

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, Send, Loader2, Sparkles, AlertCircle, User, Copy, Check, Plus, Trash2, MessageCircle, Zap, ShieldQuestion, Mic, HelpCircle, X, Brain, MapPin, ThumbsUp, ThumbsDown, Eye, EyeOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -2002,28 +2002,34 @@ Need more detailed help?
   }, [chatSessions]);
 
   // The backend reports whether a shared key exists. The key itself never reaches the browser.
-  useEffect(() => {
-    let cancelled = false;
-    const loadAiStatus = async () => {
-      try {
-        const status = await aiAssistant.getStatus();
-        if (cancelled) return;
-        setAiConfigured(status.configured);
-        setApiStatus(status.configured ? 'ready' : 'mock');
-      } catch {
-        if (cancelled) return;
-        setAiConfigured(false);
-        setApiStatus('error');
-      }
-    };
-    void loadAiStatus();
-    const handleSettingsUpdate = () => { void loadAiStatus(); };
-    window.addEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
-    };
+  const refreshAiStatus = useCallback(async () => {
+    try {
+      const status = await aiAssistant.getStatus();
+      setAiConfigured(status.configured);
+      setApiStatus(status.configured ? 'ready' : 'mock');
+    } catch {
+      setAiConfigured(false);
+      setApiStatus('error');
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshAiStatus();
+    const handleSettingsUpdate = () => { void refreshAiStatus(); };
+    window.addEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
+    window.addEventListener('focus', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener(AI_ASSISTANT_SETTINGS_EVENT, handleSettingsUpdate);
+      window.removeEventListener('focus', handleSettingsUpdate);
+    };
+  }, [refreshAiStatus]);
+
+  // While unconfigured, pick up an administrator's saved key without a reload.
+  useEffect(() => {
+    if (apiStatus !== 'mock') return;
+    const interval = window.setInterval(() => { void refreshAiStatus(); }, 60_000);
+    return () => window.clearInterval(interval);
+  }, [apiStatus, refreshAiStatus]);
 
   const copyToClipboard = async (text: string, messageId: string) => {
     try {
