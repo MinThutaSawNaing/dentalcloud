@@ -9,13 +9,14 @@ const defaultModel = 'deepseek-ai/deepseek-v3.2';
 // data) plus up to 80 compacted history entries and the user turn. They stay
 // bounded; the endpoint is still authenticated, permission checked and rate
 // limited, and the provider payload never exceeds maxTotalChars.
-const maxBodyBytes = 500_000;
+const maxBodyBytes = 700_000;
 const maxMessages = 90;
 const maxMessageChars = 24_000;
-// The system prompt is roughly 30k characters, so the system role needs its own
-// allowance. User and assistant turns keep the smaller per-message cap.
-const maxSystemChars = 64_000;
-const maxTotalChars = 220_000;
+// The system prompt needs its own, much larger allowance: Ask mode sends about
+// 30k characters, Agent mode adds the action documentation and the complete
+// practice dataset. User and assistant turns keep the smaller per-message cap.
+const maxSystemChars = 200_000;
+const maxTotalChars = 300_000;
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -190,6 +191,8 @@ function normalizeMessages(value: unknown): ChatMessage[] {
     }
     const limit = role === 'system' ? maxSystemChars : maxMessageChars;
     if (content.length > limit) {
+      // Lengths only; message content is never logged.
+      console.warn(`AI assistant rejected an oversized ${role} message: ${content.length} characters (limit ${limit}).`);
       throw new RequestError('AI message is too long.');
     }
     total += content.length;
@@ -343,6 +346,13 @@ async function handleComplete(actor: Actor, body: Record<string, unknown>): Prom
   if (!allowed) throw new RequestError('Too many AI requests. Please wait a moment and try again.', 429);
 
   const messages = normalizeMessages(body.messages);
+  // Lengths only; message content is never logged. This keeps prompt growth
+  // observable without exposing clinical data or credentials.
+  const totalChars = messages.reduce((sum, message) => sum + message.content.length, 0);
+  const systemChars = messages
+    .filter(message => message.role === 'system')
+    .reduce((sum, message) => sum + message.content.length, 0);
+  console.log(`AI assistant completion: ${messages.length} messages, ${totalChars} characters (system ${systemChars}).`);
   const apiKey = await readSecret(config);
   const result = await callProvider(apiKey, {
     model: config.model,

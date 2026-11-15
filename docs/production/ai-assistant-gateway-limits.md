@@ -16,14 +16,16 @@ still passed (it sends `Reply with OK.`).
 
 | Constant | Before | After | Reason |
 | --- | --- | --- | --- |
-| `maxBodyBytes` | 220,000 | 500,000 | Covers JSON escaping/Unicode of the allowed payload |
+| `maxBodyBytes` | 220,000 | 700,000 | Covers JSON escaping/Unicode of the allowed payload |
 | `maxMessages` | 60 | 90 | Client sends system + up to 80 history entries + user |
 | `maxMessageChars` | 24,000 | 24,000 | Unchanged for user/assistant turns |
-| `maxSystemChars` | — | 64,000 | Large system prompt only |
-| `maxTotalChars` | 120,000 | 220,000 | System prompt + maximum compacted history + user turn |
+| `maxSystemChars` | — | 200,000 | Agent mode prompt (instructions + product knowledge + API docs + full practice data) |
+| `maxTotalChars` | 120,000 | 300,000 | System prompt + maximum compacted history + user turn |
 
 Per-message validation is now role aware and returns `AI message is too long.`
-instead of the generic conversation error. Authentication, the `ai-assistant`
+instead of the generic conversation error. The function logs the character
+counts of accepted completions and of rejected oversized messages (lengths only,
+never content), which keeps prompt growth observable. Authentication, the `ai-assistant`
 permission check, the 30 requests/minute rate limit and the 12,000 `max_tokens`
 clamp are unchanged.
 
