@@ -2228,6 +2228,14 @@ Need more detailed help?
       return {
         ...baseData,
         branches: canAccessAllLocations ? branchSummaries : undefined,
+        cov: {
+          patients: `not loaded (${activePatients.length} exist)`,
+          doctors: `${Math.min(activeDoctors.length, 5)} of ${activeDoctors.length}`,
+          appointments: `3 of ${activeAppointments.filter(a => a.status === 'Scheduled' && a.date === today).length} scheduled today`,
+          treatment_records: 'not loaded',
+          expenses: 'not loaded',
+          medicines: 'stock counts only'
+        },
         dr: activeDoctors.slice(0, 5).map(d => ({ n: d.name, s: (d.specialization || '').substring(0, 20) })), 
         ta: activeAppointments.filter(a => a.status === 'Scheduled' && a.date === today).slice(0, 3).map(a => ({ p: (a.patient_name || 'Unknown').substring(0, 15), t: a.time })),
         inv: {
@@ -2370,6 +2378,19 @@ Need more detailed help?
       .slice(0, 8);
 
 
+    const appointmentsLast7d = activeAppointments.filter(a => a.date >= sevenDaysAgoStr);
+    const appointmentsLast90d = activeAppointments.filter(a => a.date >= ninetyDaysAgoStr);
+
+    const sales7dWindowStart = new Date();
+    sales7dWindowStart.setDate(sales7dWindowStart.getDate() - 6);
+    const sales7dStartStr = sales7dWindowStart.toISOString().split('T')[0];
+    const sales7dByMedicine = new Map<string, number>();
+    activeMedicineSales
+      .filter(sale => sale.date >= sales7dStartStr)
+      .forEach(sale => {
+        sales7dByMedicine.set(sale.medicine_id, (sales7dByMedicine.get(sale.medicine_id) || 0) + (sale.quantity || 0));
+      });
+
     return {
       ...baseData,
       branches: canAccessAllLocations ? branchSummaries : undefined,
@@ -2445,7 +2466,7 @@ Need more detailed help?
         ms: m.min_stock, 
         p: m.price,
         c: m.category,
-        sales_7days: 0, // Would be calculated from sales data
+        sales_7days: sales7dByMedicine.get(m.id) || 0,
         loc: m.location_id
       })),
       treatment_records: activeTreatmentRecords.slice(0, 20).map(tr => ({
@@ -2466,6 +2487,19 @@ Need more detailed help?
         dt: exp.date,
         loc: exp.location_id
       })),
+      // ponytail: coverage marker, not a retrieval loop. The lists above are samples;
+      // this is what finally tells the model so. Upgrade path: a retrieve-then-answer
+      // loop when samples still leave questions unanswerable.
+      cov: {
+        patients: `${Math.min(activePatients.length, 25)} of ${activePatients.length}`,
+        appointments: `${Math.min(appointmentsLast7d.length, 30)} of ${appointmentsLast7d.length} (last 7 days)`,
+        appointment_history: `${Math.min(appointmentsLast90d.length, 40)} of ${appointmentsLast90d.length} (last 90 days)`,
+        treatment_records: `${Math.min(activeTreatmentRecords.length, 20)} of ${activeTreatmentRecords.length}`,
+        medicines: `${Math.min(activeMedicines.length, 25)} of ${activeMedicines.length}`,
+        expenses: `${Math.min(activeExpenses.length, 20)} of ${activeExpenses.length}`,
+        doctors: `all ${activeDoctors.length}`,
+        doctor_popularity_30d: 'aggregated over all treatment records'
+      },
       financial_summary: {
         daily_revenue: financialReport.revenueDaily,
         weekly_revenue: financialReport.revenueWeekly,
@@ -2491,7 +2525,10 @@ Need more detailed help?
         low_stock_items: activeMedicines.filter(m => m.stock <= (m.min_stock || 0)).length,
         out_of_stock_items: activeMedicines.filter(m => m.stock === 0).length,
         total_inventory_value: activeMedicines.reduce((sum, m) => sum + (m.stock * m.price), 0),
-        fast_moving_items: activeMedicines.slice(0, 5).map(m => ({ n: m.name, s: m.stock, loc: m.location_id })) // Placeholder
+        fast_moving_items: [...activeMedicines]
+          .sort((a, b) => (sales7dByMedicine.get(b.id) || 0) - (sales7dByMedicine.get(a.id) || 0))
+          .slice(0, 5)
+          .map(m => ({ n: m.name, sold_7days: sales7dByMedicine.get(m.id) || 0, s: m.stock, loc: m.location_id }))
       },
       loc: analysisLocationId || getCurrentLocationId()
     };
@@ -2990,6 +3027,7 @@ INTELLIGENCE GUIDELINES:
 - PATIENT IDENTIFICATION: Each patient has a human-readable Patient ID (field pid in patient objects, e.g. "PAT-00001"). Staff often refer to patients by this ID in addition to patient names. When a user asks about a patient by ID number, use the pid field from the Practice Data patient list to identify them. Display this ID when referencing specific patients so staff can easily locate them in the system.
 - PATIENT REGISTRATION FORM: The current staff registration form includes Full Patient Name, Primary Email, Mobile Contact, Age, Patient Type, Branch/Location, Address, City, Township, optional Patient Portal password, and Relevant Medical History. Clinical fees are handled at appointment completion, not registration. In Agent Mode, use these fields in p_c when supplied and ask for missing required basics instead of assuming them.
 - NO HALLUCINATION: Never invent patient data, treatment costs, or stock levels. If data is not in the "Practice Data" provided, state that you don't know or ask for clarification.
+- SAMPLE DATA: Practice Data "cov" reports which collections are samples, for example "20 of 2410". When a request needs a ranking, total, or comparison and cov shows a sample, never compute a ranking or total from it and present it as the real answer. Say plainly that the result is based on a sample of the records supplied, and point to the screen that holds the full list (Patients, Overview → Treatment Mix, Inventory, Expenses, or the Audit Log).
 - BE PROACTIVE: Use clinical_insights and operational_insights to offer advice without being asked.
 - ANALYZE: Don't just list data; tell the user what it means (e.g., "3 patients are overdue for checkups, would you like me to find their contact info?").
 - PRIORITIZE: Highlight critical stock levels or high-risk patients immediately.
@@ -5290,6 +5328,36 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
       }
 
       const actionResultText = actionResults.join('\n\n---\n\n');
+
+      // ponytail: one corrective turn, not an agent loop. It re-reads what the actions
+      // actually returned and explains or asks instead of letting the first attempt
+      // stand. Upgrade path: re-plan and re-execute, which needs duplicate-write
+      // protection (payments, treatments) before it is safe to enable.
+      let correctionNote = '';
+      if (mode === 'agent' && actionResults.length > 0 && /❌|⚠️|not found|multiple (patients|matches)|could not/i.test(actionResultText)) {
+        try {
+          const correction = await aiAssistant.createCompletion({
+            messages: [
+              {
+                role: 'system',
+                content: `You are Loli, a dental clinic assistant. You already replied to the user, then ran system actions, and some of those results were incomplete or failed. Write ONE short reply in simple non-technical language that: (1) says plainly what did not work, (2) uses only facts present in the action results below, (3) asks for the single most useful missing detail, or asks the user to pick from the matches. Never invent data. Never output JSON, action blocks, or code. Never claim a change succeeded unless the result shows ✅ or [Verified].`
+              },
+              {
+                role: 'user',
+                content: `User request: ${userMessage.content}\n\nAction results:\n${actionResultText}`
+              }
+            ],
+            temperature: 0.2,
+            max_tokens: 500,
+            top_p: 0.9
+          });
+          correctionNote = (correction.choices?.[0]?.message?.content || '').trim();
+        } catch (correctionError) {
+          console.error('Action correction turn failed:', correctionError);
+        }
+      }
+      const reportedResults = correctionNote ? `${actionResultText}\n\n${correctionNote}` : actionResultText;
+
       const hasSuccessfulAction = actionResults.some(result => result.includes('✅') || result.includes('[Verified]'));
       const hasActionAttempt = allActionMatches.length > 0;
       const needsConfirmation = actionResultText.toLowerCase().includes('confirmation') || actionResultText.toLowerCase().includes('confirm');
@@ -5305,9 +5373,9 @@ This action requires Agent Mode to be enabled. Please switch to Agent Mode using
         : actionIntentDetected && !hasActionAttempt
         ? buildNoActionMessage(userMessage.content, cleanedAiResponse, actionIntentDetected)
         : actionIntentDetected && hasActionAttempt && !hasSuccessfulAction
-          ? `${cleanedAiResponse.trim()}\n\n${actionResultText || '⚠️ I could not complete the requested system action.'}`.trim()
+          ? `${cleanedAiResponse.trim()}\n\n${reportedResults || '⚠️ I could not complete the requested system action.'}`.trim()
           : actionResultText
-            ? `${cleanedAiResponse.trim()}\n\n${actionResultText}`.trim()
+            ? `${cleanedAiResponse.trim()}\n\n${reportedResults}`.trim()
             : cleanedAiResponse.trim() || aiResponse;
 
       const safeAssistantContent = needsConfirmation
