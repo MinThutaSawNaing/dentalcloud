@@ -8,6 +8,8 @@ import {
 } from './paymentTreatmentAllocation';
 import { chunkUniqueIds, REPORT_URL_BATCH_SIZE } from './reportBatching';
 import { getPaymentReceivedAmount } from './paymentHistory';
+import { getPaymentAllocationTotal, normalizePaymentAllocations } from './paymentMethods';
+import { getPaymentServiceFeeAmount } from './serviceFee';
 
 export interface MonthlyReportSourceRecord extends ClinicalRecord {
   patient_age?: number | null;
@@ -39,6 +41,7 @@ export interface MonthlyReportRow {
   doctor: string;
   cost: number;
   payment: number;
+  paymentBreakdown?: MonthlyReportPaymentBreakdown;
   balance: number;
   labCost: number;
   materialCost: number;
@@ -47,6 +50,16 @@ export interface MonthlyReportRow {
   totalCost: number;
   netProfit: number;
   netMargin: number;
+}
+
+export interface MonthlyReportPaymentBreakdown {
+  treatment: number;
+  banking: number;
+  cash: number;
+  otherMethods: number;
+  unassigned: number;
+  serviceCharges: number;
+  otherReceipts: number;
 }
 
 export interface MonthlyReportDetailRow extends MonthlyReportRow {
@@ -71,6 +84,7 @@ export interface MonthlyReportSummary {
   // Actual receipts on payment dates, not capped by treatment debt. Optional
   // for compatibility with callers supplying treatment-only report fixtures.
   periodCollected?: number;
+  paymentBreakdown?: MonthlyReportPaymentBreakdown;
 }
 
 export interface MonthlyReportGroup {
@@ -126,6 +140,50 @@ const money = (value: unknown): number => {
 
 const positiveMoney = (value: unknown): number => Math.max(0, money(value));
 
+const emptyBreakdown = (): MonthlyReportPaymentBreakdown => ({
+  treatment: 0, banking: 0, cash: 0, otherMethods: 0, unassigned: 0, serviceCharges: 0, otherReceipts: 0
+});
+
+const sumBreakdowns = (a: MonthlyReportPaymentBreakdown, b?: MonthlyReportPaymentBreakdown): MonthlyReportPaymentBreakdown => ({
+  treatment: money(a.treatment + (b?.treatment ?? 0)),
+  banking: money(a.banking + (b?.banking ?? 0)),
+  cash: money(a.cash + (b?.cash ?? 0)),
+  otherMethods: money(a.otherMethods + (b?.otherMethods ?? 0)),
+  unassigned: money(a.unassigned + (b?.unassigned ?? 0)),
+  serviceCharges: money(a.serviceCharges + (b?.serviceCharges ?? 0)),
+  otherReceipts: money(a.otherReceipts + (b?.otherReceipts ?? 0))
+});
+
+const buildReceiptBreakdown = (payment: PaymentRecord, amount: number): MonthlyReportPaymentBreakdown => {
+  const snapshot = payment.receiptSnapshot?.payment;
+  const serviceCharges = Math.min(amount, positiveMoney(getPaymentServiceFeeAmount(payment)));
+  const treatment = Math.min(positiveMoney(getPaymentTreatmentShare(payment)), money(amount - serviceCharges));
+  const nonTreatment = money(amount - treatment);
+  const recorded = normalizePaymentAllocations(payment.allocations);
+  const snapshotAllocations = normalizePaymentAllocations(snapshot?.allocations, snapshot?.method, snapshot?.amountPaid);
+  const allocations = recorded.length > 0 ? recorded : normalizePaymentAllocations([], payment.paymentMethod, amount);
+  const methods = allocations.length > 0 ? allocations : (!payment.corrections?.length && getPaymentAllocationTotal(snapshotAllocations) === amount ? snapshotAllocations : []);
+  const totals = emptyBreakdown();
+  if (getPaymentAllocationTotal(methods) <= amount) {
+    for (const allocation of methods) {
+      const bucket = allocation.method === 'CASH' ? 'cash' : allocation.method.endsWith('_BANKING') ? 'banking' : 'otherMethods';
+      totals[bucket] = money(totals[bucket] + allocation.amount);
+    }
+  }
+
+  // Allocations describe the full receipt, not its line items. Only attribute
+  // the portion that must be treatment even if this bucket paid all other items.
+  const banking = positiveMoney(totals.banking - nonTreatment);
+  const cash = positiveMoney(totals.cash - nonTreatment);
+  const otherMethods = positiveMoney(totals.otherMethods - nonTreatment);
+  return {
+    treatment, banking, cash, otherMethods,
+    unassigned: money(treatment - banking - cash - otherMethods),
+    serviceCharges,
+    otherReceipts: money(nonTreatment - serviceCharges)
+  };
+};
+
 const combineLabels = (labels: string[]): string => {
   const counts = new Map<string, number>();
   labels.forEach(label => counts.set(label, (counts.get(label) || 0) + 1));
@@ -179,6 +237,9 @@ export const groupMonthlyReportDetailRows = (rows: MonthlyReportRow[]): MonthlyR
       doctor: combineDistinctLabels(sortedGroup.map(row => row.doctor)),
       cost,
       payment,
+      paymentBreakdown: sortedGroup.some(row => row.paymentBreakdown)
+        ? sortedGroup.reduce((total, row) => sumBreakdowns(total, row.paymentBreakdown), emptyBreakdown())
+        : undefined,
       balance,
       labCost,
       materialCost,
@@ -241,7 +302,7 @@ const buildDateBasedDetailRows = (
   const to = dateTo || inferredTo;
   const recordsById = new Map(allocationRecords.map(record => [record.id, record]));
   const reportPatientIds = new Set(treatmentRows.map(row => row.patientId));
-  const paymentByPatientDate = new Map<string, { amount: number; paymentIds: string[]; treatmentIds: string[] }>();
+  const paymentByPatientDate = new Map<string, { amount: number; breakdown: MonthlyReportPaymentBreakdown; paymentIds: string[]; treatmentIds: string[] }>();
 
   // Collections are receipts, not commissionable treatment allocations. The
   // latter deliberately omit non-treatment charges and cap at outstanding debt.
@@ -253,8 +314,9 @@ const buildDateBasedDetailRows = (
     const amount = positiveMoney(getPaymentReceivedAmount(payment));
     if (amount <= 0) return;
     const key = `${payment.patientId}|${payment.date}`;
-    const current = paymentByPatientDate.get(key) || { amount: 0, paymentIds: [], treatmentIds: [] };
+    const current = paymentByPatientDate.get(key) || { amount: 0, breakdown: emptyBreakdown(), paymentIds: [], treatmentIds: [] };
     current.amount = money(current.amount + amount);
+    current.breakdown = sumBreakdowns(current.breakdown, buildReceiptBreakdown(payment, amount));
     current.paymentIds.push(payment.id);
     current.treatmentIds = Array.from(new Set([...current.treatmentIds, ...treatmentIds]));
     paymentByPatientDate.set(key, current);
@@ -270,7 +332,7 @@ const buildDateBasedDetailRows = (
 
   // Keep a collection on only one treatment row per patient/date so the
   // existing same-day grouping does not duplicate it across multiple services.
-  const detailRows = treatmentRows.map((row) => ({ ...row, payment: 0 }));
+  const detailRows: MonthlyReportRow[] = treatmentRows.map((row) => ({ ...row, payment: 0 }));
   treatmentRowsByPatientDate.forEach((rows, key) => {
     const collection = paymentByPatientDate.get(key);
     if (!collection) return;
@@ -279,7 +341,8 @@ const buildDateBasedDetailRows = (
     if (index < 0) return;
     detailRows[index] = {
       ...detailRows[index],
-      payment: collection.amount
+      payment: collection.amount,
+      paymentBreakdown: collection.breakdown
     };
     paymentByPatientDate.delete(key);
   });
@@ -308,6 +371,7 @@ const buildDateBasedDetailRows = (
       doctor: Array.from(new Set(linkedTreatments.map(record => record.doctor_name?.trim()).filter(Boolean))).join('; ') || 'Unassigned',
       cost: 0,
       payment: collection.amount,
+      paymentBreakdown: collection.breakdown,
       balance: 0,
       labCost: 0,
       materialCost: 0,
@@ -414,7 +478,8 @@ export const buildMonthlyReport = (data: MonthlyReportData): MonthlyReport => {
     detailRows,
     summary: {
       ...summarizeRows(rows),
-      periodCollected: money(detailRows.reduce((sum, row) => sum + row.payment, 0))
+      periodCollected: money(detailRows.reduce((sum, row) => sum + row.payment, 0)),
+      paymentBreakdown: detailRows.reduce((total, row) => sumBreakdowns(total, row.paymentBreakdown), emptyBreakdown())
     },
     byTreatment: groupRows(rows, row => row.treatment),
     byDoctor: groupRows(rows, row => row.doctor),

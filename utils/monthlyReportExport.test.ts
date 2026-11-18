@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx-js-style';
+import type { PaymentRecord } from '../types';
 import { buildMonthlyReport, type MonthlyReport, type MonthlyReportMetadata } from './monthlyReport';
 import { buildMonthlyReportExcelWorkbook } from './monthlyReportExport';
 
@@ -43,7 +44,9 @@ describe('monthly report Excel workbook', () => {
         teeth: [], description: 'Crown', cost: 270000, doctorEarnings: 20000, date: '2026-07-10' }],
       payments: [170000, 50000, 100000].map((amount, index) => ({
         id: `payment-${index}`, patientId: 'patient-1', amount, clearedAmount: amount,
-        treatmentIds: ['treatment-1'], date: `2026-07-${10 + index}`, type: 'PARTIAL' as const, remainingBalance: 0
+        treatmentIds: ['treatment-1'], date: `2026-07-${10 + index}`, type: 'PARTIAL' as const, remainingBalance: 0,
+        paymentMethod: (['KBZ_BANKING', 'CASH', 'UNKNOWN'] as const)[index],
+        receiptSnapshot: index === 0 ? { payment: { serviceFeeAmount: 10000 } } as PaymentRecord['receiptSnapshot'] : undefined
       })),
       costSummaries: {}, dateFrom: metadata.dateFrom, dateTo: metadata.dateTo
     });
@@ -60,6 +63,11 @@ describe('monthly report Excel workbook', () => {
     expect(summary.E10.v).toBe(270000);
     expect(summary.E9.v).toBe(1);
     expect(summary.A16.v).toContain('full receipts');
+    const breakdown = reopened.Sheets['Payment Breakdown'];
+    expect(['C4', 'D4', 'F4', 'H4', 'J4'].map(cell => breakdown[cell].v))
+      .toEqual(['Banking', 'Cash', 'Method Unassigned', 'Service Charges', 'Total Receipts']);
+    expect(['C8', 'D8', 'F8', 'G8', 'H8', 'J8'].map(cell => breakdown[cell].v))
+      .toEqual([160000, 50000, 100000, 310000, 10000, 320000]);
     for (const name of ['By Treatment', 'By Clinician', 'By Patient Type']) {
       expect(reopened.Sheets[name].E5.v).toBe(270000);
     }

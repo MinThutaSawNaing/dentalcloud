@@ -1,10 +1,23 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatCurrency } from './currency';
-import { groupMonthlyReportDetailRows, monthlyReportFilename, type MonthlyReport, type MonthlyReportGroup, type MonthlyReportMetadata } from './monthlyReport';
+import { groupMonthlyReportDetailRows, monthlyReportFilename, type MonthlyReport, type MonthlyReportGroup, type MonthlyReportMetadata, type MonthlyReportPaymentBreakdown } from './monthlyReport';
 
 const percentage = (value: number): string => `${(value * 100).toFixed(1)}%`;
 const generatedLabel = (date: Date): string => date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
+const paymentHeaders = ['Activity Date', 'Patient Name', 'Banking', 'Cash', 'Other Methods', 'Method Unassigned',
+  'Treatment Payments', 'Service Charges', 'Other Receipts', 'Total Receipts'];
+const paymentNote = 'Banking, Cash, Other Methods and Method Unassigned add up to Treatment Payments. Method Unassigned includes missing method data or amounts that cannot be separated from charges on mixed receipts.';
+
+const paymentAmounts = (breakdown: MonthlyReportPaymentBreakdown, receipts: number) => [
+  breakdown.banking, breakdown.cash, breakdown.otherMethods, breakdown.unassigned, breakdown.treatment,
+  breakdown.serviceCharges, breakdown.otherReceipts, receipts
+];
+
+const paymentDetail = (rows: ReturnType<typeof groupMonthlyReportDetailRows>) => rows.flatMap(row =>
+  row.paymentBreakdown ? [[row.date, row.patientName, ...paymentAmounts(row.paymentBreakdown, row.payment)]] : []
+);
 
 const addPdfFooter = (doc: jsPDF, metadata: MonthlyReportMetadata) => {
   const drawingDoc = doc as any;
@@ -109,6 +122,31 @@ export const exportMonthlyReportToPDF = (report: MonthlyReport, metadata: Monthl
     },
     margin: { left: 8, right: 8, bottom: 18 }
   });
+
+  if (report.summary.paymentBreakdown) {
+    doc.addPage();
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Payment Breakdown', 14, 20);
+    doc.setFontSize(8);
+    doc.text(paymentNote, 14, 28);
+    autoTable(doc, {
+      startY: 35,
+      head: [paymentHeaders],
+      body: paymentDetail(detailRows).map(([date, patient, ...amounts]) => [
+        String(date), String(patient), ...amounts.map(value => formatCurrency(Number(value), metadata.currency))
+      ]),
+      foot: [['REPORT TOTAL', '', ...paymentAmounts(report.summary.paymentBreakdown, report.summary.periodCollected ?? 0)
+        .map(value => formatCurrency(value, metadata.currency))]],
+      showFoot: 'lastPage',
+      theme: 'striped',
+      headStyles: { fillColor: [79, 70, 229], fontSize: 8 },
+      footStyles: { fillColor: [30, 41, 59], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: Object.fromEntries(paymentHeaders.slice(2).map((_, index) => [index + 2, { halign: 'right' }])),
+      margin: { left: 14, right: 14, bottom: 18 }
+    });
+  }
 
   doc.addPage();
   doc.setFontSize(18);
@@ -391,6 +429,28 @@ export const buildMonthlyReportExcelWorkbook = async (report: MonthlyReport, met
   groupedDetailRows.forEach((row, index) => styleProfitCell(detailSheet, `R${5 + index}`, row.netProfit));
   styleProfitCell(detailSheet, `R${5 + detailData.length}`, report.summary.netProfit, true);
   XLSX.utils.book_append_sheet(workbook, detailSheet, 'Treatment Detail');
+
+  if (report.summary.paymentBreakdown) {
+    const data = paymentDetail(groupedDetailRows);
+    const totalRow = 5 + data.length;
+    const numericColumns = paymentHeaders.slice(2).map((_, index) => index + 2);
+    const sheet: any = XLSX.utils.aoa_to_sheet([
+      ['PAYMENT BREAKDOWN'],
+      [reportSubtitle(metadata)],
+      [paymentNote],
+      paymentHeaders,
+      ...data,
+      ['REPORT TOTAL', '', ...paymentAmounts(report.summary.paymentBreakdown, report.summary.periodCollected ?? 0)]
+    ]);
+    sheet['!merges'] = ['A1:J1', 'A2:J2', 'A3:J3'].map(range => XLSX.utils.decode_range(range));
+    configureTableSheet(sheet, 4, data.length, 'J', [17, 25, 16, 16, 18, 20, 21, 19, 17, 17]);
+    sheet['!rows'][2] = { hpt: 27 };
+    setNumberFormat(XLSX, sheet, 5, totalRow, numericColumns, currency);
+    styleReportBanner(XLSX, sheet, 'J');
+    applyCellStyle(sheet, 'A3', { alignment: { wrapText: true, vertical: 'center' } });
+    styleTable(XLSX, sheet, 4, data.length, totalRow, 'J', numericColumns);
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Payment Breakdown');
+  }
 
   const appendGroupSheet = (name: string, title: string, categoryHeader: string, groups: MonthlyReportGroup[]) => {
     const groupData = groups.map(group => [

@@ -130,6 +130,40 @@ describe('monthly report', () => {
     expect(report.summary).toMatchObject({ payment: 100, balance: 0, periodCollected: 150 });
   });
 
+  it('groups same-day split treatment payments and separately paid service charges without double-counting', () => {
+    const report = buildMonthlyReport({
+      records: [record({ cost: 200000 }), record({ id: 'treatment-2', cost: 50000 })],
+      payments: [
+        payment({ amount: 250000, clearedAmount: 250000, paymentMethod: 'MIXED', treatmentIds: ['treatment-1', 'treatment-2'], allocations: [
+          { method: 'AYA_BANKING', amount: 125000 }, { method: 'KBZ_BANKING', amount: 75000 }, { method: 'CASH', amount: 50000 }
+        ] }),
+        payment({ id: 'service-fee', amount: 10000, clearedAmount: 10000, paymentMethod: 'CASH', treatmentIds: [],
+          receiptSnapshot: { payment: { serviceFeeAmount: 10000 } } as PaymentRecord['receiptSnapshot'] })
+      ],
+      costSummaries: {}
+    });
+    const expected = { treatment: 250000, banking: 200000, cash: 50000, otherMethods: 0, unassigned: 0, serviceCharges: 10000, otherReceipts: 0 };
+    expect(report.summary).toMatchObject({ periodCollected: 260000, payment: 250000, paymentBreakdown: expected });
+    expect(groupMonthlyReportDetailRows(report.detailRows || [])).toMatchObject([{ payment: 260000, paymentBreakdown: expected }]);
+  });
+
+  it('does not guess which method covered service charges or medicines on a mixed receipt', () => {
+    const report = buildMonthlyReport({
+      records: [record()],
+      payments: [payment({ amount: 150, clearedAmount: 150, date: '2026-07-11', paymentMethod: 'MIXED',
+        receiptSnapshot: {
+          treatments: [{ id: 'treatment-1', finalCost: 100 }], medicines: [{ totalPrice: 40 }],
+          payment: { amountPaid: 150, serviceFeeAmount: 10, allocations: [
+            { method: 'CB_BANKING', amount: 100 }, { method: 'CASH', amount: 50 }
+          ] }
+        } as PaymentRecord['receiptSnapshot'] })],
+      costSummaries: {}, dateTo: '2026-07-11'
+    });
+    const expected = { treatment: 100, banking: 50, cash: 0, otherMethods: 0, unassigned: 50, serviceCharges: 10, otherReceipts: 40 };
+    expect(report.summary.paymentBreakdown).toEqual(expected);
+    expect(report.detailRows?.[1]).toMatchObject({ date: '2026-07-11', paymentBreakdown: expected });
+  });
+
   it('deduplicates repeated payments and supports legacy oldest-balance allocation', () => {
     const shared = payment({ treatmentIds: [], date: '2026-07-12' });
     const report = buildMonthlyReport({ records: [record()], payments: [shared, { ...shared }], costSummaries: {} });

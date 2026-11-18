@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PaymentRecord } from '../types';
 import { buildMonthlyReport } from './monthlyReport';
 
 const pdf = vi.hoisted(() => ({
@@ -27,7 +28,9 @@ describe('monthly report PDF collection labels', () => {
         patient_name: 'Test Patient', teeth: [], description: 'Crown', cost: 270000, date: '2026-07-10' }],
       payments: [170000, 50000, 100000].map((amount, index) => ({
         id: `payment-${index}`, patientId: 'patient-1', amount, treatmentIds: ['treatment-1'],
-        date: `2026-07-${10 + index}`, type: 'PARTIAL' as const, remainingBalance: 0
+        date: `2026-07-${10 + index}`, type: 'PARTIAL' as const, remainingBalance: 0,
+        paymentMethod: (['KBZ_BANKING', 'CASH', 'UNKNOWN'] as const)[index],
+        receiptSnapshot: index === 0 ? { payment: { serviceFeeAmount: 10000 } } as PaymentRecord['receiptSnapshot'] : undefined
       })),
       costSummaries: {}, dateFrom: metadata.dateFrom, dateTo: metadata.dateTo
     });
@@ -45,6 +48,10 @@ describe('monthly report PDF collection labels', () => {
     expect(Array.isArray(headers)).toBe(true);
     if (!Array.isArray(headers)) throw new Error('Expected an array of detail headers');
     expect(new Set(headers).size).toBe(headers.length);
+    expect(text).toContain('Payment Breakdown');
+    const paymentTable = vi.mocked(autoTable).mock.calls[1][1];
+    expect(paymentTable.head[0]).toEqual(expect.arrayContaining(['Banking', 'Cash', 'Service Charges']));
+    expect(paymentTable.foot[0]).toEqual(['REPORT TOTAL', '', '160,000Ks', '50,000Ks', '0Ks', '100,000Ks', '310,000Ks', '10,000Ks', '0Ks', '320,000Ks']);
     expect(pdf.save).toHaveBeenCalledOnce();
   });
 });
